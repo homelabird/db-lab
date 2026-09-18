@@ -106,15 +106,28 @@ class GeneratorTests(unittest.TestCase):
                 self.assertNotIn(metadata['_id'],ids);ids.add(metadata['_id'])
                 self.assertEqual(metadata['_id'],doc['document_id'])
                 self.assertEqual(metadata['_index'],index)
-                for field,value in doc.items():
-                    self.assertIn(field,props)
-                    typ=props[field]['type']
-                    if typ=='ip': ipaddress.ip_address(value)
-                    elif typ=='date': datetime.fromisoformat(value.replace('Z','+00:00'))
-                    elif typ=='boolean': self.assertIsInstance(value,bool)
-                    elif typ in ('integer','long'): self.assertIs(type(value),int)
-                    elif typ=='double': self.assertIsInstance(value,(float,int))
-                    elif typ in ('keyword','text'): self.assertTrue(isinstance(value,str) or isinstance(value,list))
+                def check_fields(values, definitions):
+                    for field,value in values.items():
+                        self.assertIn(field, definitions)
+                        mapping=definitions[field]
+                        if mapping.get('type') in ('object','nested') or 'properties' in mapping:
+                            children=value if isinstance(value, list) else [value]
+                            for child in children:
+                                check_fields(child, mapping.get('properties', {}))
+                            continue
+                        typ=mapping.get('type')
+                        if typ=='ip': ipaddress.ip_address(value)
+                        elif typ=='geo_point':
+                            self.assertIsInstance(value,dict)
+                            self.assertIn('lat',value); self.assertIn('lon',value)
+                        elif typ=='date': datetime.fromisoformat(value.replace('Z','+00:00'))
+                        elif typ=='boolean': self.assertIsInstance(value,bool)
+                        elif typ in ('integer','long'): self.assertIs(type(value),int)
+                        elif typ=='double':
+                            numbers=value if isinstance(value,list) else [value]
+                            self.assertTrue(all(isinstance(item,(float,int)) for item in numbers))
+                        elif typ in ('keyword','text'): self.assertTrue(value is None or isinstance(value,str) or isinstance(value,list))
+                check_fields(doc, props)
     def test_known_incidents_exist(self):
         docs={index:json.loads(next(seed.documents(self.cfg(),index))[1]) for index in INDICES}
         self.assertTrue(docs[INDICES[0]]['is_fraud']);self.assertGreaterEqual(docs[INDICES[0]]['risk_score'],850)
@@ -130,7 +143,7 @@ class GeneratorTests(unittest.TestCase):
     def test_deletion_requires_yes(self):
         with redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):seed.main(['--recreate'])
     def test_catalog_and_json_load(self):
-        catalog=load_catalog();self.assertEqual(len(catalog),22)
+        catalog=load_catalog();self.assertEqual(len(catalog),26)
         for entry in catalog:
             self.assertTrue(entry['path'].startswith('/lab-'))
             self.assertIn(entry['method'],['POST','GET'])

@@ -21,9 +21,10 @@ import urllib.request
 import urllib.error
 import uuid
 
-from seed import SIZES, expected_counts, generate
+from seed import PROFILES, SIZES, expected_counts, generate
 
 ROOT = Path(__file__).resolve().parent.parent
+LAB_DIR = ROOT / 'labs'
 NODES = ('galera1', 'galera2', 'galera3')
 PASSWORDS = ('ROOT_PASSWORD', 'LAB_PASSWORD', 'READONLY_PASSWORD', 'SST_PASSWORD')
 PORTS = ('NODE1_PORT', 'NODE2_PORT', 'NODE3_PORT', 'WRITER_PORT', 'READER_PORT',
@@ -65,6 +66,25 @@ def sha256_file(path):
         for chunk in iter(lambda: stream.read(1024 * 1024), b''):
             digest.update(chunk)
     return digest.hexdigest()
+
+def lab_files():
+    return sorted(LAB_DIR.glob('*.sql'))
+
+def lab_path(name):
+    candidate = Path(name).name
+    if candidate != name:
+        raise LabError('Lab name must be a file name from labs/.')
+    if not candidate.endswith('.sql'):
+        candidate += '.sql'
+    path = LAB_DIR / candidate
+    if not path.is_file():
+        available = ', '.join(p.stem for p in lab_files())
+        raise LabError(f'Unknown lab {name!r}. Available labs: {available}')
+    return path
+
+def lab_is_write(path):
+    sql = re.sub(r'--[^\n]*', '', path.read_text()).upper()
+    return bool(re.search(r'\b(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|START|COMMIT|ROLLBACK|SET)\b', sql))
 
 def initialize():
     """Fill only new/placeholder secrets, never rotate credentials on an existing lab."""
@@ -424,6 +444,22 @@ class Lab:
         print(self.sql(node, "SELECT table_schema,ROUND(SUM(data_length+index_length)/1024/1024,1) AS MiB FROM information_schema.tables WHERE table_schema IN ('commerce_lab','lab_ops') GROUP BY table_schema;").stdout)
         self.verify()
 
+    def labs(self):
+        print('NAME                 TYPE       DESCRIPTION')
+        for path in lab_files():
+            first = next((line.strip()[2:].strip() for line in path.read_text().splitlines()
+                          if line.strip().startswith('--')), '')
+            kind = 'write' if lab_is_write(path) else 'read-only'
+            print(f'{path.stem:<20} {kind:<10} {first}')
+
+    def run_lab(self, name, node, allow_write=False):
+        path = lab_path(name)
+        if lab_is_write(path) and not allow_write:
+            raise LabError(f'{path.name} can modify lab data. Re-run with --allow-write.')
+        self.healthy_node()
+        print(f'Running {path.name} on {node} ({("write-enabled" if allow_write else "read-only")})')
+        self.run(self.sql_command(node), input=path.read_text())
+
     def verify(self):
         data = {n:self.health(n) for n in NODES}
         if any(not d.get('ready') or d.get('wsrep_cluster_size') != '3' for d in data.values()):
@@ -547,9 +583,14 @@ class Lab:
 def parser():
     p = argparse.ArgumentParser(description='MariaDB Galera learning lab; see README.md for the guided sequence.')
     sub = p.add_subparsers(dest='command', required=True)
-    for command in ('init','doctor','build','up','status','down','verify','backup','ui','routes'):
+    for command in ('init','doctor','build','up','status','down','verify','backup','ui','routes','labs'):
         sub.add_parser(command)
+    q = sub.add_parser('run-lab', help='Run one SQL lab by name')
+    q.add_argument('name')
+    q.add_argument('node', choices=NODES, nargs='?', default='galera1')
+    q.add_argument('--allow-write', action='store_true')
     q = sub.add_parser('seed'); q.add_argument('--size', choices=SIZES, default='standard')
+    q.add_argument('--profile', choices=PROFILES)
     q.add_argument('--batch', type=int, default=500); q.add_argument('--payload-bytes', type=int, default=256)
     q.add_argument('--replace', action='store_true'); q.add_argument('--confirm-replace', action='store_true')
     q = sub.add_parser('sql'); q.add_argument('node', choices=NODES+('restore',), nargs='?', default='galera1')
@@ -563,6 +604,10 @@ def parser():
     q = sub.add_parser('quorum-demo'); q.add_argument('--confirm-pause', action='store_true')
     q = sub.add_parser('load'); q.add_argument('--seconds', type=int, default=60); q.add_argument('--workers', type=int, default=4)
     q.add_argument('--target', choices=['writer','multi'], default='writer')
+    q = sub.add_parser('simulate'); q.add_argument('--seconds', type=int, default=300)
+    q.add_argument('--rate', type=int, default=10)
+    q.add_argument('--seed', type=int, default=20260918)
+    q.add_argument('--mode', choices=('api', 'orders', 'mixed'), default='mixed')
     sub.add_parser('conflict')
     q = sub.add_parser('restore'); q.add_argument('file', nargs='?'); q.add_argument('--confirm-restore', action='store_true')
     q = sub.add_parser('reset'); q.add_argument('--confirm-delete-lab-data', action='store_true')
@@ -578,7 +623,7 @@ def main():
         if no_runtime(args): return
     lab = Lab()
     lock = None
-    if args.command in ('build','up','down','recover','rebuild','seed','restore','reset','backup','load','conflict','quorum-demo','stop','start','kill','pause','resume') or (args.command == 'scenario' and args.scenario != 'inspect'):
+    if args.command in ('build','up','down','recover','rebuild','seed','restore','reset','backup','load','simulate','run-lab','conflict','quorum-demo','stop','start','kill','pause','resume') or (args.command == 'scenario' and args.scenario != 'inspect'):
         lock = (ROOT/'.state/operation.lock').open('w')
         try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError: raise LabError('Another lifecycle/seed/restore operation is active in this lab directory.')
@@ -587,11 +632,15 @@ def main():
         from scenarios import Runner, ScenarioError
         try: Runner(lab).execute(args)
         except ScenarioError as exc: raise LabError(str(exc)) from exc
-    elif command in ('doctor','up','status','down','verify','backup'): getattr(lab, command)()
+    elif command in ('doctor','up','status','down','verify','backup','labs'): getattr(lab, command)()
+    elif command == 'run-lab': lab.run_lab(args.name, args.node, args.allow_write)
     elif command == 'build': lab.build(force=True)
     elif command == 'seed':
         if args.replace and not args.confirm_replace: raise LabError('--replace requires --confirm-replace.')
         if not 1 <= args.batch <= 5000 or not 0 <= args.payload_bytes <= 8192: raise LabError('Invalid batch/payload bounds.')
+        if args.profile:
+            profile = PROFILES[args.profile]
+            args.size, args.batch, args.payload_bytes = profile['size'], profile['batch'], profile['payload_bytes']
         lab.seed(args.size, args.replace, args.batch, args.payload_bytes)
     elif command == 'sql':
         if args.query is not None:
@@ -623,11 +672,17 @@ def main():
         lab.run([lab.engine,'pause',lab.name('galera3')])
         print('Nodes 2/3 paused. Wait for failure detection, then inspect galera1 readiness. NO bootstrap.')
         print('Restore: ./lab.sh resume galera2; ./lab.sh resume galera3; ./lab.sh status')
-    elif command in ('load','conflict','routes'):
+    elif command in ('load','simulate','conflict','routes'):
         lab.healthy_node()
         toolcmd = ['route'] if command == 'routes' else [command]
         if command == 'load': toolcmd += ['--seconds',str(args.seconds),'--workers',str(args.workers),'--target',args.target]
-        lab.comp('run','--rm','--no-deps','tools',*toolcmd)
+        if command == 'simulate':
+            lab.comp('run','--rm','--no-deps','--entrypoint','python3','tools',
+                     '/opt/lab/simulator.py', '--seconds',str(args.seconds),
+                     '--rate',str(args.rate),
+                     '--seed',str(args.seed),'--mode',args.mode)
+        else:
+            lab.comp('run','--rm','--no-deps','tools',*toolcmd)
     elif command == 'restore':
         if not args.confirm_restore: raise LabError('Requires --confirm-restore: replaces ONLY the separate restore volume.')
         lab.restore(args.file)

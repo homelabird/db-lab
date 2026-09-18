@@ -150,5 +150,33 @@
     "method": "POST",
     "path": "/lab-audit-v1/_search",
     "file": "22-privileged.json"
+  },
+  {
+    "name": "23-nested-order-items",
+    "title": "nested 상품 단위의 SKU·가격 조건",
+    "method": "POST",
+    "path": "/lab-commerce-v1/_search",
+    "file": "23-nested-order-items.json"
+  },
+  {
+    "name": "24-geo-shipping",
+    "title": "geo_point 배송지 반경 검색",
+    "method": "POST",
+    "path": "/lab-commerce-v1/_search",
+    "file": "24-geo-shipping.json"
+  },
+  {
+    "name": "25-observability-histogram",
+    "title": "metric histogram과 anomaly 집계",
+    "method": "POST",
+    "path": "/lab-observability-v1/_search",
+    "file": "25-observability-histogram.json"
+  },
+  {
+    "name": "26-object-trace-filter",
+    "title": "object 내부 trace·labels 필터",
+    "method": "POST",
+    "path": "/lab-observability-v1/_search",
+    "file": "26-object-trace-filter.json"
   }
 ]

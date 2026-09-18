@@ -1,0 +1,13 @@
+{
+  "size": 10,
+  "_source": ["service", "labels", "trace", "metric_name", "metric_value"],
+  "query": {
+    "bool": {
+      "filter": [
+        {"term": {"labels.env": "prod"}},
+        {"term": {"trace.sampled": true}},
+        {"terms": {"service.name": ["checkout", "search"]}}
+      ]
+    }
+  }
+}

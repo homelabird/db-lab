@@ -7,8 +7,8 @@ services:
     labels:
       io.kzk.lab: ${LAB_NAME:-kzk-lab}
     environment:
-      KAFKA_CLUSTERS_0_NAME: zookeeper-lab
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      KAFKA_CLUSTERS_0_NAME: ${KAFKA_MODE:-zk}-lab
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${BOOTSTRAP_SERVERS:-kafka1:9092,kafka2:9092,kafka3:9092}
       KAFKA_CLUSTERS_0_READONLY: "true"
       DYNAMIC_CONFIG_ENABLED: "false"
       JAVA_OPTS: "-Xms128m -Xmx384m"

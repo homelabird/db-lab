@@ -294,7 +294,7 @@ class Drill:
         require(not self.active.exists(), 'An active drill exists. Run check/recover before another drill.')
         require(scenario in SCENARIOS, 'Unknown scenario')
         validate_node(node)
-        require(index in INDICES, 'INDEX must be exactly one of the three seed indices')
+        require(index in INDICES, 'INDEX must be exactly one of the seed indices')
         info = self.client.guard()
         nodes = self.nodes()
         require(set(nodes).issubset({f'es0{i}' for i in range(1, 7)}), 'Unexpected node names: not this lab topology')
@@ -628,7 +628,7 @@ def main(argv=None):
     require(math.isfinite(args.timeout) and args.timeout > 0, '--timeout must be finite and positive')
     require(math.isfinite(args.hold) and 0 <= args.hold <= 600, '--hold must be finite and 0..600')
     validate_node(args.node)
-    require(args.index in INDICES, 'INDEX must be one of the three seed indices')
+    require(args.index in INDICES, 'INDEX must be one of the seed indices')
     if args.command == 'list':
         for key, value in SCENARIOS.items(): print(f'{key:24} {value}')
         print('all = ' + ', '.join(DEFAULT_SUITE) + '\nDisk/zone/rebalance drills are separate, not in all.')

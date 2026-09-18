@@ -144,6 +144,16 @@ class DatasetTests(unittest.TestCase):
     def test_small_count(self): self.assertEqual(seed.expected_counts('small')['order_item'],60000)
     def test_large_count(self): self.assertEqual(seed.expected_counts('large')['shipment'],360000)
     def test_tiny_count(self): self.assertEqual(seed.expected_counts('tiny')['shipment'],180)
+    def test_seed_profiles_are_bounded(self):
+        self.assertEqual(seed.PROFILES['smoke']['size'], 'tiny')
+        self.assertGreater(seed.PROFILES['stress']['payload_bytes'], 0)
+        self.assertIn('large-replay', seed.PROFILES)
+    def test_simulator_modes_are_documented_cli(self):
+        result = subprocess.run([sys.executable, str(ROOT / 'scripts/simulator.py'), '--help'],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        for mode in ('api', 'orders', 'mixed'):
+            self.assertIn(mode, result.stdout)
     def test_no_helper_table_dependency(self):
         for text in ('_numbers','_digits','ENGINE=MEMORY','foreign_key_checks = 0'):
             self.assertNotIn(text,self.sql)
@@ -228,6 +238,11 @@ class SafetyContractTests(unittest.TestCase):
         result=subprocess.run([sys.executable,str(ROOT/'scripts/lab.py'),'--help'],capture_output=True,text=True)
         self.assertEqual(result.returncode,0)
         for name in ('recover','rebuild','quorum-demo','verify','restore'): self.assertIn(name,result.stdout)
+    def test_lab_runner_lists_sql_labs_and_requires_write_opt_in(self):
+        self.assertEqual(lab.lab_path('01-health').name, '01-health.sql')
+        self.assertFalse(lab.lab_is_write(lab.lab_path('01-health')))
+        self.assertTrue(lab.lab_is_write(lab.lab_path('08-auto-increment')))
+        with self.assertRaises(lab.LabError): lab.lab_path('../.env')
     def test_real_acceptance_isolates_disposable_volumes(self):
         text=(ROOT/'tests/real_acceptance.py').read_text()
         self.assertIn("cli('reset','--confirm-delete-lab-data')",text)
@@ -257,6 +272,9 @@ class ComposeTests(unittest.TestCase):
         self.assertEqual(len(set(ids)),3)
     def test_fail_closed_restart_policy(self):
         for node in lab.NODES: self.assertEqual(self.cfg['services'][node]['restart'],'no')
+    def test_operational_services_have_healthchecks(self):
+        for service in ('proxy', 'dashboard'):
+            self.assertIn('healthcheck', self.cfg['services'][service])
     def test_restore_network_isolated(self):
         self.assertTrue(set(self.cfg['services']['restore']['networks']).isdisjoint(
             self.cfg['services']['galera1']['networks']))

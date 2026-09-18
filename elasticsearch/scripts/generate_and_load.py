@@ -14,7 +14,7 @@ from pathlib import Path
 
 from lablib import APIError, ESClient, INDICES, LAYOUT, ROOT, bulk_send, compact, write_json
 
-GENERATOR_VERSION = 'seed-v2'
+GENERATOR_VERSION = 'seed-v3-complex'
 DEFAULT_START = '2026-08-01T00:00:00Z'
 
 
@@ -102,7 +102,7 @@ def documents(config, index):
                        message='payment gateway timeout while contacting upstream' if failure else 'request completed by application service')
             if failure:
                 doc.update(error_code='UPSTREAM_TIMEOUT', scenario='payment-timeout')
-        else:
+        elif index == INDICES[2]:
             action = 'LOGIN' if category < 5 else ('ROLE_CHANGE' if category < 10 else rng.choice(['LOGIN', 'LOGOUT', 'ROLE_CHANGE', 'CONFIG_READ', 'CONFIG_WRITE', 'EXPORT', 'DELETE']))
             result = 'FAIL' if category < 5 else rng.choices(['SUCCESS', 'FAIL'], [95, 5])[0]
             privileged = action in ('ROLE_CHANGE', 'CONFIG_WRITE', 'DELETE')
@@ -116,6 +116,41 @@ def documents(config, index):
                 doc.update(scenario='failed-login', error_code='AUTH_FAILED')
             elif category < 10:
                 doc['scenario'] = 'privileged-change'
+        elif index == INDICES[3]:
+            doc.update(order_id=f'ORD{i:010d}', customer_id=f'cust-{rng.randrange(20000):06d}',
+                       order_status=rng.choice(['created', 'paid', 'packed', 'shipped', 'returned']),
+                       total_amount=round(rng.uniform(10, 2500), 2),
+                       shipping={'country': rng.choice(['KR', 'JP', 'US']),
+                                 'postal_code': f'{rng.randrange(10000, 99999)}',
+                                 'geo': {'lat': round(rng.uniform(33, 38), 5),
+                                         'lon': round(rng.uniform(126, 130), 5)}},
+                       items=[{'sku': f'SKU-{rng.randrange(1000):04d}',
+                               'quantity': rng.randrange(1, 5),
+                               'price': round(rng.uniform(3, 400), 2)}
+                              for _ in range(1 + i % 3)],
+                       payment={'method': rng.choice(['card', 'wallet', 'bank']),
+                                'masked_pan': f'****{rng.randrange(1000,9999)}'},
+                       promotion={'code': 'WELCOME10' if i % 11 == 0 else None,
+                                  'discount': round(rng.uniform(0, 100), 2)})
+            if i % 17 == 0:
+                doc['scenario'] = 'multi-item-order'
+        else:
+            doc.update(metric_name=rng.choice(['jvm.gc.pause', 'http.request.duration',
+                                               'db.pool.active', 'queue.depth']),
+                       metric_value=round(rng.uniform(0, 1000), 4),
+                       host={'name': f'app-{rng.randrange(1, 8):02d}',
+                             'ip': f'10.20.{rng.randrange(1, 4)}.{rng.randrange(1, 255)}'},
+                       service={'name': rng.choice(['checkout', 'catalog', 'search']),
+                                'version': rng.choice(['1.4.2', '1.5.0', '2.0.0'])},
+                       labels={'env': rng.choice(['dev', 'stage', 'prod']),
+                               'region': rng.choice(['ap-northeast-2', 'us-east-1'])},
+                       trace={'span_id': f'span-{i:012d}', 'sampled': i % 3 != 0},
+                       histogram={'count': rng.randrange(1, 1000),
+                                  'sum': round(rng.uniform(1, 10000), 2),
+                                  'bounds': [10, 50, 100, 500, 1000]})
+            if i % 29 == 0:
+                doc.update(scenario='anomaly-spike', alert={'severity': 'high',
+                                                            'rule': 'latency-p99'})
         if config['payload_bytes']:
             # Synthetic opaque payload, not a real token/secret. Stored in _source, not indexed.
             doc['payload'] = ''.join(hashlib.sha256(f'{salt}:{i}:{j}'.encode()).hexdigest()
@@ -144,7 +179,7 @@ def prepare_indices(client, config, recreate=False):
             expected = definitions[index]['mappings']['_meta']['seed_lab']['signature']
             if meta.get('signature') != expected:
                 raise RuntimeError(f'{index} is an older/different dataset. Nothing was deleted. '
-                                   'Back up as needed, then use --recreate --yes (deletes only the 3 seed indices).')
+                                   'Back up as needed, then use --recreate --yes (deletes only the 5 seed indices).')
             settings = record.get('settings', {}).get('index', {})
             if int(settings.get('number_of_shards', -1)) != LAYOUT[index][0]:
                 raise RuntimeError(f'Shard layout changed for {index}; use --recreate --yes.')
@@ -256,7 +291,7 @@ def main(argv=None):
     p = parser()
     args = p.parse_args(argv)
     if args.recreate and not args.yes:
-        p.error('--recreate requires --yes; it deletes the 3 seed indices and their practice data')
+        p.error('--recreate requires --yes; it deletes the 5 seed indices and their practice data')
     if args.generate_only and args.recreate:
         p.error('--generate-only cannot be combined with --recreate')
     config = config_from_args(args)

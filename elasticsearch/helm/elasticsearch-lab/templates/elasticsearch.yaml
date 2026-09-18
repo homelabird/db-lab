@@ -1,0 +1,158 @@
+{{- if lt (int .Values.elasticsearch.replicas) 3 }}
+{{- fail "elasticsearch.replicas must be at least 3 for this lab chart" }}
+{{- end }}
+{{- if gt (int .Values.elasticsearch.replicas) 100 }}
+{{- fail "elasticsearch.replicas must not exceed 100 for this lab chart" }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "elasticsearch-lab.esHeadless" . }}
+  labels:
+    {{- include "elasticsearch-lab.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/component: elasticsearch
+    {{- include "elasticsearch-lab.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 9200
+    - name: transport
+      port: 9300
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "elasticsearch-lab.esHttp" . }}
+  labels:
+    {{- include "elasticsearch-lab.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.elasticsearch.type }}
+  selector:
+    app.kubernetes.io/component: elasticsearch
+    {{- include "elasticsearch-lab.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.elasticsearch.port }}
+      targetPort: http
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "elasticsearch-lab.fullname" . }}-elasticsearch
+  labels:
+    {{- include "elasticsearch-lab.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.elasticsearch.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: elasticsearch
+      {{- include "elasticsearch-lab.selectorLabels" . | nindent 6 }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "elasticsearch-lab.fullname" . }}-elasticsearch
+  labels:
+    {{- include "elasticsearch-lab.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "elasticsearch-lab.esHeadless" . }}
+  replicas: {{ .Values.elasticsearch.replicas }}
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: elasticsearch
+      {{- include "elasticsearch-lab.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: elasticsearch
+        {{- include "elasticsearch-lab.selectorLabels" . | nindent 8 }}
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.elasticsearchPod.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.elasticsearchPod.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.elasticsearchPod.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.elasticsearchPod.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.elasticsearch.sysctlInitContainer.enabled }}
+      initContainers:
+        - name: set-vm-max-map-count
+          image: {{ .Values.elasticsearch.sysctlInitContainer.image }}
+          securityContext:
+            privileged: {{ .Values.elasticsearch.sysctlInitContainer.privileged }}
+          command: ["sh", "-c", "sysctl -w vm.max_map_count=262144"]
+      {{- end }}
+      containers:
+        - name: elasticsearch
+          image: {{ .Values.elasticsearch.image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 9200
+            - name: transport
+              containerPort: 9300
+          env:
+            - name: cluster.name
+              value: {{ .Values.elasticsearch.clusterName | quote }}
+            - name: node.name
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: discovery.seed_hosts
+              value: {{ include "elasticsearch-lab.discoveryHosts" . | quote }}
+            - name: cluster.initial_master_nodes
+              value: {{ include "elasticsearch-lab.initialMasterNodes" . | quote }}
+            - name: node.roles
+              value: master,data,ingest
+            - name: xpack.security.enabled
+              value: {{ .Values.security.enabled | quote }}
+            - name: xpack.ml.enabled
+              value: "false"
+            - name: ingest.geoip.downloader.enabled
+              value: "false"
+            - name: ES_JAVA_OPTS
+              value: {{ printf "-Xms%s -Xmx%s" .Values.elasticsearch.heap .Values.elasticsearch.heap | quote }}
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health?wait_for_status=yellow&timeout=5s
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 8
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 8
+          resources:
+            {{- toYaml .Values.elasticsearch.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        {{- with .Values.elasticsearch.storageClassName }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.elasticsearch.storageSize }}

@@ -1,0 +1,42 @@
+{
+  "dynamic": "strict",
+  "properties": {
+    "@timestamp": {"type": "date"},
+    "document_id": {"type": "keyword"},
+    "event_seq": {"type": "long"},
+    "user_id": {"type": "keyword"},
+    "trace_id": {"type": "keyword"},
+    "src_ip": {"type": "ip"},
+    "tags": {"type": "keyword"},
+    "scenario": {"type": "keyword"},
+    "message": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+    "payload": {"type": "keyword", "index": false, "doc_values": false},
+    "metric_name": {"type": "keyword"},
+    "metric_value": {"type": "double"},
+    "host": {"properties": {
+      "name": {"type": "keyword"},
+      "ip": {"type": "ip"}
+    }},
+    "service": {"properties": {
+      "name": {"type": "keyword"},
+      "version": {"type": "keyword"}
+    }},
+    "labels": {"properties": {
+      "env": {"type": "keyword"},
+      "region": {"type": "keyword"}
+    }},
+    "trace": {"properties": {
+      "span_id": {"type": "keyword"},
+      "sampled": {"type": "boolean"}
+    }},
+    "histogram": {"properties": {
+      "count": {"type": "integer"},
+      "sum": {"type": "double"},
+      "bounds": {"type": "double"}
+    }},
+    "alert": {"properties": {
+      "severity": {"type": "keyword"},
+      "rule": {"type": "keyword"}
+    }}
+  }
+}

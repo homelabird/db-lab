@@ -1,0 +1,32 @@
+# Redis Cluster nodes retain this file and nodes.conf in the node's named volume.
+bind 0.0.0.0
+port 6379
+protected-mode yes
+requirepass @@REDIS_PASSWORD@@
+masterauth @@REDIS_PASSWORD@@
+daemonize no
+logfile ""
+loglevel notice
+dir /data/db
+dbfilename dump.rdb
+appendonly yes
+appenddirname appendonlydir
+appendfilename appendonly.aof
+appendfsync everysec
+save 300 100
+stop-writes-on-bgsave-error yes
+rdbcompression yes
+replica-read-only yes
+cluster-enabled yes
+cluster-config-file /data/state/nodes.conf
+cluster-node-timeout @@CLUSTER_NODE_TIMEOUT_MS@@
+cluster-announce-ip @@NODE_IP@@
+cluster-announce-port 6379
+cluster-announce-bus-port @@CLUSTER_BUS_PORT@@
+maxmemory @@REDIS_MAXMEMORY@@
+maxmemory-policy noeviction
+maxclients 1000
+slowlog-log-slower-than 10000
+slowlog-max-len 128
+latency-monitor-threshold 100
+tcp-keepalive 60

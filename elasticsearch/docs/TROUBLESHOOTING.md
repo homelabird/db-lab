@@ -66,7 +66,7 @@ SELinux 환경에서 Cerebro 설정 파일 bind mount는 `:ro,Z`를 사용합니
 
 ## 6. 구버전 인덱스 또는 다른 크기의 시드가 존재
 
-`older/different dataset`은 보호 동작입니다. 기존 데이터를 자동 삭제하지 않습니다. 데이터가 필요하면 먼저 보존한 뒤 **3개 시드 인덱스를 삭제해도 되는 경우에만**:
+`older/different dataset`은 보호 동작입니다. 기존 데이터를 자동 삭제하지 않습니다. 데이터가 필요하면 먼저 보존한 뒤 **5개 시드 인덱스를 삭제해도 되는 경우에만**:
 
 ```bash
 ./lab.sh seed --size-mb 100 --recreate --yes

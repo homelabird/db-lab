@@ -2,7 +2,7 @@
 
 ## 제공
 
-기본 Redis 3대·Sentinel 3대·클라이언트 1대, 인증, 영속 설정/데이터, 상태/읽기/쓰기 검증,
+기본 Redis 3대·Sentinel 3대 또는 Redis Cluster 3~100대·클라이언트 1대, 인증, 영속 설정/데이터, 상태/읽기/쓰기 검증,
 합성 데이터 생성, 자료구조 실습, Master/Replica/Sentinel 중단, pause, 노드 전체 network 단절,
 Replica 인증 오류, Sentinel 다수 상실 수동 절차, 고정/Sentinel 클라이언트 비교,
 요청별 JSONL와 쓰기 결과 비교, 진단 수집, 별도 sandbox의 maxmemory/noeviction 및 RDB/MISCONF,
@@ -10,7 +10,8 @@ Replica 인증 오류, Sentinel 다수 상실 수동 절차, 고정/Sentinel 클
 
 ## 제공하지 않는 기능
 
-웹 UI/대시보드, Prometheus/Grafana, Redis Cluster 샤딩, 운영용 ACL/TLS/비밀번호 rotation,
+웹 UI/대시보드, Prometheus/Grafana, Cluster 전용 클라이언트 라우팅과 장애조치 자동 검증,
+운영용 ACL/TLS/비밀번호 rotation,
 호스트 자체 장애 내성, 여러 물리 호스트의 quorum, 비대칭 network partition 정밀 재현,
 운영 데이터 자동 복구, 손상 AOF 강제 수정, host/container OOM 강제 주입은 포함하지 않습니다.
 네트워크 지연/패킷 손실을 특정 경로에만 주입하는 tc/proxy 구성도 포함하지 않습니다.

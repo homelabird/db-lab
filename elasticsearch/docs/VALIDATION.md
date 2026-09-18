@@ -68,7 +68,7 @@ Python 실행 환경에서 기본 seed=42, 시작일=2026-08-01 UTC, 31일, payl
 ./lab.sh size
 ```
 
-`lab.sh verify`는 실제 클러스터에서 5개 이상 data node, 인덱스별 정확한 문서 수와 시드 signature, 38 primary + 46 replica의 STARTED 배치, 22개 쿼리 응답과 주요 모의 사고 검색 결과를 검사합니다. 이 실행이 끝나야 `reports/live-verification.json`에 실제 환경의 PASS/FAIL이 기록됩니다. PIT 검색은 별도 명령으로 수행합니다.
+`lab.sh verify`는 실제 클러스터에서 5개 이상 data node, 인덱스별 정확한 문서 수와 시드 signature, 78 primary + 102 replica의 STARTED 배치, 26개 쿼리 응답과 주요 모의 사고 검색 결과를 검사합니다. 이 실행이 끝나야 `reports/live-verification.json`에 실제 환경의 PASS/FAIL이 기록됩니다. PIT 검색은 별도 명령으로 수행합니다.
 
 정적 검사만 다시 실행하려면:
 

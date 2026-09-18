@@ -15,6 +15,14 @@ SIZES = {
     'large': {'customer': 100000, 'product': 20000, 'orders': 400000, 'product_review': 240000, 'api_request_log': 1000000},
 }
 
+PROFILES = {
+    'smoke': {'size': 'tiny', 'batch': 250, 'payload_bytes': 64},
+    'balanced': {'size': 'small', 'batch': 500, 'payload_bytes': 256},
+    'skewed-api': {'size': 'small', 'batch': 250, 'payload_bytes': 2048},
+    'stress': {'size': 'standard', 'batch': 1000, 'payload_bytes': 1024},
+    'large-replay': {'size': 'large', 'batch': 2000, 'payload_bytes': 256},
+}
+
 def expected_counts(size):
     c = SIZES[size]
     # 10% of synthetic orders are cancelled/refunded/pending and have no shipment.

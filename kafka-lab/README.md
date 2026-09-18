@@ -1,6 +1,6 @@
 # Kafka + ZooKeeper 학습 Lab
 
-**ZooKeeper 3개 + Kafka broker 3개를 Podman Compose로 구성하는 로컬 실습 프로젝트입니다. KRaft가 아닙니다.**
+**ZooKeeper 3개 + Kafka broker 3개 또는 KRaft combined cluster를 Podman Compose로 구성하는 로컬 실습 프로젝트입니다.**
 
 카프카 기본 송수신, 파티션/복제/ISR, 컨슈머 그룹/오프셋/lag를 학습한 다음 직접 장애를 넣고 복구할 수 있습니다. 데이터 파일은 들어 있지 않습니다. 실행할 때 Python 생성기가 합성 JSON 이벤트를 만들어 실제 Kafka producer로 전송합니다.
 
@@ -32,7 +32,7 @@
 |---|---|
 | Kafka 이미지 | `docker.io/confluentinc/cp-kafka:7.9.0` |
 | ZooKeeper 이미지 | `docker.io/confluentinc/cp-zookeeper:7.9.0` |
-| Kafka 계열 | Apache Kafka 3.9 계열 / ZooKeeper 모드 |
+| Kafka 계열 | Apache Kafka 3.9 계열 / `KAFKA_MODE=zk` 또는 `kraft` |
 | Python 클라이언트 | Python 3.12, `confluent-kafka==2.8.2` |
 | 선택 UI | `ghcr.io/kafbat/kafka-ui:v1.3.0`, 읽기 전용 |
 | 일반 토픽 복제 | `replication.factor=3`, `min.insync.replicas=2` |
@@ -42,6 +42,30 @@
 | 보안 | **인증/TLS 없음. 기본 호스트 바인딩은 127.0.0.1.** |
 
 CP 7.9.x는 Kafka 3.9.x 계열이며 ZooKeeper 구성을 지원합니다. Kafka 4.0에서는 ZooKeeper 모드가 제거되었으므로 `latest`나 CP 8.x로 바꾸면 안 됩니다. 핵심 이미지는 학습용 고정 태그를 선택했으며, 최신 보안 패치를 보장하는 선택이 아닙니다. 운영 환경에 그대로 배포하지 마세요. [S1, S2]
+
+기본 모드는 기존 실습과 호환되는 `KAFKA_MODE=zk`입니다. KRaft를 사용하려면 `.env`에서 `KAFKA_MODE=kraft`로 바꾸거나 `KAFKA_MODE=kraft ./lab.sh up`을 실행합니다. KRaft는 3개 노드가 모두 `broker,controller`인 학습용 combined mode입니다. ZooKeeper와 KRaft는 Compose 파일·볼륨·metadata 저장소가 분리됩니다.
+
+노드 수는 Compose 파일에 고정되어 있지 않습니다. `.env`의 `NODES` 또는 명령 옵션으로 지정하면 `lab.sh`가 실행 직전에 `.state/compose.generated.yaml`을 렌더링합니다. 따라서 broker bootstrap, listener 포트, ZooKeeper ensemble, KRaft voter, volume, 복제 계수가 같은 노드 수로 생성됩니다.
+
+```bash
+# 5-node ZooKeeper cluster
+./lab.sh up --nodes 5
+
+# 3-node KRaft cluster
+KAFKA_MODE=kraft ./lab.sh up --nodes 3
+```
+
+ZooKeeper는 quorum 특성상 홀수 노드 수를 사용해야 합니다. 현재 `1..100` 노드까지 Compose를 생성할 수 있으며, 따라서 ZooKeeper 모드에서는 홀수 노드 수를 사용하고 KRaft 모드에서는 10·20·100 같은 구성도 생성할 수 있습니다. Kafka replication factor는 `min(NODES, 3)`으로 설정되고 1노드에서는 `min.insync.replicas=1`로 조정됩니다. 기존 클러스터와 노드 수를 바꿀 때는 컨테이너와 metadata 구성이 달라지므로 `down` 후 다시 `up`해야 합니다.
+
+```bash
+# KRaft 기동
+KAFKA_MODE=kraft ./lab.sh doctor
+KAFKA_MODE=kraft ./lab.sh up
+KAFKA_MODE=kraft ./lab.sh kraft-status
+KAFKA_MODE=kraft ./lab.sh smoke
+```
+
+KRaft 최초 실행 시 `KRAFT_CLUSTER_ID`를 `.state/kraft-cluster-id`에 생성하고 이후 재기동에 재사용합니다. ZooKeeper 모드에서 사용한 Kafka volume을 KRaft에서 재사용하지 않으며, 모드 변경 시 기존 컨테이너를 먼저 내리고 해당 모드로 다시 기동해야 합니다. `zk`, `zk-shell`, `stop-zk`, `zk-quorum`은 KRaft에서 지원하지 않습니다.
 
 태그는 고정했지만 이미지 digest까지 잠그지는 않았습니다. Python base image의 patch release도 고정하지 않았습니다. 따라서 바이트 단위 재현 빌드는 보장하지 않습니다.
 
@@ -98,6 +122,28 @@ chmod +x lab.sh scripts/*.sh
 
 `up`은 ZooKeeper 3노드의 leader/follower 상태를 확인한 후 Kafka를 기동합니다. 단순히 컨테이너가 `Running`이라는 이유로 준비 완료로 간주하지 않습니다. 이후 broker 3개와 leader/ISR 상태를 확인하고 기본 토픽을 만듭니다.
 
+명령을 처음 접할 때는 다음 흐름을 사용하면 됩니다.
+
+```bash
+./lab.sh scenarios       # 장애/시드/시뮬레이션 목록
+./lab.sh quickstart      # doctor → 기동 → health → smoke
+./lab.sh summary         # 현재 설정과 컨테이너/클러스터 요약
+./lab.sh check           # health의 짧은 별칭
+./lab.sh start           # up의 별칭
+./lab.sh stop            # down의 별칭
+```
+
+자주 쓰는 데이터 흐름은 preset 명령으로 줄일 수 있습니다.
+
+```bash
+./lab.sh seed-preset fraud --count 5000
+./lab.sh seed-preset outage --count 2000
+./lab.sh simulate-preset traffic
+./lab.sh simulate-preset burst --batches 5
+```
+
+Preset은 안전한 유한 기본값을 사용하며, 뒤에 옵션을 붙여 조정할 수 있습니다.
+
 `smoke`는 고유한 새 토픽에 120건을 넣고, broker delivery 확인 120건과 실제 읽기 120건, `sequence=0..119`의 누락/중복을 검사합니다. 성공했을 때만 `status: PASS`가 출력됩니다. 이 테스트를 통과해도 모든 장애 시나리오나 원격 listener가 검증된 것은 아닙니다.
 
 ## 4. 기본 데이터와 크기
@@ -131,6 +177,59 @@ chmod +x lab.sh scripts/*.sh
 입력 옵션별 상한은 `--mib 512`, `--count 2000000`, `--duration 600`입니다. 건수/시간 모드의 총 바이트 수는 메시지 크기와 전송률에 따라 달라집니다. 여러 번 실행한 누적 디스크 사용량까지 제한하는 quota는 아닙니다. 기본 보존 24시간과 디스크 여유를 함께 확인하세요. 기본 전송률은 1,000건/초이며 `--rate 0`은 무제한입니다.
 
 `--seed 42`는 합성 필드의 난수 재현용입니다. 실행마다 `run_id`와 시작 시간이 달라 전체 바이트가 항상 같지는 않습니다. `event_id=run_id:sequence`로 한 번의 실행을 추적할 수 있습니다.
+
+### 고도화된 시드와 지속 시뮬레이션
+
+기본 데이터 외에 업무 상황별 profile을 선택할 수 있습니다.
+
+```bash
+# 고위험 결제/사기 후보
+./lab.sh seed --kind payments --profile fraud --count 10000
+
+# 장애 상황의 5xx/고지연 access
+./lab.sh seed --kind access --profile outage --count 5000
+
+# 장비 과열·CPU/메모리 포화 metrics
+./lab.sh seed --kind metrics --profile outage --count 5000
+
+# 소수 key에 트래픽 집중
+./lab.sh seed --kind payments --profile skewed --count 10000
+```
+
+`simulate`는 batch 단위로 주기적인 이벤트를 생성합니다. `--batches` 또는 `--duration` 중 하나를 사용해 실행 한계를 지정하는 것을 권장합니다.
+
+```bash
+# 30초마다 500건, 총 10 batch
+./lab.sh simulate --kind payments --profile fraud \
+  --batch-count 500 --interval 30 --batches 10 --rate 1000
+
+# 5초 간격으로 10분 동안 장애 지표 생성
+./lab.sh simulate --kind metrics --profile outage \
+  --batch-count 100 --interval 5 --duration 600
+```
+
+여러 업무 topic을 하나의 시뮬레이션에서 섞고, 시간대별 profile과 burst를 지정할 수 있습니다.
+
+```bash
+# kind 가중치에 따라 세 topic을 선택
+./lab.sh simulate --kind all \
+  --mix payments=60,access=30,metrics=10 \
+  --batch-count 300 --batches 20 --interval 10
+
+# 10 batch 정상 → 5 batch 사기 → 5 batch 장애
+./lab.sh simulate --kind all \
+  --phases baseline=10,fraud=5,outage=5 \
+  --batch-count 100 --batches 20 --interval 5
+
+# 5번째 batch마다 5배 burst, interval은 ±20% 흔들림
+./lab.sh simulate --kind payments --profile seasonal \
+  --batch-count 100 --batches 20 --interval 10 \
+  --burst-every 5 --burst-multiplier 5 --jitter 20
+```
+
+`--kind all`의 기본 선택 비율은 세 kind 균등이며, `--mix`로 양의 정수 weight를 지정합니다. `--phases`는 `profile=batch수` 순서로 적용되고 마지막 phase 이후에는 마지막 profile을 유지합니다. `--seed`는 kind 선택과 jitter에도 사용되므로 같은 입력이면 스케줄이 재현됩니다.
+
+`simulate`는 각 batch에 별도의 `run_id`를 부여하고 delivery 결과를 확인합니다. `Ctrl-C`를 누르면 현재까지의 batch/전송 건수를 출력하고 종료합니다. 실행 중인 simulator를 백그라운드로 남기는 기능은 제공하지 않으며, shell/systemd 등 외부 supervisor가 필요합니다.
 
 ## 5. 화면으로 보기 — 선택 사항
 

@@ -18,10 +18,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LABEL = 'io.redis-sentinel-lab.id'
 REDIS = ['redis-1', 'redis-2', 'redis-3']
+MAX_CLUSTER_NODES = 100
+CLUSTER_NODES = [f'redis-cluster-{i}' for i in range(1, MAX_CLUSTER_NODES + 1)]
 SENTINELS = ['sentinel-1', 'sentinel-2', 'sentinel-3']
 BASE = REDIS + SENTINELS + ['lab-client']
 ALL = BASE + ['redis-sandbox']
 VOLUMES = ['redis-1-data', 'redis-2-data', 'redis-3-data', 'sentinel-1-state', 'sentinel-2-state', 'sentinel-3-state', 'client-results', 'sandbox-data']
+CLUSTER_VOLUMES = [f'cluster-{i}-data' for i in range(1, MAX_CLUSTER_NODES + 1)]
 IP_KEYS = ['REDIS_1_IP', 'REDIS_2_IP', 'REDIS_3_IP', 'SENTINEL_1_IP', 'SENTINEL_2_IP', 'SENTINEL_3_IP', 'CLIENT_IP', 'SANDBOX_IP']
 
 
@@ -43,6 +46,22 @@ def parse_env(path: Path) -> dict[str, str]:
 def validate_env(env: dict) -> None:
     if not re.fullmatch(r'[a-z][a-z0-9-]{0,39}', env['LAB_NAME']):
         raise ValueError('LAB_NAME must match [a-z][a-z0-9-]{0,39}')
+    if env['DEPLOYMENT_MODE'] not in ('sentinel', 'cluster'):
+        raise ValueError('DEPLOYMENT_MODE must be sentinel or cluster')
+    node_count = int(env['CLUSTER_NODE_COUNT'])
+    replicas = int(env['CLUSTER_REPLICAS'])
+    if not 3 <= node_count <= MAX_CLUSTER_NODES:
+        raise ValueError(f'CLUSTER_NODE_COUNT must be 3..{MAX_CLUSTER_NODES}')
+    if not 0 <= replicas <= node_count - 3:
+        raise ValueError('CLUSTER_REPLICAS must be 0..CLUSTER_NODE_COUNT-3')
+    if replicas and node_count % (replicas + 1):
+        raise ValueError('CLUSTER_NODE_COUNT must be divisible by CLUSTER_REPLICAS + 1')
+    try:
+        base_ip = ipaddress.ip_address(env['CLUSTER_BASE_IP'])
+    except ValueError as exc:
+        raise ValueError('CLUSTER_BASE_IP must be an IPv4 address') from exc
+    if base_ip.version != 4 or int(base_ip) + node_count - 1 > int(ipaddress.ip_address('255.255.255.255')):
+        raise ValueError('CLUSTER_BASE_IP and CLUSTER_NODE_COUNT exceed IPv4 space')
     for key in ('REDIS_PASSWORD', 'SENTINEL_PASSWORD'):
         if not re.fullmatch(r'[A-Za-z0-9_.@%+-]{12,128}', env[key]):
             raise ValueError(f'{key}: use 12..128 letters, digits, _, ., @, %, +, -')
@@ -52,7 +71,9 @@ def validate_env(env: dict) -> None:
     if network.version != 4 or not 16 <= network.prefixlen <= 27:
         raise ValueError('LAB_SUBNET must be an IPv4 /16../27 network')
     addresses = [ipaddress.ip_address(env[key]) for key in IP_KEYS]
-    if len(set(addresses)) != len(addresses): raise ValueError('All eight node addresses must be distinct')
+    cluster_addresses = [ipaddress.ip_address(env['CLUSTER_BASE_IP']) + i for i in range(node_count)]
+    addresses.extend(cluster_addresses)
+    if len(set(addresses)) != len(addresses): raise ValueError('All configured node addresses must be distinct')
     for address in addresses:
         if address not in network or address in (network.network_address, network.broadcast_address, network.network_address + 1):
             raise ValueError(f'{address} is not a usable non-gateway address in {network}')
@@ -63,6 +84,10 @@ def validate_env(env: dict) -> None:
         if not re.fullmatch(r'[A-Za-z0-9._/:@+-]+', env[key]): raise ValueError(f'Invalid image reference in {key}')
     if not 1000 <= int(env['DOWN_AFTER_MS']) <= 120000: raise ValueError('DOWN_AFTER_MS must be 1000..120000')
     if not 10000 <= int(env['FAILOVER_TIMEOUT_MS']) <= 600000: raise ValueError('FAILOVER_TIMEOUT_MS must be 10000..600000')
+    if not 1024 <= int(env['CLUSTER_BUS_PORT']) <= 65535:
+        raise ValueError('CLUSTER_BUS_PORT must be 1024..65535')
+    if not 1000 <= int(env['CLUSTER_NODE_TIMEOUT_MS']) <= 120000:
+        raise ValueError('CLUSTER_NODE_TIMEOUT_MS must be 1000..120000')
 
 
 def load_env() -> dict:
@@ -90,6 +115,7 @@ class Lab:
         self.name = env['LAB_NAME']
         self.network = self.name + '-net'
         self.proc_env = dict(os.environ, **env)
+        self.proc_env['CLUSTER_NODES'] = ','.join(self.cluster_endpoints())
         self._compose = None
 
     def redact(self, text: str) -> str:
@@ -114,11 +140,130 @@ class Lab:
             if not shutil.which('podman-compose'): raise RuntimeError('podman-compose is required; see README.md.')
             if '--in-pod' not in self.run(['podman-compose', '--help']).stdout:
                 raise RuntimeError('This podman-compose lacks --in-pod; install a newer version.')
-            self._compose = ['podman-compose', '--in-pod=false', '-p', self.name, '-f', str(ROOT / 'compose.yaml')]
+            compose_file = self.cluster_compose_path() if self.env['DEPLOYMENT_MODE'] == 'cluster' else ROOT / 'compose.yaml'
+            self._compose = ['podman-compose', '--in-pod=false', '-p', self.name, '-f', str(compose_file)]
         return self.run(self._compose + list(args), capture=capture, check=check, timeout=timeout)
 
+    def services(self):
+        return self.cluster_nodes() + ['lab-client'] if self.env['DEPLOYMENT_MODE'] == 'cluster' else BASE
+
+    def cluster_nodes(self):
+        return CLUSTER_NODES[:int(self.env['CLUSTER_NODE_COUNT'])]
+
+    def cluster_endpoints(self):
+        base = ipaddress.ip_address(self.env['CLUSTER_BASE_IP'])
+        return [f'{base + i}:6379' for i in range(int(self.env['CLUSTER_NODE_COUNT']))]
+
+    def cluster_compose_path(self):
+        path = ROOT / '.lab' / 'compose.cluster.generated.yaml'
+        path.parent.mkdir(mode=0o700, exist_ok=True)
+        base = self.env['CLUSTER_BASE_IP']
+        services = []
+        for index, node in enumerate(self.cluster_nodes(), 1):
+            ip = str(ipaddress.ip_address(base) + index - 1)
+            build = f'''    build:
+      context: .
+      dockerfile: Containerfile
+      target: redis-node
+      args:
+        REDIS_IMAGE: {self.env["REDIS_IMAGE"]}
+''' if index == 1 else ''
+            services.append(f'''  {node}:
+    image: localhost/{self.name}-redis:1.1
+    container_name: {self.name}-{node}
+    restart: "no"
+    stop_grace_period: 15s
+    mem_limit: {self.env["REDIS_CONTAINER_MEMORY"]}
+    labels:
+      io.redis-sentinel-lab.id: {self.name}
+{build}    environment:
+      REDIS_PASSWORD: ${{REDIS_PASSWORD:?Run ./lab.sh init first}}
+      SENTINEL_PASSWORD: ${{SENTINEL_PASSWORD:?Run ./lab.sh init first}}
+      MASTER_NAME: {self.env["MASTER_NAME"]}
+      PRIMARY_IP: {ip}
+      REDIS_MAXMEMORY: {self.env["REDIS_MAXMEMORY"]}
+      CLUSTER_BUS_PORT: {self.env["CLUSTER_BUS_PORT"]}
+      CLUSTER_NODE_TIMEOUT_MS: {self.env["CLUSTER_NODE_TIMEOUT_MS"]}
+      LAB_MODE: cluster
+      NODE_NAME: {node}
+      NODE_IP: {ip}
+    volumes:
+      - cluster-{index}-data:/data
+    networks:
+      labnet:
+        ipv4_address: {ip}
+        aliases: [{node}]
+    healthcheck:
+      test: ["CMD-SHELL", 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli -h 127.0.0.1 --raw PING | grep -qx PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+''')
+        endpoints = ','.join(self.cluster_endpoints())
+        volumes = '\n'.join(f'''  cluster-{i}-data:
+    name: {self.name}-cluster-{i}-data
+    labels:
+      io.redis-sentinel-lab.id: {self.name}''' for i in range(1, int(self.env['CLUSTER_NODE_COUNT']) + 1))
+        text = f'''x-podman:
+  in_pod: false
+services:
+{''.join(services)}  lab-client:
+    image: localhost/{self.name}-client:1.1
+    container_name: {self.name}-lab-client
+    build:
+      context: .
+      dockerfile: Containerfile
+      target: client
+      args:
+        PYTHON_IMAGE: {self.env["PYTHON_IMAGE"]}
+    restart: "no"
+    mem_limit: {self.env["CLIENT_CONTAINER_MEMORY"]}
+    labels:
+      io.redis-sentinel-lab.id: {self.name}
+    environment:
+      REDIS_PASSWORD: ${{REDIS_PASSWORD:?Run ./lab.sh init first}}
+      SENTINEL_PASSWORD: ${{SENTINEL_PASSWORD:?Run ./lab.sh init first}}
+      MASTER_NAME: {self.env["MASTER_NAME"]}
+      DEPLOYMENT_MODE: cluster
+      CLUSTER_NODE_COUNT: {self.env["CLUSTER_NODE_COUNT"]}
+      CLUSTER_NODES: {endpoints}
+      REDIS_NODES: {endpoints}
+    volumes:
+      - client-results:/results
+    networks:
+      labnet:
+        ipv4_address: {self.env["CLIENT_IP"]}
+        aliases: [lab-client]
+networks:
+  labnet:
+    name: {self.network}
+    driver: bridge
+    labels:
+      io.redis-sentinel-lab.id: {self.name}
+    ipam:
+      config:
+        - subnet: {self.env["LAB_SUBNET"]}
+volumes:
+{volumes}
+  client-results:
+    name: {self.name}-client-results
+    labels:
+      io.redis-sentinel-lab.id: {self.name}
+'''
+        path.write_text(text, encoding='utf-8')
+        return path
+
+    def active_nodes(self):
+        return self.services() + (['redis-sandbox'] if self.env['DEPLOYMENT_MODE'] == 'sentinel' else [])
+
+    def active_volumes(self):
+        return ([f'cluster-{i}-data' for i in range(1, int(self.env['CLUSTER_NODE_COUNT']) + 1)] + ['client-results']
+                if self.env['DEPLOYMENT_MODE'] == 'cluster' else VOLUMES)
+
     def cname(self, node: str) -> str:
-        if node not in ALL: raise ValueError(f'Unknown lab node {node!r}; allowed: {", ".join(ALL)}')
+        allowed = self.active_nodes()
+        if node not in allowed: raise ValueError(f'Unknown lab node {node!r}; allowed: {", ".join(allowed)}')
         return self.name + '-' + node
 
     def inspect(self, node: str, required=True) -> dict | None:
@@ -173,7 +318,8 @@ class Lab:
 
     def check_env_state(self, save=False):
         path = ROOT / '.lab' / 'environment.sha256'
-        keys = ['LAB_NAME', 'REDIS_PASSWORD', 'SENTINEL_PASSWORD', 'MASTER_NAME', 'LAB_SUBNET'] + IP_KEYS
+        keys = ['LAB_NAME', 'DEPLOYMENT_MODE', 'CLUSTER_NODE_COUNT', 'REDIS_PASSWORD',
+                'SENTINEL_PASSWORD', 'MASTER_NAME', 'LAB_SUBNET'] + IP_KEYS
         digest = hashlib.sha256('\n'.join(f'{key}={self.env[key]}' for key in keys).encode()).hexdigest()
         if path.exists() and path.read_text().strip() != digest:
             raise RuntimeError('Persistent settings differ from .env. Restore previous .env or deliberately reset using previous settings. No data was deleted.')
@@ -185,13 +331,40 @@ class Lab:
         print(self.run(['podman', '--version']).stdout.strip())
         version = self.run(['podman-compose', '--version']); print((version.stdout + version.stderr).strip())
         self.compose('config', capture=True)  # Do not print secrets.
-        for node in ALL: self.inspect(node, required=False)
-        for suffix in VOLUMES: self.volume_owned(suffix)
+        for node in self.active_nodes(): self.inspect(node, required=False)
+        for suffix in self.active_volumes(): self.volume_owned(suffix)
         self.check_network(); self.check_env_state()
         selinux = self.run(['getenforce'], check=False).stdout.strip() if shutil.which('getenforce') else 'not detected'
         print(f'SELinux: {selinux}; runtime mounts: named volumes only')
         print(f'Network: {self.network} ({self.env["LAB_SUBNET"]}); host ports: none')
         print('PASS: preflight. Images and containers still need to be built and tested.')
+
+    def overview(self):
+        mode = self.env['DEPLOYMENT_MODE']
+        print(f'Lab: {self.name}')
+        print(f'Mode: {mode}')
+        if mode == 'cluster':
+            count = int(self.env['CLUSTER_NODE_COUNT'])
+            replicas = int(self.env['CLUSTER_REPLICAS'])
+            print(f'Cluster: {count} nodes ({count // (replicas + 1)} masters + {replicas} replica(s) per master)')
+            print(f'Network: {self.network} / {self.env["LAB_SUBNET"]}')
+            print(f'Nodes: {self.cluster_nodes()[0]} .. {self.cluster_nodes()[-1]}')
+            print('\nNext steps:')
+            print('  ./lab.sh up --cluster-nodes N --cluster-replicas R')
+            print('  ./lab.sh cluster-init')
+            print('  ./lab.sh status')
+        else:
+            print('Topology: 3 Redis nodes + 3 Sentinel nodes')
+            print(f'Network: {self.network} / {self.env["LAB_SUBNET"]}')
+            print('\nNext steps:')
+            print('  ./lab.sh up')
+            print('  ./lab.sh status')
+            print('  ./lab.sh demo')
+        print('\nCommon commands:')
+        print('  ./lab.sh seed --records 2000 --profiles users,catalog')
+        print('  ./lab.sh seed-simulate --seconds 300 --rate 10')
+        print('  ./lab.sh logs NODE')
+        print('  ./lab.sh down')
 
     def execute(self, node: str, command: list, *, capture=True, check=True, timeout=30, tty=False):
         self.inspect(node)
@@ -199,7 +372,8 @@ class Lab:
         return self.run(args + [self.cname(node)] + command, capture=capture, check=check, timeout=timeout)
 
     def cli(self, node: str, args: list, *, capture=True, check=True, timeout=30, tty=False):
-        if node not in REDIS + SENTINELS + ['redis-sandbox']: raise ValueError('CLI target must be Redis or Sentinel')
+        allowed = self.cluster_nodes() if self.env['DEPLOYMENT_MODE'] == 'cluster' else REDIS + SENTINELS
+        if node not in allowed + ['redis-sandbox']: raise ValueError('CLI target is not part of the selected deployment mode')
         port, env_key = ('26379', 'SENTINEL_PASSWORD') if node in SENTINELS else ('6379', 'REDIS_PASSWORD')
         shell = f'export REDISCLI_AUTH="${env_key}"; exec redis-cli -e --raw -h 127.0.0.1 -p {port} "$@"'
         return self.execute(node, ['sh', '-c', shell, 'redis-cli'] + args, capture=capture, check=check, timeout=timeout, tty=tty)
@@ -209,10 +383,14 @@ class Lab:
 
     def master(self):
         value = self.client('master', capture=True, timeout=15).stdout.strip()
+        if self.env['DEPLOYMENT_MODE'] == 'cluster' and value == 'cluster':
+            return value
         if value not in REDIS: raise RuntimeError('Cannot safely determine current master: ' + self.redact(value))
         return value
 
     def resolve(self, node: str):
+        if node == 'master' and self.env['DEPLOYMENT_MODE'] == 'cluster':
+            raise ValueError('Cluster has multiple primaries; select redis-cluster-1..6 explicitly.')
         return self.master() if node == 'master' else node
 
     def state(self) -> dict:
@@ -232,11 +410,50 @@ class Lab:
     def up(self, build=True):
         self.doctor()
         if self.state(): raise RuntimeError('Active faults recorded. Inspect ./lab.sh faults and run ./lab.sh recover first.')
-        if build: self.compose('build', 'redis-1', 'lab-client')
+        if build:
+            build_node = CLUSTER_NODES[0] if self.env['DEPLOYMENT_MODE'] == 'cluster' else REDIS[0]
+            self.compose('build', build_node, 'lab-client')
         self.check_env_state(save=True)
-        self.compose('up', '-d', *BASE)
+        self.compose('up', '-d', *self.services())
+        if self.env['DEPLOYMENT_MODE'] == 'cluster':
+            print('Cluster nodes are running but not initialized. Run ./lab.sh cluster-init before client operations.')
+            return
         self.client('wait', '--timeout', str(self.readiness_budget()))
         print('\nReady. Next: ./lab.sh demo ; ./lab.sh seed ; ./lab.sh status')
+
+    def cluster_init(self):
+        if self.env['DEPLOYMENT_MODE'] != 'cluster':
+            raise RuntimeError('cluster-init requires DEPLOYMENT_MODE=cluster')
+        nodes = self.cluster_nodes()
+        for node in nodes:
+            self.inspect(node)
+        addresses = [f'{self.env[f"CLUSTER_{i}_IP"]}:6379' for i in range(1, len(nodes) + 1)]
+        replicas = int(self.env['CLUSTER_REPLICAS'])
+        command = (
+            'export REDISCLI_AUTH="$REDIS_PASSWORD"; '
+            'redis-cli --cluster create ' + ' '.join(addresses) +
+            f' --cluster-replicas {replicas} --cluster-yes'
+        )
+        result = self.execute(nodes[0], ['sh', '-eu', '-c', command], timeout=60)
+        if result.returncode:
+            raise RuntimeError('Redis Cluster initialization failed; inspect node logs. No cleanup was attempted.')
+        info = self.cli(CLUSTER_NODES[0], ['CLUSTER', 'INFO']).stdout
+        fields = dict(line.split(':', 1) for line in info.splitlines() if ':' in line)
+        if fields.get('cluster_state') != 'ok' or fields.get('cluster_slots_assigned') != '16384':
+            raise RuntimeError('Cluster initialization did not produce a healthy 16384-slot cluster.')
+        print(f'PASS: Redis Cluster initialized with {len(nodes)} nodes and {replicas} replica(s) per master.')
+
+    def persist_cluster_settings(self, count: int, replicas: int):
+        path = ROOT / '.env'
+        lines = path.read_text(encoding='utf-8').splitlines()
+        for key, value in (('CLUSTER_NODE_COUNT', count), ('CLUSTER_REPLICAS', replicas)):
+            for index, line in enumerate(lines):
+                if line.startswith(key + '='):
+                    lines[index] = f'{key}={value}'
+                    break
+            else:
+                lines.append(f'{key}={value}')
+        path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
     def fault(self, action: str, node: str | None):
         if action in ('kill-master', 'pause-master'):
@@ -443,7 +660,7 @@ rm -f /restore/state/persistence-fault-active /restore/state/pre-fault.rdb
     def collect(self):
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S') + '-' + secrets.token_hex(2)
         out = ROOT / 'output' / ('diagnostics-' + stamp); out.mkdir()
-        for node in ALL:
+        for node in self.active_nodes():
             data = self.inspect(node, required=False)
             if data is None: continue
             # Full inspect contains passwords; export only operational fields.
@@ -469,18 +686,18 @@ rm -f /restore/state/persistence-fault-active /restore/state/pre-fault.rdb
             raise ValueError('reset removes ONLY this lab\'s eight volumes. Export backups/results, then use ./lab.sh reset --yes.')
         if not reset and self.state():
             self.recover(wait=False)
-        for node in ALL:
+        for node in self.active_nodes():
             data = self.inspect(node, required=False)
             if not data: continue
             if data['State'].get('Paused'): self.run(['podman', 'unpause', self.cname(node)])
             if node in self.state() and self.state()[node]['action'] == 'isolate': self.connect_network(node)
-        for suffix in VOLUMES: self.volume_owned(suffix)
+        for suffix in self.active_volumes(): self.volume_owned(suffix)
         self.check_network()
         self.compose('--profile', 'sandbox', 'down', *(['-v'] if reset else []))
         self.save_state({})
         if reset:
             # Some providers skip unused profile volumes; remove only exact owned leftovers.
-            for suffix in VOLUMES:
+            for suffix in self.active_volumes():
                 if self.volume_owned(suffix): self.run(['podman', 'volume', 'rm', self.name + '-' + suffix])
             (ROOT / '.lab' / 'environment.sha256').unlink(missing_ok=True)
             print('Reset complete. .env and exported output/ preserved. Next: ./lab.sh up')
@@ -552,52 +769,101 @@ rm -f /restore/state/persistence-fault-active /restore/state/pre-fault.rdb
 
 
 def parser():
-    p = argparse.ArgumentParser(description='Redis Sentinel Podman lab — Korean walkthroughs in README.md')
+    p = argparse.ArgumentParser(description='Redis HA lab — use overview for the shortest guided workflow')
     sub = p.add_subparsers(dest='command')
-    for command in ['help', 'init', 'doctor', 'config', 'build', 'master', 'demo', 'faults', 'sandbox-up', 'sandbox-oom', 'sandbox-persistence', 'sandbox-recover', 'backup', 'collect', 'results', 'test', 'down']:
+    for command in ['help', 'init', 'doctor', 'config', 'build', 'master', 'demo', 'faults', 'sandbox-up', 'sandbox-oom', 'sandbox-persistence', 'sandbox-recover', 'backup', 'collect', 'results', 'test']:
         sub.add_parser(command)
+    sub.add_parser('overview', aliases=['info', 'quickstart'])
+    cluster_init = sub.add_parser('cluster-init')
+    cluster_init.add_argument('--cluster-nodes', type=int, help='Cluster nodes to initialize (3..100); overrides .env')
+    cluster_init.add_argument('--cluster-replicas', type=int, help='Replicas per master; overrides .env')
     validation = sub.add_parser('validate'); validation.add_argument('--yes', action='store_true'); validation.add_argument('--no-build', action='store_true')
     up = sub.add_parser('up'); up.add_argument('--no-build', action='store_true')
-    status = sub.add_parser('status'); status.add_argument('--json', action='store_true')
+    up.add_argument('--cluster-nodes', type=int, help='Cluster nodes to start (3..100); overrides .env')
+    up.add_argument('--cluster-replicas', type=int, help='Replicas per master; overrides .env')
+    status = sub.add_parser('status', aliases=['st']); status.add_argument('--json', action='store_true')
     wait = sub.add_parser('wait'); wait.add_argument('--timeout', type=int, default=180)
-    seed = sub.add_parser('seed'); seed.add_argument('--users', type=int, default=2000); seed.add_argument('--payload-bytes', type=int, default=256)
+    seed = sub.add_parser('seed', aliases=['load'])
+    seed.add_argument('--users', '--records', dest='users', type=int, default=2000)
+    seed.add_argument('--payload-bytes', type=int, default=256)
+    seed.add_argument('--profiles', default='users')
+    sim = sub.add_parser('seed-simulate', aliases=['simulate', 'sim'])
+    sim.add_argument('--seconds', type=int, default=300)
+    sim.add_argument('--interval', type=float, default=5)
+    sim.add_argument('--rate', type=float, default=10)
+    sim.add_argument('--payload-bytes', type=int, default=128)
+    sim.add_argument('--profiles', default='events,sessions,counters')
+    sim.add_argument('--run-id')
+    sim.add_argument('--mix', default='read:0,write:1,delete:0')
+    sim.add_argument('--hotset', type=int, default=0)
+    sim.add_argument('--jitter', type=float, default=0)
+    sim.add_argument('--ttl', type=int, default=0)
     work = sub.add_parser('workload'); work.add_argument('--seconds', type=int, default=120); work.add_argument('--rate', type=float, default=5)
     work.add_argument('--size', type=int, default=64); work.add_argument('--mode', choices=['sentinel', 'fixed'], default='sentinel')
     work.add_argument('--fixed-node', choices=REDIS, default='redis-1'); work.add_argument('--wait-replicas', type=int, choices=[0, 1, 2], default=0)
     work.add_argument('--run-id')
     verify = sub.add_parser('verify'); verify.add_argument('run_id', nargs='?', default='latest')
     cli = sub.add_parser('cli'); cli.add_argument('node'); cli.add_argument('redis_args', nargs=argparse.REMAINDER)
-    logs = sub.add_parser('logs'); logs.add_argument('node'); logs.add_argument('--follow', action='store_true'); logs.add_argument('--tail', type=int, default=100)
+    logs = sub.add_parser('logs', aliases=['log']); logs.add_argument('node'); logs.add_argument('--follow', action='store_true'); logs.add_argument('--tail', type=int, default=100)
     fault = sub.add_parser('fault'); fault.add_argument('action', choices=['kill-master', 'pause-master', 'stop', 'kill', 'pause', 'isolate', 'auth-replica']); fault.add_argument('node', nargs='?')
     recover = sub.add_parser('recover'); recover.add_argument('node', nargs='?', default='all')
-    start = sub.add_parser('start'); start.add_argument('node', choices=ALL)
+    start = sub.add_parser('start'); start.add_argument('node', choices=ALL + CLUSTER_NODES)
     restore = sub.add_parser('restore'); restore.add_argument('file'); restore.add_argument('--yes', action='store_true')
     reset = sub.add_parser('reset'); reset.add_argument('--yes', action='store_true')
+    sub.add_parser('down', aliases=['stop'])
     return p
 
 
 def main(argv=None):
     p = parser(); args = p.parse_args(argv)
     if args.command in (None, 'help'):
-        p.print_help(); print('\nQuick start: ./lab.sh up ; ./lab.sh demo ; ./lab.sh seed ; ./lab.sh test'); return 0
+        p.print_help()
+        print('\nStart here: ./lab.sh overview')
+        return 0
     lab = Lab(load_env())
-    if args.command == 'init': print('Environment ready. Review .env, then ./lab.sh doctor')
+    if getattr(args, 'cluster_nodes', None) is not None or getattr(args, 'cluster_replicas', None) is not None:
+        if lab.env['DEPLOYMENT_MODE'] != 'cluster':
+            raise ValueError('Cluster topology options require DEPLOYMENT_MODE=cluster')
+        if args.cluster_nodes is not None:
+            lab.env['CLUSTER_NODE_COUNT'] = str(args.cluster_nodes)
+        if args.cluster_replicas is not None:
+            lab.env['CLUSTER_REPLICAS'] = str(args.cluster_replicas)
+        validate_env(lab.env)
+        lab.proc_env.update(CLUSTER_NODE_COUNT=lab.env['CLUSTER_NODE_COUNT'],
+                            CLUSTER_REPLICAS=lab.env['CLUSTER_REPLICAS'])
+        lab.proc_env['CLUSTER_NODES'] = ','.join(lab.cluster_endpoints())
+        lab.persist_cluster_settings(int(lab.env['CLUSTER_NODE_COUNT']),
+                                     int(lab.env['CLUSTER_REPLICAS']))
+    if args.command in ('overview', 'info', 'quickstart'): lab.overview()
+    elif args.command == 'init': print('Environment ready. Review .env, then ./lab.sh doctor')
     elif args.command == 'doctor': lab.doctor()
     elif args.command == 'config': print(lab.redact(lab.compose('config', capture=True).stdout))
-    elif args.command == 'build': lab.doctor(); lab.compose('build', 'redis-1', 'lab-client')
+    elif args.command == 'build':
+        lab.doctor()
+        build_node = CLUSTER_NODES[0] if lab.env['DEPLOYMENT_MODE'] == 'cluster' else REDIS[0]
+        lab.compose('build', build_node, 'lab-client')
     elif args.command == 'up': lab.up(build=not args.no_build)
-    elif args.command == 'status': lab.client('status', *(['--json'] if args.json else []))
+    elif args.command == 'cluster-init': lab.cluster_init()
+    elif args.command in ('status', 'st'): lab.client('status', *(['--json'] if args.json else []))
     elif args.command == 'wait': lab.client('wait', '--timeout', str(args.timeout))
     elif args.command == 'master': print(lab.master())
     elif args.command == 'demo': lab.client('basic-demo')
-    elif args.command == 'seed': lab.client('seed', '--users', str(args.users), '--payload-bytes', str(args.payload_bytes))
+    elif args.command in ('seed', 'load'):
+        lab.client('seed', '--users', str(args.users), '--payload-bytes', str(args.payload_bytes),
+                   '--profiles', args.profiles)
+    elif args.command in ('seed-simulate', 'simulate', 'sim'):
+        lab.client('seed-simulate', '--seconds', str(args.seconds), '--interval', str(args.interval),
+                   '--rate', str(args.rate), '--payload-bytes', str(args.payload_bytes),
+                   '--profiles', args.profiles, '--mix', args.mix, '--hotset', str(args.hotset),
+                   '--jitter', str(args.jitter), '--ttl', str(args.ttl),
+                   *(['--run-id', args.run_id] if args.run_id else []))
     elif args.command == 'workload':
         lab.client('workload', '--seconds', str(args.seconds), '--rate', str(args.rate), '--size', str(args.size),
                    '--mode', args.mode, '--fixed-node', args.fixed_node, '--wait-replicas', str(args.wait_replicas),
                    *(['--run-id', args.run_id] if args.run_id else []))
     elif args.command == 'verify': lab.client('verify', args.run_id)
     elif args.command == 'cli': lab.cli(lab.resolve(args.node), args.redis_args, capture=False, timeout=None, tty=not args.redis_args and sys.stdin.isatty())
-    elif args.command == 'logs':
+    elif args.command in ('logs', 'log'):
         node = lab.resolve(args.node); lab.inspect(node)
         lab.run(['podman', 'logs', '--tail', str(args.tail)] + (['--follow'] if args.follow else []) + [lab.cname(node)], capture=False, timeout=None)
     elif args.command == 'faults': print(json.dumps(lab.state(), indent=2))
@@ -618,7 +884,7 @@ def main(argv=None):
     elif args.command == 'validate':
         from live_validate import validate
         return validate(lab, confirmed=args.yes, no_build=args.no_build)
-    elif args.command == 'down': lab.down()
+    elif args.command in ('down', 'stop'): lab.down()
     elif args.command == 'reset': lab.down(reset=True, confirmed=args.yes)
     return 0
 

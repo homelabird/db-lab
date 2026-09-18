@@ -69,6 +69,12 @@ services:
       - "${BIND_ADDRESS:-127.0.0.1}:${WRITER_PORT:-13306}:3306"
       - "${BIND_ADDRESS:-127.0.0.1}:${READER_PORT:-13307}:3307"
       - "${BIND_ADDRESS:-127.0.0.1}:${HAPROXY_STATS_PORT:-18084}:8404"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8404/stats >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
   dashboard:
     image: localhost/${LAB_PROJECT:-mariadb-ha}-node:lab
     container_name: ${LAB_PROJECT:-mariadb-ha}-dashboard
@@ -76,6 +82,12 @@ services:
     user: "65534:65534"
     networks: [labnet]
     ports: ["${BIND_ADDRESS:-127.0.0.1}:${DASHBOARD_PORT:-18081}:8080"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/cluster', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
     # No DB credentials and NO container runtime socket mounted.
   tools:
     image: localhost/${LAB_PROJECT:-mariadb-ha}-node:lab

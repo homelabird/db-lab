@@ -1,0 +1,15 @@
+Elasticsearch lab has been installed.
+
+Namespace: {{ .Release.Namespace }}
+Elasticsearch service: {{ include "elasticsearch-lab.esHttp" . }}:{{ .Values.service.elasticsearch.port }}
+{{- if .Values.kibana.enabled }}
+Kibana:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "elasticsearch-lab.fullname" . }}-kibana 5601:{{ .Values.kibana.service.port }}
+{{- end }}
+{{- if .Values.cerebro.enabled }}
+Cerebro:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "elasticsearch-lab.fullname" . }}-cerebro 9000:{{ .Values.cerebro.service.port }}
+{{- end }}
+
+Before upgrading, take a snapshot and verify compatibility:
+  helm upgrade {{ .Release.Name }} ./helm/elasticsearch-lab --set elasticsearch.image=docker.elastic.co/elasticsearch/elasticsearch:7.17.30

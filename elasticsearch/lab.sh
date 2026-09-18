@@ -7,42 +7,55 @@ source "$ROOT/scripts/common.sh"
 
 usage() {
   cat <<'EOF'
-Elasticsearch 5-node lab controller
+Elasticsearch lab controller
 
 Usage:
   ./lab.sh <command> [options]
 
 Lifecycle:
   doctor|check       Check host prerequisites
-  up                 Start the cluster and Cerebro
+  up|start           Start Elasticsearch, Cerebro, and Kibana
+  demo               Start → seed smoke data → verify everything
   down [--purge --yes]
-  status             Show cluster, node, and shard status
+  status|ps          Show cluster, node, and shard status
+  ui                 Print browser URLs
   logs [service...]  Follow Compose logs
   compose <args...>  Run the configured Compose provider
+  k8s <subcommand>   Deploy, verify, and upgrade the Kubernetes lab
+  helm <args...>      Run Helm against ./helm/elasticsearch-lab
 
 Data and queries:
-  seed [options]     Generate and load the lab data (see: ./lab.sh seed --help)
+  seed [options]     Generate and load the lab data
   verify             Verify seeded data and cluster layout
   size               Show dataset storage sizes
-  purge --yes        Delete only the three lab seed indices
-  query [args...]    Run a catalog query example (use "query list")
+  purge --yes        Delete only the five lab seed indices
+  query [args...]    Run a catalog query example (no args: list)
   pit [options]      Run PIT/search_after pagination example
   load [options]     Run the live write load
   reset              Restore lab cluster settings without deleting data
 
 Operations:
   fault [args...]    Run the managed fault-lab controller
-  scenario <name>    Run a shard/topology scenario
+  scenario <name>    Run a shard/topology scenario (use "scenario list")
   offline-tests      Run shell and Python offline tests
   help               Show this help
 
-Scenario names are the script names without .sh, for example:
+Quick start:
+  ./lab.sh demo                 # safe 5MiB smoke dataset
+  ./lab.sh seed                 # default 100MiB dataset
+  ./lab.sh verify
+  ./lab.sh ui
+
+Scenario names are the script names without .sh:
   scenario list
   scenario 01
   scenario 01-manual-shard-move
   scenario manual-shard-move
   scenario node-failure-and-recovery --test --yes
   scenario scale-out-node --remove
+  scenario list
+  k8s apply
+  k8s upgrade docker.elastic.co/elasticsearch/elasticsearch:7.17.29
 
 Typical seed workflow:
   ./lab.sh up
@@ -51,13 +64,25 @@ Typical seed workflow:
   ./lab.sh verify                 # counts, mappings, shards, and queries
   ./lab.sh size                   # current Lucene store size
 
-seed creates three deterministic indices:
-  lab-transactions-v1  50% of source target, 12 primaries, 1 replica
-  lab-web-logs-v1      32% of source target, 18 primaries, 1 replica
-  lab-audit-v1         18% of source target,  8 primaries, 2 replicas
+seed creates five deterministic indices with different mappings and shard layouts.
 
 The reported "source" size is compact JSON _source bytes, not disk usage.
 The final manifest is written to reports/seed-manifest.json.
+EOF
+}
+
+demo() {
+  bash "$ROOT/scripts/01-up.sh"
+  python3 "$ROOT/scripts/generate_and_load.py" --size-mb 5
+  python3 "$ROOT/scripts/verify_seed.py"
+}
+
+ui() {
+  cat <<EOF
+Elasticsearch: ${ES_URL}
+Cerebro:       http://127.0.0.1:${CEREBRO_PORT:-9000}
+Kibana:        http://127.0.0.1:${KIBANA_PORT:-5601}
+Kibana Console: http://127.0.0.1:${KIBANA_PORT:-5601}/app/dev_tools#/console
 EOF
 }
 
@@ -106,7 +131,28 @@ The numbered shell files remain compatibility entrypoints. Prefer this
 command for stable argument handling and run `scenario list` for names.
 EOF
     fi
-    find "$ROOT/scenarios" -maxdepth 1 -type f -name '*.sh' -printf '%f\n' | sort
+    while IFS= read -r candidate; do
+      name="${candidate##*/}"; name="${name%.sh}"
+      case "$name" in
+        01-*) description="manual shard move" ;;
+        02-*) description="drain a node" ;;
+        03-*) description="too many replicas" ;;
+        04-*) description="allocation explain" ;;
+        05-*) description="impossible allocation filter" ;;
+        06-*) description="node failure and recovery" ;;
+        07-*) description="disable allocation" ;;
+        08-*) description="zone awareness" ;;
+        09-*) description="cancel replica recovery" ;;
+        10-*) description="rebalance control" ;;
+        11-*) description="disk watermark" ;;
+        12-*) description="primary vs replica" ;;
+        13-*) description="scale out es06" ;;
+        14-*) description="relocation under write load" ;;
+        15-*) description="Kubernetes rolling upgrade" ;;
+        *) description="scenario" ;;
+      esac
+      printf '%-38s %s\n' "$name" "$description"
+    done < <(find "$ROOT/scenarios" -maxdepth 1 -type f -name '*.sh' -printf '%f\n' | sort)
     return
   fi
   if [[ "$requested" =~ ^[0-9]{1,2}$ ]]; then
@@ -133,6 +179,8 @@ shift || true
 
 case "$command" in
   help|-h|--help) usage ;;
+  demo|quickstart) demo ;;
+  ui|urls|open) ui ;;
   doctor|check) run_script "$ROOT/scripts/00-doctor.sh" "$@" ;;
   up|start) run_script "$ROOT/scripts/01-up.sh" "$@" ;;
   down|stop) run_script "$ROOT/scripts/02-down.sh" "$@" ;;
@@ -141,13 +189,21 @@ case "$command" in
   reset) run_script "$ROOT/scripts/05-reset-cluster-settings.sh" "$@" ;;
   purge) run_script "$ROOT/scripts/06-purge-lab-indices.sh" "$@" ;;
   size|dataset-size) run_script "$ROOT/scripts/07-dataset-size.sh" "$@" ;;
-  query|queries) run_python query_examples.py "$@" ;;
+  query|queries)
+    if [[ "${1:-}" == "" ]]; then
+      run_python query_examples.py list
+    else
+      run_python query_examples.py "$@"
+    fi
+    ;;
   verify) run_python verify_seed.py "$@" ;;
   pit|pagination) run_python pit_pagination.py "$@" ;;
   load|live-load) run_python live_load.py "$@" ;;
   offline-tests|test) run_script "$ROOT/scripts/12-offline-tests.sh" "$@" ;;
   fault|fault-lab) run_python fault_lab.py "$@" ;;
   scenario) scenario_script "$@" ;;
+  k8s) run_script "$ROOT/scripts/k8s_lab.sh" "$@" ;;
+  helm) command -v helm >/dev/null 2>&1 || { echo '[error] helm is required' >&2; exit 127; }; helm "$@" ;;
   compose) compose "$@" ;;
   logs)
     compose logs "$@"

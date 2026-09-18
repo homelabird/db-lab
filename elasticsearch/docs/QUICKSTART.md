@@ -44,7 +44,7 @@ sudo sysctl -w vm.max_map_count=262144
 ```
 
 전체 설정은 `.env.example`, 시드 인자는 `./lab.sh seed --help`에서 확인합니다. `seed`는
-세 인덱스에 총 약 100MiB의 결정적 합성 데이터를 생성하고 완료 후
+다섯 인덱스에 총 약 100MiB의 결정적 합성 데이터를 생성하고 완료 후
 `reports/seed-manifest.json`을 기록합니다. 적재 완료 후에도 `./lab.sh verify`까지
 실행해야 매핑·샤드·검색 예제 검증이 끝납니다. CLI 인자가 환경변수보다 우선하며,
 `.env`에는 `KEY=value`만 사용하고 inline 주석, 변수 치환, 쉘 명령을 넣지 마세요.

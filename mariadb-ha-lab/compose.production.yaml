@@ -1,0 +1,15 @@
+# Production-oriented single-host overlay.
+#
+# This does not provide multi-host HA, TLS, secret-manager integration, or
+# remote backup. Use it only after supplying those controls externally.
+services:
+  galera1:
+    restart: unless-stopped
+  galera2:
+    restart: unless-stopped
+  galera3:
+    restart: unless-stopped
+  proxy:
+    restart: unless-stopped
+  dashboard:
+    restart: unless-stopped

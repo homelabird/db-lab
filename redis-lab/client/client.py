@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import signal
 import sys
 import time
@@ -21,7 +22,10 @@ from core import endpoint_list, safe_run_id, payload_for, classify_error, verifi
 PASSWORD = os.environ.get('REDIS_PASSWORD', '')
 SENTINEL_PASSWORD = os.environ.get('SENTINEL_PASSWORD', '')
 MASTER_NAME = os.environ.get('MASTER_NAME', 'mymaster')
+DEPLOYMENT_MODE = os.environ.get('DEPLOYMENT_MODE', 'sentinel')
+CLUSTER_NODE_COUNT = int(os.environ.get('CLUSTER_NODE_COUNT', '6'))
 NODES = endpoint_list(os.environ.get('REDIS_NODES', '10.89.77.11:6379,10.89.77.12:6379,10.89.77.13:6379'))
+CLUSTER_NODES = endpoint_list(os.environ.get('CLUSTER_NODES', os.environ.get('REDIS_NODES', '10.89.77.11:6379,10.89.77.12:6379,10.89.77.13:6379')))[:CLUSTER_NODE_COUNT]
 SENTINELS = endpoint_list(os.environ.get('SENTINEL_NODES', '10.89.77.21:26379,10.89.77.22:26379,10.89.77.23:26379'))
 RESULTS = Path(os.environ.get('RESULTS_DIR', '/results'))
 
@@ -54,6 +58,11 @@ def sentinel() -> Sentinel:
 
 
 def master_client() -> redis.Redis:
+    if DEPLOYMENT_MODE == 'cluster':
+        from redis.cluster import ClusterNode, RedisCluster
+        return RedisCluster(
+            startup_nodes=[ClusterNode(host, port) for host, port in CLUSTER_NODES],
+            password=PASSWORD, **kwargs())
     return sentinel().master_for(MASTER_NAME)
 
 
@@ -65,6 +74,8 @@ def node_name(address: str) -> str:
 
 
 def current_master() -> tuple[str, int]:
+    if DEPLOYMENT_MODE == 'cluster':
+        raise RuntimeError('Cluster mode has multiple primaries; use status to inspect shard primaries.')
     host, port = sentinel().discover_master(MASTER_NAME)
     node_name(host)
     if port != 6379:
@@ -76,6 +87,26 @@ def current_master() -> tuple[str, int]:
 
 
 def snapshot() -> dict:
+    if DEPLOYMENT_MODE == 'cluster':
+        result = {'time_utc': now(), 'mode': 'cluster', 'redis': {}, 'cluster': {}}
+        for i, endpoint in enumerate(CLUSTER_NODES, 1):
+            name = f'redis-cluster-{i}'
+            try:
+                with direct(endpoint) as connection:
+                    info = connection.info()
+                    result['redis'][name] = {'reachable': True, 'address': endpoint[0],
+                        **{k: info.get(k) for k in ('role', 'master_host', 'master_link_status',
+                           'used_memory_human', 'used_memory', 'connected_clients',
+                           'rejected_connections', 'aof_enabled')},
+                        'dbsize': connection.dbsize()}
+                    cluster_info = connection.execute_command('CLUSTER', 'INFO')
+                    if isinstance(cluster_info, dict):
+                        result['cluster'][name] = cluster_info
+                    else:
+                        result['cluster'][name] = {}
+            except (redis.RedisError, OSError) as exc:
+                result['redis'][name] = {'reachable': False, 'error': clean_error(exc)}
+        return result
     result = {'time_utc': now(), 'redis': {}, 'sentinel': {}}
     for i, endpoint in enumerate(NODES, 1):
         name = f'redis-{i}'
@@ -113,6 +144,24 @@ def snapshot() -> dict:
 
 
 def topology_errors(state: dict) -> list[str]:
+    if DEPLOYMENT_MODE == 'cluster':
+        errors = []
+        for name, data in state['redis'].items():
+            if not data.get('reachable'):
+                errors.append(f'{name}: unreachable')
+        infos = [data for data in state.get('cluster', {}).values() if data]
+        if not infos:
+            return errors + ['No cluster info available']
+        healthy = [info for info in infos if info.get('cluster_state') == 'ok']
+        if len(healthy) != len(infos):
+            errors.append('Cluster state is not ok on every reachable node')
+        if any(info.get('cluster_slots_assigned') != '16384' or info.get('cluster_slots_ok') != '16384'
+               for info in healthy):
+            errors.append('Cluster does not cover all 16384 slots')
+        if any(int(info.get('cluster_slots_fail', 0)) or int(info.get('cluster_slots_pfail', 0))
+               for info in healthy):
+            errors.append('Cluster has failed or pfail slots')
+        return errors
     errors = []
     masters = [(name, d) for name, d in state['redis'].items() if d.get('role') == 'master']
     if len(masters) != 1:
@@ -155,7 +204,7 @@ def print_status(state: dict) -> None:
         link = (f"{data.get('master_link_status')}/{data.get('master_host')}" if data['role'] == 'slave'
                 else f"replicas={data.get('connected_slaves')}")
         print(f"{name:<13} {data['role']:<9} {link:<26} {str(data.get('used_memory_human')):<12} {data['dbsize']:>8}")
-    for name, data in state['sentinel'].items():
+    for name, data in state.get('sentinel', {}).items():
         if not data.get('reachable'):
             print(f"{name:<13} DOWN {data.get('error', '')}")
         else:
@@ -177,10 +226,11 @@ def wait_ready(timeout: int) -> None:
                 with master_client().client() as connection:
                     key = f'lab:health:{uuid.uuid4().hex}'
                     connection.set(key, 'ok', ex=60)
-                    acknowledged = connection.wait(2, 1000)
-                    if connection.get(key) == 'ok' and acknowledged == 2:
+                    required_replicas = 1 if DEPLOYMENT_MODE == 'cluster' else 2
+                    acknowledged = connection.wait(required_replicas, 1000)
+                    if connection.get(key) == 'ok' and acknowledged >= required_replicas:
                         print_status(state)
-                        print('PASS: authenticated write/read and WAIT 2 on the same connection')
+                        print(f'PASS: authenticated write/read and WAIT {required_replicas} on the same connection')
                         return
                     errors = ['Write/read/WAIT 2 verification not complete']
             except (redis.RedisError, OSError) as exc:
@@ -193,29 +243,168 @@ def wait_ready(timeout: int) -> None:
     raise RuntimeError(f'Readiness timeout ({timeout}s). Use ./lab.sh status and ./lab.sh logs NODE.')
 
 
-def seed(users: int, payload_bytes: int) -> None:
-    if not 1 <= users <= 100000 or not 0 <= payload_bytes <= 8192:
-        raise ValueError('users=1..100000, payload-bytes=0..8192')
-    if users * (payload_bytes + 500) > 64 * 1024 * 1024:
-        raise ValueError('Seed estimated payload exceeds the 64 MiB lab safety cap; reduce inputs.')
-    with master_client() as connection:
-        with connection.pipeline(transaction=False) as pipe:
-            for i in range(1, users + 1):
-                pipe.hset(f'lab:user:{i}', mapping={'id': str(i), 'name': f'user-{i:06d}',
-                    'tier': ('basic', 'silver', 'gold')[i % 3], 'risk': str((i * 17) % 100),
+SEED_PROFILES = ('users', 'sessions', 'catalog', 'events', 'geo', 'counters')
+
+
+def parse_mix(raw: str) -> dict[str, float]:
+    result = {}
+    for item in raw.split(','):
+        name, value = item.split(':', 1)
+        if name not in ('read', 'write', 'delete') or name in result:
+            raise ValueError('mix must use read,write,delete exactly once at most')
+        result[name] = float(value)
+    if not result or any(value < 0 for value in result.values()) or sum(result.values()) <= 0:
+        raise ValueError('mix values must be non-negative and have a positive total')
+    total = sum(result.values())
+    return {name: value / total for name, value in result.items()}
+
+
+def choose_operation(rng: random.Random, mix: dict[str, float]) -> str:
+    point = rng.random()
+    cumulative = 0.0
+    for name, weight in mix.items():
+        cumulative += weight
+        if point < cumulative:
+            return name
+    return next(reversed(mix))
+
+
+def _seed_batch(connection, profile: str, start: int, count: int, payload_bytes: int,
+                rng: random.Random) -> int:
+    with connection.pipeline(transaction=False) as pipe:
+        for number in range(start, start + count):
+            tag = f'{{{number}}}'
+            if profile == 'users':
+                pipe.hset(f'lab:user:{tag}', mapping={
+                    'id': str(number), 'name': f'user-{number:08d}',
+                    'email': f'user-{number:08d}@example.test',
+                    'tier': ('basic', 'silver', 'gold', 'platinum')[number % 4],
+                    'risk': str((number * 17) % 100),
                     'payload': 'x' * payload_bytes})
-                pipe.set(f'lab:session:{i}', f'token-{i:08d}', ex=900 + i % 900)
-                pipe.zadd('lab:ranking:risk', {str(i): (i * 17) % 100})
-                pipe.sadd('lab:users:active', str(i))
-                pipe.xadd('lab:events:transactions', {'uid': i, 'amount': 1000 + i % 100000,
-                    'kind': 'synthetic'}, maxlen=10000, approximate=True)
-                if i % 100 == 0:
-                    pipe.execute()
-                    print(f'Seed {i}/{users}', flush=True)
-            pipe.execute()
-        connection.set('lab:seed:users', users)
-        print(json.dumps({'users': users, 'dbsize': connection.dbsize(),
-                          'used_memory_human': connection.info('memory')['used_memory_human']}, ensure_ascii=False))
+                pipe.sadd(f'lab:users:active:{tag}', str(number))
+            elif profile == 'sessions':
+                pipe.hset(f'lab:session:{tag}', mapping={
+                    'user_id': str(number), 'token': f'token-{number:012d}',
+                    'device': ('web', 'ios', 'android')[number % 3],
+                    'ip': f'10.20.{number % 250}.{number % 251 + 1}'})
+                pipe.expire(f'lab:session:{tag}', 900 + number % 1800)
+            elif profile == 'catalog':
+                pipe.hset(f'lab:product:{tag}', mapping={
+                    'sku': f'SKU-{number:08d}', 'category': ('book', 'home', 'tech', 'sport')[number % 4],
+                    'price_cents': str(499 + (number * 37) % 250000),
+                    'stock': str((number * 13) % 500), 'payload': 'x' * min(payload_bytes, 2048)})
+                pipe.zadd('lab:catalog:popular', {str(number): (number * 31) % 100000})
+            elif profile == 'events':
+                pipe.xadd(f'lab:events:{tag}', {
+                    'event_id': uuid.uuid4().hex, 'user_id': str(number),
+                    'kind': ('view', 'login', 'purchase', 'logout')[number % 4],
+                    'amount': str((number * 97) % 100000)}, maxlen=100, approximate=True)
+            elif profile == 'geo':
+                pipe.geoadd('lab:locations', (127.0 + (number % 1000) / 10000,
+                    36.0 + (number % 700) / 10000, f'location-{number}'))
+            elif profile == 'counters':
+                pipe.hincrby('lab:metrics:requests', f'endpoint-{number % 20}', 1 + number % 7)
+                pipe.hincrby('lab:metrics:errors', f'code-{(number % 5) * 100}', number % 3)
+            if number % 100 == 0:
+                pipe.execute()
+        pipe.execute()
+    return count
+
+
+def seed(users: int, payload_bytes: int, profiles: str = 'users') -> None:
+    if not 1 <= users <= 100000 or not 0 <= payload_bytes <= 8192:
+        raise ValueError('records=1..100000, payload-bytes=0..8192')
+    selected = tuple(dict.fromkeys(p.strip() for p in profiles.split(',') if p.strip()))
+    if not selected or any(p not in SEED_PROFILES for p in selected):
+        raise ValueError('profiles must contain only: ' + ','.join(SEED_PROFILES))
+    if len(selected) * users * (payload_bytes + 600) > 128 * 1024 * 1024:
+        raise ValueError('Seed estimate exceeds the 128 MiB lab safety cap; reduce records or payload.')
+    rng = random.Random(20260918)
+    started = time.monotonic()
+    counts = {}
+    with master_client() as connection:
+        for profile in selected:
+            counts[profile] = _seed_batch(connection, profile, 1, users, payload_bytes, rng)
+            print(f'Seed {profile}: {users} records', flush=True)
+        connection.hset('lab:seed:last', mapping={
+            'profiles': ','.join(selected), 'records': str(users),
+            'time_utc': now(), 'mode': 'batch'})
+        result = {'profiles': selected, 'records_per_profile': users, 'counts': counts,
+                  'dbsize': connection.dbsize(), 'elapsed_seconds': round(time.monotonic() - started, 3)}
+        print(json.dumps(result, ensure_ascii=False))
+
+
+def simulate_seed(seconds: int, interval: float, rate: float, profiles: str,
+                  payload_bytes: int, run_id: str | None, mix_raw: str = 'read:0,write:1,delete:0',
+                  hotset: int = 0, jitter: float = 0, ttl: int = 0) -> None:
+    if not 1 <= seconds <= 86400 or not 0.1 <= interval <= 3600 or not 0.1 <= rate <= 1000:
+        raise ValueError('seconds=1..86400, interval=0.1..3600, rate=0.1..1000')
+    if not 0 <= payload_bytes <= 8192:
+        raise ValueError('payload-bytes=0..8192')
+    if not 0 <= hotset <= 1000000 or not 0 <= jitter <= 0.9 or not 0 <= ttl <= 86400:
+        raise ValueError('hotset=0..1000000, jitter=0..0.9, ttl=0..86400')
+    selected = tuple(dict.fromkeys(p.strip() for p in profiles.split(',') if p.strip()))
+    if not selected or any(p not in SEED_PROFILES for p in selected):
+        raise ValueError('profiles must contain only: ' + ','.join(SEED_PROFILES))
+    mix = parse_mix(mix_raw)
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    run_id = safe_run_id(run_id) if run_id else datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S') + '-' + uuid.uuid4().hex[:8]
+    path = RESULTS / f'{run_id}-seed-simulation.jsonl'
+    if path.exists():
+        raise ValueError('Run ID already exists; choose a new --run-id.')
+    stop = False
+    def stopping(*_):
+        nonlocal stop
+        stop = True
+    signal.signal(signal.SIGTERM, stopping)
+    signal.signal(signal.SIGINT, stopping)
+    deadline = time.monotonic() + seconds
+    sequence = 0
+    record = 0
+    totals = Counter()
+    rng = random.Random(20260918)
+    with master_client() as connection, path.open('x', encoding='utf-8', buffering=1) as stream:
+        while time.monotonic() < deadline and not stop:
+            sequence += 1
+            batch = max(1, int(rate * interval))
+            started = time.monotonic()
+            counts = Counter()
+            errors = Counter()
+            for _ in range(batch):
+                record += 1
+                key_number = rng.randint(1, hotset) if hotset else record
+                profile = selected[(record - 1) % len(selected)]
+                operation = choose_operation(rng, mix)
+                key = f'lab:sim:{profile}:{{{key_number}}}'
+                try:
+                    if operation == 'read':
+                        connection.get(key)
+                    elif operation == 'delete':
+                        connection.delete(key)
+                    else:
+                        value = payload_for(run_id, record, payload_bytes)
+                        connection.set(key, value, ex=ttl or None)
+                    counts[operation] += 1
+                    totals[operation] += 1
+                except (redis.RedisError, OSError) as exc:
+                    errors[type(exc).__name__] += 1
+                    totals['errors'] += 1
+            event = {'event': 'batch', 'sequence': sequence, 'time_utc': now(),
+                     'records': batch, 'counts': dict(counts), 'errors': dict(errors),
+                     'latency_ms': round((time.monotonic() - started) * 1000, 2),
+                     'totals': dict(totals), 'hotset': hotset, 'ttl': ttl}
+            stream.write(json.dumps(event) + '\n')
+            print(json.dumps(event), flush=True)
+            remaining = min(interval, max(0, deadline - time.monotonic()))
+            if jitter:
+                remaining = max(0, remaining * (1 + rng.uniform(-jitter, jitter)))
+            time.sleep(remaining)
+        summary = {'event': 'finish', 'time_utc': now(), 'batches': sequence,
+                   'records': record, 'profiles': selected, 'mix': mix,
+                   'totals': dict(totals), 'stopped': stop}
+        stream.write(json.dumps(summary) + '\n')
+        print(json.dumps(summary), flush=True)
+    print(f'Seed simulation log: {path}')
 
 
 def basic_demo() -> None:
@@ -245,8 +434,10 @@ def workload(args) -> None:
     if path.exists() or stop_file.exists():
         raise ValueError('Run ID already exists; choose a new --run-id.')
     (RESULTS / 'latest-run.txt').write_text(run_id + '\n')
-    manager = sentinel()
-    if args.mode == 'sentinel':
+    manager = sentinel() if DEPLOYMENT_MODE == 'sentinel' else None
+    if DEPLOYMENT_MODE == 'cluster':
+        c = master_client()
+    elif args.mode == 'sentinel':
         c = manager.master_for(MASTER_NAME)
     else:
         c = direct(NODES[int(args.fixed_node[-1]) - 1])
@@ -427,7 +618,26 @@ def main() -> int:
     status = sub.add_parser('status'); status.add_argument('--json', action='store_true')
     wait = sub.add_parser('wait'); wait.add_argument('--timeout', type=int, default=180)
     sub.add_parser('master')
-    s = sub.add_parser('seed'); s.add_argument('--users', type=int, default=2000); s.add_argument('--payload-bytes', type=int, default=256)
+    s = sub.add_parser('seed')
+    s.add_argument('--users', '--records', dest='users', type=int, default=2000)
+    s.add_argument('--payload-bytes', type=int, default=256)
+    s.add_argument('--profiles', default='users',
+                   help='comma-separated: users,sessions,catalog,events,geo,counters')
+    sim = sub.add_parser('seed-simulate')
+    sim.add_argument('--seconds', type=int, default=300)
+    sim.add_argument('--interval', type=float, default=5)
+    sim.add_argument('--rate', type=float, default=10)
+    sim.add_argument('--payload-bytes', type=int, default=128)
+    sim.add_argument('--profiles', default='events,sessions,counters')
+    sim.add_argument('--run-id')
+    sim.add_argument('--mix', default='read:0,write:1,delete:0',
+                     help='operation weights, e.g. read:70,write:25,delete:5')
+    sim.add_argument('--hotset', type=int, default=0,
+                     help='number of hot keys; 0 means monotonically new keys')
+    sim.add_argument('--jitter', type=float, default=0,
+                     help='interval jitter ratio, 0..0.9')
+    sim.add_argument('--ttl', type=int, default=0,
+                     help='write TTL in seconds; 0 means persistent')
     sub.add_parser('basic-demo')
     w = sub.add_parser('workload'); w.add_argument('--seconds', type=int, default=120); w.add_argument('--rate', type=float, default=5)
     w.add_argument('--size', type=int, default=64); w.add_argument('--mode', choices=['sentinel', 'fixed'], default='sentinel')
@@ -446,8 +656,12 @@ def main() -> int:
         state = snapshot()
         print(json.dumps(state, indent=2)) if args.json else print_status(state)
     elif args.command == 'wait': wait_ready(args.timeout)
-    elif args.command == 'master': print(node_name(current_master()[0]))
-    elif args.command == 'seed': seed(args.users, args.payload_bytes)
+    elif args.command == 'master':
+        print('cluster' if DEPLOYMENT_MODE == 'cluster' else node_name(current_master()[0]))
+    elif args.command == 'seed': seed(args.users, args.payload_bytes, args.profiles)
+    elif args.command == 'seed-simulate':
+        simulate_seed(args.seconds, args.interval, args.rate, args.profiles, args.payload_bytes, args.run_id,
+                      args.mix, args.hotset, args.jitter, args.ttl)
     elif args.command == 'basic-demo': basic_demo()
     elif args.command == 'workload': workload(args)
     elif args.command == 'verify': verify(args.run_id)

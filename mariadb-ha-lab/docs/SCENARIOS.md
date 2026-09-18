@@ -213,6 +213,14 @@ SIGKILL, 호스트 종료, 복구 중 다시 Ctrl+C, 런타임 고장까지 자�
 
 `repair`는 중단됐던 장애 주입/설정 변경의 복구입니다. 일부 적재된 합성 데이터나 이미 실행된 DDL을 시점 복원하는 기능은 아닙니다. 데이터 시나리오는 상태 확인 후 다시 실행하거나 전용 DB를 정리합니다. `cleanup`도 binlog·backup 파일을 지우는 명령은 아닙니다. 이 랩의 기존 `backup`은 `commerce_lab`/`lab_ops` 대상이며 `incident_lab`은 포함하지 않습니다.
 
+### 주기적 seed simulation
+
+`./lab.sh simulate`은 기존 commerce dataset을 교체하지 않고 API 로그와 주문 조회·상태
+변경을 일정 rate로 반복합니다. `--mode api|orders|mixed`, `--seconds`, `--rate`,
+`--seed`로 재현 가능한 트래픽을 만들 수 있습니다. `mixed`는 API 로그 65%, 주문 작업
+35% 비율입니다. 주문 상태 변경은 감사 trigger를 통과하며, Galera 장애 중 연결 오류와
+재연결 결과는 `operations.errors` 및 작업별 카운트로 확인합니다.
+
 같은 프로젝트 폴더에서 동시에 실행되는 시나리오·노드 조작·초기화·적재는 잠금으로 충돌을 방지합니다. 하지만 직접 실행하는 `podman kill`, 외부 DB 클라이언트의 DDL, 서로 다른 폴더에서 같은 프로젝트를 제어하는 작업까지 막을 수는 없습니다.
 
 ## 9. 결과 파일

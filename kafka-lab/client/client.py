@@ -14,7 +14,7 @@ import time
 import uuid
 from typing import Any
 
-from dataset import KINDS, TOPICS, make_event, utc_now
+from dataset import KINDS, PROFILES, TOPICS, make_event, utc_now
 
 
 class LabError(RuntimeError):
@@ -174,14 +174,16 @@ def create_topic(bootstrap: str, topic: str, partitions: int = 3,
                  exist_ok: bool = False, timeout: int = 15) -> None:
     checked_topic(topic)
     ck, ka = kafka_modules()
-    cfg = {"min.insync.replicas": "2", "unclean.leader.election.enable": "false"}
+    rf = int(os.getenv("REPLICATION_FACTOR", "3"))
+    min_isr = min(2, rf)
+    cfg = {"min.insync.replicas": str(min_isr), "unclean.leader.election.enable": "false"}
     cfg.update(configs or {})
     if assignment is not None:
-        if partitions != 1 or set(assignment) != {1, 2, 3} or len(assignment) != 3:
-            raise LabError("고정 배치는 partitions=1, assignment=1,2,3의 순열만 허용합니다.")
+        if partitions != 1 or set(assignment) != set(range(1, rf + 1)) or len(assignment) != rf:
+            raise LabError(f"고정 배치는 partitions=1, assignment=1..{rf}의 순열만 허용합니다.")
         nt = ka.NewTopic(topic, num_partitions=1, replica_assignment=[assignment], config=cfg)
     else:
-        nt = ka.NewTopic(topic, num_partitions=partitions, replication_factor=3, config=cfg)
+        nt = ka.NewTopic(topic, num_partitions=partitions, replication_factor=rf, config=cfg)
     a = admin_client(bootstrap)
     try:
         a.create_topics([nt], request_timeout=timeout, operation_timeout=timeout)[topic].result(timeout + 3)
@@ -189,9 +191,9 @@ def create_topic(bootstrap: str, topic: str, partitions: int = 3,
         if not (exist_ok and e.args[0].code() == ck.KafkaError.TOPIC_ALREADY_EXISTS):
             raise
         ps = get_partitions(metadata(bootstrap, topic), topic)
-        if len(ps) != partitions or any(len(p["replicas"]) != 3 for p in ps):
+        if len(ps) != partitions or any(len(p["replicas"]) != rf for p in ps):
             raise LabError(f"기존 토픽의 partition/RF가 기대값과 다릅니다: {topic}")
-    emit({"created_or_exists": topic, "partitions": partitions, "replication_factor": 3})
+    emit({"created_or_exists": topic, "partitions": partitions, "replication_factor": rf})
 
 
 def parse_configs(items: list[str]) -> dict:
@@ -269,7 +271,8 @@ def publish(args) -> dict:
             break
         if totals["failed"]:
             break
-        key, value = make_event(args.kind, n, rng, rid, base, args.payload_bytes, args.hot_key)
+        key, value = make_event(args.kind, n, rng, rid, base, args.payload_bytes,
+                                args.hot_key, getattr(args, "profile", "baseline"))
         queue_deadline = time.monotonic() + 20
         while True:
             try:
@@ -304,6 +307,121 @@ def publish(args) -> dict:
     if pending or totals["failed"] or totals["delivered"] != totals["queued"]:
         raise LabError("브로커 delivery 확인 실패: queued를 성공 건수로 세지 않습니다.")
     return result
+
+
+def simulate(args) -> None:
+    if not math.isfinite(args.interval) or args.interval < 0 or args.interval > 3600:
+        raise LabError("--interval range: 0..3600 seconds")
+    if args.batch_count <= 0 or args.batch_count > 100000:
+        raise LabError("--batch-count range: 1..100000")
+    if args.batches is not None and (args.batches <= 0 or args.batches > 100000):
+        raise LabError("--batches range: 1..100000")
+    if args.duration is not None and (args.duration <= 0 or args.duration > 86400):
+        raise LabError("--duration range: 1..86400 seconds")
+    if args.batches is None and args.duration is None:
+        raise LabError("시뮬레이션은 --batches 또는 --duration 중 하나가 필요합니다.")
+    phases = parse_phases(args.phases)
+    mix = parse_mix(args.mix)
+    if args.kind == "all" and args.topic:
+        raise LabError("--topic cannot be used with --kind all")
+    if args.kind != "all" and args.mix:
+        raise LabError("--mix requires --kind all")
+    if not math.isfinite(args.jitter) or args.jitter < 0 or args.jitter > 100:
+        raise LabError("--jitter range: 0..100 percent")
+    if args.burst_multiplier < 1 or args.burst_multiplier > 20:
+        raise LabError("--burst-multiplier range: 1..20")
+    if args.burst_every < 0:
+        raise LabError("--burst-every must be >= 0")
+    started = time.monotonic()
+    batch = 0
+    totals = {"batches": 0, "queued": 0, "delivered": 0, "failed": 0}
+    schedule_rng = random.Random(args.seed)
+    try:
+        while (args.batches is None or batch < args.batches) and (
+            args.duration is None or time.monotonic() - started < args.duration):
+            remaining = None if args.duration is None else max(1, int(args.duration - (time.monotonic() - started)))
+            ns = argparse.Namespace(**vars(args))
+            ns.kind = choose_kind(args.kind, mix, schedule_rng, batch)
+            ns.profile = choose_profile(phases, batch, args.profile)
+            ns.count = args.batch_count * (args.burst_multiplier if args.burst_every and
+                                            (batch + 1) % args.burst_every == 0 else 1)
+            ns.mib = None
+            ns.duration = None
+            ns.run_id = f"{args.run_id or uuid.uuid4().hex[:8]}-{batch:05d}"
+            if ns.kind == "all":
+                raise LabError("internal error: unresolved simulation kind")
+            result = publish(ns)
+            batch += 1
+            totals["batches"] = batch
+            for key in ("queued", "delivered", "failed"):
+                totals[key] += result[key]
+            emit({"status": "batch", "batch": batch, "kind": ns.kind,
+                  "profile": ns.profile, "count": ns.count, **result})
+            if remaining is not None and remaining <= 0:
+                break
+            if args.batches is not None and batch >= args.batches:
+                break
+            deadline = time.monotonic() + args.interval
+            if args.jitter:
+                spread = args.interval * args.jitter / 100
+                deadline = time.monotonic() + max(0, args.interval + schedule_rng.uniform(-spread, spread))
+            while time.monotonic() < deadline:
+                time.sleep(min(.25, deadline - time.monotonic()))
+    except KeyboardInterrupt:
+        emit({"status": "interrupted", **totals})
+        return
+    emit({"status": "completed", **totals, "elapsed_seconds": round(time.monotonic() - started, 3)})
+
+
+def parse_mix(text: str | None) -> list[tuple[str, int]]:
+    if not text:
+        return []
+    rows = []
+    for item in text.split(","):
+        try:
+            kind, weight = item.split("=", 1)
+            weight = int(weight)
+        except ValueError as e:
+            raise LabError("--mix 형식은 payments=60,access=30입니다.") from e
+        if kind not in KINDS or weight <= 0:
+            raise LabError("--mix에는 유효한 kind와 양의 weight가 필요합니다.")
+        rows.append((kind, weight))
+    if len({kind for kind, _ in rows}) != len(rows):
+        raise LabError("--mix kind은 중복될 수 없습니다.")
+    return rows
+
+
+def parse_phases(text: str | None) -> list[tuple[int, str]]:
+    if not text:
+        return []
+    rows = []
+    for item in text.split(","):
+        try:
+            profile, batches = item.split("=", 1)
+            batches = int(batches)
+        except ValueError as e:
+            raise LabError("--phases 형식은 baseline=10,fraud=5입니다.") from e
+        if profile not in PROFILES or batches <= 0:
+            raise LabError("--phases에는 유효한 profile과 양의 batch 수가 필요합니다.")
+        rows.append((batches, profile))
+    return rows
+
+
+def choose_kind(kind: str, mix: list[tuple[str, int]], rng: random.Random, batch: int) -> str:
+    if kind != "all":
+        return kind
+    if not mix:
+        mix = [(name, 1) for name in KINDS]
+    names, weights = zip(*mix)
+    return rng.choices(names, weights=weights, k=1)[0]
+
+
+def choose_profile(phases: list[tuple[int, str]], batch: int, default: str = "baseline") -> str:
+    for count, profile in phases:
+        if batch < count:
+            return profile
+        batch -= count
+    return phases[-1][1] if phases else default
 
 
 def topic_watermarks(bootstrap: str, topic: str, group: str | None = None) -> list[dict]:
@@ -545,7 +663,22 @@ def main(argv=None) -> int:
     p.add_argument("--rate", type=float, default=1000)
     p.add_argument("--payload-bytes", type=int, default=256); p.add_argument("--seed", type=int, default=42)
     p.add_argument("--hot-key", action="store_true"); p.add_argument("--run-id")
+    p.add_argument("--profile", choices=PROFILES, default="baseline")
     p.set_defaults(func=publish)
+    p = sub.add_parser("simulate")
+    p.add_argument("--kind", choices=(*KINDS, "all"), default="payments"); p.add_argument("--topic")
+    p.add_argument("--batch-count", type=positive, default=100)
+    p.add_argument("--batches", type=positive); p.add_argument("--duration", type=positive)
+    p.add_argument("--interval", type=float, default=5); p.add_argument("--rate", type=float, default=1000)
+    p.add_argument("--payload-bytes", type=int, default=256); p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--hot-key", action="store_true"); p.add_argument("--run-id")
+    p.add_argument("--profile", choices=PROFILES, default="baseline")
+    p.add_argument("--mix", help="all 모드의 weighted kind 목록, 예: payments=60,access=30,metrics=10")
+    p.add_argument("--phases", help="profile별 batch 수, 예: baseline=10,fraud=5,outage=5")
+    p.add_argument("--jitter", type=float, default=0, help="interval ± percentage")
+    p.add_argument("--burst-every", type=positive, default=0)
+    p.add_argument("--burst-multiplier", type=positive, default=1)
+    p.set_defaults(func=simulate)
     p = sub.add_parser("read")
     p.add_argument("--topic", required=True); p.add_argument("--max", type=positive, default=10)
     p.add_argument("--timeout", type=positive, default=30); p.set_defaults(func=read_records)

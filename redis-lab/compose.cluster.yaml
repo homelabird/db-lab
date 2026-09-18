@@ -1,0 +1,181 @@
+x-podman:
+  in_pod: false
+
+x-cluster-common: &cluster-common
+  image: localhost/${LAB_NAME:-rslab}-redis:1.1
+  restart: "no"
+  stop_grace_period: 15s
+  mem_limit: ${REDIS_CONTAINER_MEMORY:-512m}
+  labels:
+    io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+  healthcheck:
+    test: ["CMD-SHELL", 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli -h 127.0.0.1 --raw PING | grep -qx PONG']
+    interval: 5s
+    timeout: 3s
+    retries: 5
+    start_period: 15s
+
+x-cluster-env: &cluster-env
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?Run ./lab.sh init first}
+  SENTINEL_PASSWORD: ${SENTINEL_PASSWORD:?Run ./lab.sh init first}
+  MASTER_NAME: ${MASTER_NAME:-mymaster}
+  PRIMARY_IP: ${CLUSTER_1_IP:-10.89.77.51}
+  REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-192mb}
+  CLUSTER_BUS_PORT: ${CLUSTER_BUS_PORT:-16379}
+  CLUSTER_NODE_TIMEOUT_MS: ${CLUSTER_NODE_TIMEOUT_MS:-5000}
+
+services:
+  redis-cluster-1: &cluster-node-1
+    <<: *cluster-common
+    container_name: ${LAB_NAME:-rslab}-redis-cluster-1
+    build:
+      context: .
+      dockerfile: Containerfile
+      target: redis-node
+      args:
+        REDIS_IMAGE: ${REDIS_IMAGE:-docker.io/library/redis:7.4.11-alpine}
+    environment:
+      <<: *cluster-env
+      LAB_MODE: cluster
+      NODE_NAME: redis-cluster-1
+      NODE_IP: ${CLUSTER_1_IP:-10.89.77.51}
+    volumes: ["cluster-1-data:/data"]
+    networks:
+      labnet:
+        ipv4_address: ${CLUSTER_1_IP:-10.89.77.51}
+        aliases: [redis-cluster-1]
+
+  redis-cluster-2:
+    <<: *cluster-node-1
+    container_name: ${LAB_NAME:-rslab}-redis-cluster-2
+    environment:
+      <<: *cluster-env
+      LAB_MODE: cluster
+      NODE_NAME: redis-cluster-2
+      NODE_IP: ${CLUSTER_2_IP:-10.89.77.52}
+    volumes: ["cluster-2-data:/data"]
+    networks:
+      labnet:
+        ipv4_address: ${CLUSTER_2_IP:-10.89.77.52}
+        aliases: [redis-cluster-2]
+
+  redis-cluster-3:
+    <<: *cluster-node-1
+    container_name: ${LAB_NAME:-rslab}-redis-cluster-3
+    environment:
+      <<: *cluster-env
+      LAB_MODE: cluster
+      NODE_NAME: redis-cluster-3
+      NODE_IP: ${CLUSTER_3_IP:-10.89.77.53}
+    volumes: ["cluster-3-data:/data"]
+    networks:
+      labnet:
+        ipv4_address: ${CLUSTER_3_IP:-10.89.77.53}
+        aliases: [redis-cluster-3]
+
+  redis-cluster-4:
+    <<: *cluster-node-1
+    container_name: ${LAB_NAME:-rslab}-redis-cluster-4
+    environment:
+      <<: *cluster-env
+      LAB_MODE: cluster
+      NODE_NAME: redis-cluster-4
+      NODE_IP: ${CLUSTER_4_IP:-10.89.77.54}
+    volumes: ["cluster-4-data:/data"]
+    networks:
+      labnet:
+        ipv4_address: ${CLUSTER_4_IP:-10.89.77.54}
+        aliases: [redis-cluster-4]
+
+  redis-cluster-5:
+    <<: *cluster-node-1
+    container_name: ${LAB_NAME:-rslab}-redis-cluster-5
+    environment:
+      <<: *cluster-env
+      LAB_MODE: cluster
+      NODE_NAME: redis-cluster-5
+      NODE_IP: ${CLUSTER_5_IP:-10.89.77.55}
+    volumes: ["cluster-5-data:/data"]
+    networks:
+      labnet:
+        ipv4_address: ${CLUSTER_5_IP:-10.89.77.55}
+        aliases: [redis-cluster-5]
+
+  redis-cluster-6:
+    <<: *cluster-node-1
+    container_name: ${LAB_NAME:-rslab}-redis-cluster-6
+    environment:
+      <<: *cluster-env
+      LAB_MODE: cluster
+      NODE_NAME: redis-cluster-6
+      NODE_IP: ${CLUSTER_6_IP:-10.89.77.56}
+    volumes: ["cluster-6-data:/data"]
+    networks:
+      labnet:
+        ipv4_address: ${CLUSTER_6_IP:-10.89.77.56}
+        aliases: [redis-cluster-6]
+
+  lab-client:
+    image: localhost/${LAB_NAME:-rslab}-client:1.1
+    build:
+      context: .
+      dockerfile: Containerfile
+      target: client
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-docker.io/library/python:3.12-slim-bookworm}
+    container_name: ${LAB_NAME:-rslab}-lab-client
+    restart: "no"
+    mem_limit: ${CLIENT_CONTAINER_MEMORY:-192m}
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+    environment:
+      <<: *cluster-env
+      DEPLOYMENT_MODE: cluster
+      CLUSTER_NODE_COUNT: ${CLUSTER_NODE_COUNT:-6}
+      REDIS_NODES: ${CLUSTER_1_IP:-10.89.77.51}:6379,${CLUSTER_2_IP:-10.89.77.52}:6379,${CLUSTER_3_IP:-10.89.77.53}:6379,${CLUSTER_4_IP:-10.89.77.54}:6379,${CLUSTER_5_IP:-10.89.77.55}:6379,${CLUSTER_6_IP:-10.89.77.56}:6379
+      CLUSTER_NODES: ${CLUSTER_1_IP:-10.89.77.51}:6379,${CLUSTER_2_IP:-10.89.77.52}:6379,${CLUSTER_3_IP:-10.89.77.53}:6379,${CLUSTER_4_IP:-10.89.77.54}:6379,${CLUSTER_5_IP:-10.89.77.55}:6379,${CLUSTER_6_IP:-10.89.77.56}:6379
+    volumes: ["client-results:/results"]
+    networks:
+      labnet:
+        ipv4_address: ${CLIENT_IP:-10.89.77.30}
+        aliases: [lab-client]
+
+networks:
+  labnet:
+    name: ${LAB_NAME:-rslab}-net
+    driver: bridge
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+    ipam:
+      config:
+        - subnet: ${LAB_SUBNET:-10.89.77.0/24}
+
+volumes:
+  cluster-1-data:
+    name: ${LAB_NAME:-rslab}-cluster-1-data
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+  cluster-2-data:
+    name: ${LAB_NAME:-rslab}-cluster-2-data
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+  cluster-3-data:
+    name: ${LAB_NAME:-rslab}-cluster-3-data
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+  cluster-4-data:
+    name: ${LAB_NAME:-rslab}-cluster-4-data
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+  cluster-5-data:
+    name: ${LAB_NAME:-rslab}-cluster-5-data
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+  cluster-6-data:
+    name: ${LAB_NAME:-rslab}-cluster-6-data
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+  client-results:
+    name: ${LAB_NAME:-rslab}-client-results
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}

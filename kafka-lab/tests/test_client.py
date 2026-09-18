@@ -39,6 +39,17 @@ class DataTests(unittest.TestCase):
         self.assertNotEqual(json.loads(self.event(n=1)[1])['event_id'], json.loads(self.event(n=2)[1])['event_id'])
     def test_unknown_kind_rejected(self):
         with self.assertRaises(ValueError): self.event('unknown')
+    def test_advanced_profiles_change_event_shape(self):
+        fraud = json.loads(dataset.make_event(
+            "payments", 0, random.Random(1), "r",
+            datetime(2026, 1, 1, tzinfo=timezone.utc), profile="fraud")[1])
+        outage = json.loads(dataset.make_event(
+            "access", 0, random.Random(1), "r",
+            datetime(2026, 1, 1, tzinfo=timezone.utc), profile="outage")[1])
+        self.assertIn(fraud["result"], {"approved", "declined", "review", "fraud"})
+        self.assertGreaterEqual(fraud["risk_score"], 60)
+        self.assertIn(outage["status"], {200, 502, 503, 504})
+        self.assertGreaterEqual(outage["latency_ms"], 1000)
     def test_negative_padding_rejected(self):
         with self.assertRaises(ValueError): self.event(payload=-1)
     def test_negative_sequence_rejected(self):
@@ -161,6 +172,29 @@ class ProducerTests(unittest.TestCase):
         with self.assertRaises(client.LabError): self.publish(count=2_000_001)
     def test_large_padding_rejected(self):
         with self.assertRaises(client.LabError): self.publish(payload_bytes=2_097_153)
+
+
+class SimulationTests(unittest.TestCase):
+    def test_parse_mix_and_phases(self):
+        self.assertEqual(client.parse_mix("payments=60,access=40"),
+                         [("payments", 60), ("access", 40)])
+        self.assertEqual(client.parse_phases("baseline=2,fraud=1"),
+                         [(2, "baseline"), (1, "fraud")])
+
+    def test_schedule_is_deterministic_and_phased(self):
+        a = random.Random(42)
+        b = random.Random(42)
+        self.assertEqual([client.choose_kind("all", client.parse_mix("payments=3,access=1"), a, i)
+                          for i in range(5)],
+                         [client.choose_kind("all", client.parse_mix("payments=3,access=1"), b, i)
+                          for i in range(5)])
+        phases = client.parse_phases("baseline=2,fraud=1")
+        self.assertEqual([client.choose_profile(phases, i) for i in range(4)],
+                         ["baseline", "baseline", "fraud", "fraud"])
+
+    def test_invalid_schedule_rejected(self):
+        with self.assertRaises(client.LabError): client.parse_mix("payments=0")
+        with self.assertRaises(client.LabError): client.parse_phases("unknown=2")
 
 
 class FakeResource:

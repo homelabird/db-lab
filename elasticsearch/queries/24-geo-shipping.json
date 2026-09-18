@@ -1,0 +1,18 @@
+{
+  "size": 10,
+  "query": {
+    "geo_distance": {
+      "distance": "250km",
+      "shipping.geo": {"lat": 36.35, "lon": 127.38}
+    }
+  },
+  "sort": [
+    {
+      "_geo_distance": {
+        "shipping.geo": {"lat": 36.35, "lon": 127.38},
+        "order": "asc",
+        "unit": "km"
+      }
+    }
+  ]
+}

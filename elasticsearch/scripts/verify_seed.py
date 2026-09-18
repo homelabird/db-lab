@@ -34,8 +34,10 @@ def verify(client, manifest, min_nodes=5):
         checks.append({'index':index,'documents':actual,'status':'PASS'})
     shards=client.request('GET','/_cat/shards/'+','.join(INDICES)+'?format=json')
     p=sum(s['prirep']=='p' for s in shards); r=sum(s['prirep']=='r' for s in shards)
-    if (p,r)!=(38,46) or any(s['state']!='STARTED' for s in shards):
-        raise RuntimeError(f'Expected 38 primary + 46 replica STARTED copies; got p={p}, r={r}')
+    expected_p = sum(value[0] for value in LAYOUT.values())
+    expected_r = sum(value[0] * value[1] for value in LAYOUT.values())
+    if (p,r)!=(expected_p, expected_r) or any(s['state']!='STARTED' for s in shards):
+        raise RuntimeError(f'Expected {expected_p} primary + {expected_r} replica STARTED copies; got p={p}, r={r}')
     for index in INDICES:
         for shard in range(LAYOUT[index][0]):
             copies=[s for s in shards if s['index']==index and int(s['shard'])==shard]

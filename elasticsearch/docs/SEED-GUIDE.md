@@ -2,13 +2,15 @@
 
 ## 1. 무엇이 만들어지는가
 
-실제 고객·거래 데이터가 아닌 **실습용 합성 데이터**입니다. 금융 거래, 웹/API 요청, 감사 이벤트를 각각 별도 인덱스에 넣습니다. 정상 데이터만 무작위로 넣지 않고 알려진 이상 사례를 주기적으로 주입하므로 기본 검색 예제에 결과가 생깁니다. 비율과 위험도는 교육용 조건이지 금융 모델이나 탐지 품질의 검증 기준이 아닙니다.
+실제 고객·거래 데이터가 아닌 **실습용 합성 데이터**입니다. 금융 거래, 웹/API 요청, 감사 이벤트, nested 주문, observability metric을 각각 별도 인덱스에 넣습니다. 정상 데이터만 무작위로 넣지 않고 알려진 이상 사례를 주기적으로 주입하므로 기본 검색 예제에 결과가 생깁니다. 비율과 위험도는 교육용 조건이지 금융 모델이나 탐지 품질의 검증 기준이 아닙니다.
 
 | 인덱스 | 주요 필드 | 알려진 사례 |
 |---|---|---|
 | `lab-transactions-v1` | `transaction_id`, `user_id`, `institution`, `channel`, `amount`, `currency`, `country`, `risk_score`, `is_fraud`, `decision` | 약 5%: 해외 APP 거래, risk 850~1000, BLOCK, is_fraud=true |
 | `lab-web-logs-v1` | `request_id`, `method`, `path`, `status`, `latency_ms`, `service`, `message`, `error_code` | 약 5%: payment 서비스 `/api/pay`, 502, upstream timeout, 지연 1500~7999ms |
 | `lab-audit-v1` | `event_id`, `actor`, `user_id`, `action`, `result`, `target`, `privileged`, `message` | 약 5% LOGIN/FAIL, 다음 약 5% ROLE_CHANGE |
+| `lab-commerce-v1` | `order_id`, `shipping.geo`, `items[]`, `payment`, `promotion` | nested 상품, geo_point 배송지, 객체 내부 검색 |
+| `lab-observability-v1` | `metric_name`, `metric_value`, `host`, `service`, `labels`, `trace`, `histogram`, `alert` | metric histogram, trace sampled, anomaly alert |
 
 공통 필드는 `@timestamp`, `document_id`, `event_seq`, `user_id`, `trace_id`, `src_ip`, `tags`, `scenario`, `message`, `payload`입니다. `src_ip`는 사설 IP 형태입니다. `payload`는 용량 실습용 해시 문자열이며 실제 토큰·암호·개인정보가 아닙니다. `_source`에는 저장하지만 검색과 doc values는 비활성화했습니다.
 
@@ -26,7 +28,7 @@
 | `date` | `@timestamp` | 시간 필터·정렬·기간 집계 |
 | `ip` | `src_ip` | IP 형식과 IP 범위 검색 |
 
-`mappings/*.json`에 명시적으로 정의되어 있으며 `dynamic: strict`입니다. 오타 필드를 실수로 새 필드처럼 만들어버리는 것을 막습니다. 필드를 생략하는 것은 허용되지만 정의되지 않은 필드를 적재하면 오류가 납니다.
+`mappings/*.json`에 명시적으로 정의되어 있으며 `dynamic: strict`입니다. nested, geo_point, object, multi-field, disabled doc_values를 함께 사용합니다. 오타 필드를 실수로 새 필드처럼 만들어버리는 것을 막습니다. 필드를 생략하는 것은 허용되지만 정의되지 않은 필드를 적재하면 오류가 납니다.
 
 `service`는 이미 keyword이므로 `service.keyword`로 검색하지 않습니다. `message`에만 `message.keyword`라는 보조 필드가 있으며 `ignore_above=256`입니다. 긴 message 전체를 무조건 keyword로 검색할 수 있다는 뜻은 아닙니다.
 
@@ -37,7 +39,7 @@
 ```text
 목표 = 100 × 1024 × 1024 = 104,857,600 bytes
 기준 = UTF-8 compact JSON _source 본문 + 각 본문의 LF 줄바꿈
-분배 = 거래 50% / 웹 로그 32% / 감사로그 18%
+분배 = 거래 40% / 웹 로그 25% / 감사로그 15% / 주문 12% / observability 8%
 ```
 
 각 인덱스는 문서를 중간에 자를 수 없으므로 목표 크기를 마지막 문서 한 건 이내에서 넘깁니다. 제공 환경에서는 합계 104,858,904 bytes, 142,640건을 생성했습니다. 이 수치는 Elasticsearch에 저장한 후의 측정값이 아니라 **실제 생성한 원문 파일을 전수 검사한 결과**입니다.
@@ -67,7 +69,7 @@ Bulk action 메타데이터와 재시도 전송량은 위 기준에 포함되지
 ./lab.sh size
 ```
 
-`seed`는 최소 5개 노드와 cluster UUID를 확인하고, 세 인덱스의 signature를 검사한 뒤
+`seed`는 최소 5개 노드와 cluster UUID를 확인하고, 다섯 인덱스의 signature를 검사한 뒤
 없는 인덱스를 생성합니다. 적재 중에는 refresh를 잠시 끄고 최대 500건/4MiB 단위로
 Bulk 요청을 보냅니다. 각 Bulk item을 검사하고 429/502/503/504만 재시도한 다음,
 refresh 복원·문서 수 확인·manifest 기록까지 수행합니다.
@@ -83,7 +85,7 @@ refresh 복원·문서 수 확인·manifest 기록까지 수행합니다.
 [report] .../reports/seed-manifest.json
 ```
 
-`generated=...`는 진행률, `complete`는 인덱스 단위 완료, `[DONE]`는 세 인덱스
+`generated=...`는 진행률, `complete`는 인덱스 단위 완료, `[DONE]`는 다섯 인덱스
 적재 완료입니다. `[DONE]` 이후에도 `./lab.sh verify`를 실행해야 매핑·샤드·검색
 예제까지 검증됩니다.
 
@@ -95,7 +97,7 @@ refresh 복원·문서 수 확인·manifest 기록까지 수행합니다.
 ./lab.sh seed --help
 ```
 
-주요 옵션: `--size-mb`는 세 인덱스 합계 `_source` 목표 MiB, `--seed`는 재현 가능한
+주요 옵션: `--size-mb`는 다섯 인덱스 합계 `_source` 목표 MiB, `--seed`는 재현 가능한
 난수 seed, `--start-date`/`--days`는 시간 범위, `--payload-bytes`는 비색인 payload,
 `--batch-size`/`--max-batch-mb`는 Bulk 크기, `--generate-only`는 ES 없이 파일만
 생성, `--recreate --yes`는 세 seed 인덱스를 삭제 후 재생성합니다.
@@ -158,6 +160,6 @@ head -n 2 datasets/generated/lab-transactions-v1.bulk.ndjson
 ./lab.sh verify
 ```
 
-manifest의 클러스터 UUID·시드 signature, 실제 문서 수, 5개 이상 data node, 인덱스별 shard/replica 설정, 38 primary + 46 replica가 서로 다른 노드에 STARTED인지 확인합니다. 22개 검색 예제도 실제 요청합니다. 정상일 때 `reports/live-verification.json`에 PASS를 기록합니다. 이 결과를 생성기 오프라인 테스트 결과와 혼동하지 마세요.
+manifest의 클러스터 UUID·시드 signature, 실제 문서 수, 5개 이상 data node, 인덱스별 shard/replica 설정, 78 primary + 102 replica가 서로 다른 노드에 STARTED인지 확인합니다. 26개 검색 예제도 실제 요청합니다. 정상일 때 `reports/live-verification.json`에 PASS를 기록합니다. 이 결과를 생성기 오프라인 테스트 결과와 혼동하지 마세요.
 
 공식 근거: [Bulk API](https://www.elastic.co/guide/en/elasticsearch/reference/7.17/docs-bulk.html), [Term query](https://www.elastic.co/guide/en/elasticsearch/reference/7.17/query-dsl-term-query.html), [Match query](https://www.elastic.co/guide/en/elasticsearch/reference/7.17/query-dsl-match-query.html).

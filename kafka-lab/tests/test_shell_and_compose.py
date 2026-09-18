@@ -15,8 +15,10 @@ class ShellTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(prefix='kzk-test-')
         self.root=Path(self.tmp.name)
-        for f in ['lab.sh','.env.example','compose.yaml','compose.ui.yaml']:
+        for f in ['lab.sh','.env.example','compose.yaml','compose.kraft.yaml','compose.ui.yaml']:
             shutil.copy2(ROOT/f,self.root/f)
+        (self.root/'scripts').mkdir()
+        shutil.copy2(ROOT/'scripts/render-compose.py',self.root/'scripts/render-compose.py')
         self.bin=self.root/'bin'; self.bin.mkdir()
         shutil.copy2(ROOT/'tests/fake_podman.py',self.bin/'podman')
         (self.bin/'podman').chmod(0o755)
@@ -45,6 +47,16 @@ elif '--version' in sys.argv: print('podman-compose version 1.3.0 [MOCK]')
     def test_help_without_engine(self):
         self.run_lab('help')
         self.assertEqual(self.load().get('calls',[]),[])
+
+    def test_command_aliases_do_not_change_help_only_flow(self):
+        self.run_lab('scenarios')
+        self.assertIn('broker-failover', self.run_lab('scenarios').stdout)
+
+    def test_seed_preset_routes_defaults(self):
+        self.run_lab('seed-preset', 'fraud', '--count', '17')
+        self.assertIn(['exec','kzk-lab-tools','python','/opt/lab/client.py',
+                       'seed','--kind','payments','--profile','fraud','--count','17'],
+                      self.load()['calls'])
     def test_stop_only_requested_lab_broker(self):
         self.run_lab('fault','stop-broker','2')
         self.assertFalse(self.load()['containers']['kzk-lab-kafka2']['running'])
@@ -110,6 +122,20 @@ elif '--version' in sys.argv: print('podman-compose version 1.3.0 [MOCK]')
         s=(self.root/'.env.example').read_text().replace('CP_VERSION=7.9.0','CP_VERSION=8.0.0')
         (self.root/'.env').write_text(s)
         self.run_lab('up',success=False)
+
+    def test_invalid_mode_rejected(self):
+        s=(self.root/'.env.example').read_text().replace('KAFKA_MODE=zk','KAFKA_MODE=invalid')
+        (self.root/'.env').write_text(s)
+        self.run_lab('up',success=False)
+
+    def test_kraft_mode_selects_kraft_compose_and_status(self):
+        s=(self.root/'.env.example').read_text().replace('KAFKA_MODE=zk','KAFKA_MODE=kraft')
+        (self.root/'.env').write_text(s)
+        self.run_lab('up')
+        calls=self.load()['compose_calls']
+        self.assertTrue(any('compose.generated.yaml' in a for call in calls for a in call))
+        self.assertTrue(any(a[:2] == ['exec', 'kzk-lab-kafka1'] and
+                            'kafka-metadata-quorum' in a for a in self.load()['calls']))
     def test_logs_cannot_target_unrelated_container(self):
         self.run_lab('logs','production-db',success=False)
         self.assertFalse(any(a[0]=='logs' for a in self.load().get('calls',[])))
@@ -122,6 +148,8 @@ class ComposeTests(unittest.TestCase):
         except ImportError: raise unittest.SkipTest('PyYAML unavailable; install distro python3-yaml to run YAML tests')
         cls.raw=(ROOT/'compose.yaml').read_text()
         cls.compose=yaml.safe_load(cls.raw)
+        cls.kraft_raw=(ROOT/'compose.kraft.yaml').read_text()
+        cls.kraft=yaml.safe_load(cls.kraft_raw)
         cls.ui=yaml.safe_load((ROOT/'compose.ui.yaml').read_text())
     def test_three_plus_three_and_tools(self):
         self.assertEqual(set(self.compose['services']),{'zk1','zk2','zk3','kafka1','kafka2','kafka3','tools'})
@@ -131,6 +159,19 @@ class ComposeTests(unittest.TestCase):
             self.assertIn('KAFKA_ZOOKEEPER_CONNECT',env)
             self.assertNotIn('KAFKA_PROCESS_ROLES',env)
             self.assertNotIn('KAFKA_CONTROLLER_QUORUM_VOTERS',env)
+
+    def test_kraft_compose_contract(self):
+        self.assertEqual(set(self.kraft['services']), {'kafka1','kafka2','kafka3','tools'})
+        for i in [1,2,3]:
+            env=dict(self.kraft['services']['kafka1']['environment'])
+            env.update(self.kraft['services'][f'kafka{i}'].get('environment', {}))
+            self.assertEqual(env['KAFKA_PROCESS_ROLES'],'broker,controller')
+            self.assertEqual(env['KAFKA_NODE_ID'],str(i))
+            self.assertIn('KAFKA_CONTROLLER_QUORUM_VOTERS',env)
+            self.assertEqual(env['KAFKA_CONTROLLER_LISTENER_NAMES'],'CONTROLLER')
+            self.assertNotIn('KAFKA_ZOOKEEPER_CONNECT',env)
+            self.assertNotIn('CONTROLLER://',env['KAFKA_ADVERTISED_LISTENERS'])
+        self.assertEqual(set(self.kraft['volumes']), {'kraft-kafka1-data','kraft-kafka2-data','kraft-kafka3-data'})
     def test_broker_replication_and_safety(self):
         for i in [1,2,3]:
             e=self.compose['services'][f'kafka{i}']['environment']

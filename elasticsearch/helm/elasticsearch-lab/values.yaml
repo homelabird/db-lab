@@ -1,0 +1,67 @@
+elasticsearch:
+  image: docker.elastic.co/elasticsearch/elasticsearch:7.17.29
+  replicas: 3
+  clusterName: cerebro-k8s-lab
+  heap: 640m
+  storageClassName: ""
+  storageSize: 20Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  sysctlInitContainer:
+    enabled: true
+    image: busybox:1.36
+    privileged: true
+  podDisruptionBudget:
+    minAvailable: 2
+
+kibana:
+  enabled: true
+  image: docker.elastic.co/kibana/kibana:7.17.29
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 5601
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+cerebro:
+  enabled: true
+  image: lmenezes/cerebro:0.9.4
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 9000
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+service:
+  elasticsearch:
+    type: ClusterIP
+    port: 9200
+
+security:
+  enabled: false
+
+podSecurityContext:
+  fsGroup: 1000
+
+elasticsearchPod:
+  terminationGracePeriodSeconds: 120
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}

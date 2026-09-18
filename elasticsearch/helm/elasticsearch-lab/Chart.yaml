@@ -1,0 +1,12 @@
+apiVersion: v2
+name: elasticsearch-lab
+description: Elasticsearch, Kibana, and Cerebro training platform
+type: application
+version: 0.1.0
+appVersion: "7.17.29"
+home: https://github.com/homelabird/db-lab
+keywords:
+  - elasticsearch
+  - kibana
+  - cerebro
+  - training

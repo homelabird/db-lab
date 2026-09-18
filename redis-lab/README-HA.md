@@ -1,6 +1,6 @@
-# Redis Sentinel 장애 대응 실습실
+# Redis Sentinel/Cluster 장애 대응 실습실
 
-**Podman Compose · Redis 3대 · Sentinel 3대 · Python 클라이언트 1대 · 1.1.0-reviewed**
+**Podman Compose · Redis 3대 + Sentinel 3대 또는 Redis Cluster 6대 · Python 클라이언트 1대**
 
 > 수정판 검증: 단위/회귀 검사 107개 PASS. 작성 환경의 실제 Podman/Redis 검증은 실행기 부재로 BLOCKED입니다.
 > [검증 범위](TESTING.md)와 [수정 내용](CHANGELOG.md)을 확인하세요. 실구동 성공을 확인한 파일로 표시하지 않습니다.
@@ -38,6 +38,24 @@ Redis 이미지와 Python 클라이언트 의존성은 ZIP에 포함되어 있�
 
 `test`는 **현재 Master를 실제로 강제 종료**하고 새 Master 선출·기준 데이터 보존·기존 노드의 Replica 복귀를
 검사합니다. 성공 여부는 실행 환경에서 판정하며, 결과는 `output/failover-test.json`에 저장됩니다.
+
+Redis Cluster를 선택하려면 `.env`에서 `DEPLOYMENT_MODE=cluster`로 바꾼 뒤 실행하세요.
+노드 수는 `.env`의 `CLUSTER_NODE_COUNT` 또는 `lab.sh` 옵션으로 지정할 수 있습니다. 현재는 3~100개를
+지원합니다. `CLUSTER_REPLICAS=1`이면 10개는 5 Master + 5 Replica, 20개는 10 Master + 10 Replica,
+100개는 50 Master + 50 Replica로 구성됩니다.
+
+```bash
+./lab.sh up --cluster-nodes 100 --cluster-replicas 1
+./lab.sh cluster-init
+./lab.sh status
+```
+
+`--cluster-nodes`와 `--cluster-replicas` 값은 `.env`에 저장되므로 이후 `cluster-init`, `status`, `down`에도
+동일하게 적용됩니다. 노드 주소는 `CLUSTER_BASE_IP`부터 순차적으로 생성되며, 기존 Sentinel/관리 노드와
+중복되거나 `LAB_SUBNET`을 벗어나면 거부됩니다.
+`cluster-init`은 기존 `nodes.conf`와 데이터를 자동 삭제하지 않습니다. 기존 Cluster 볼륨에는
+재실행하지 말고 `./lab.sh reset --yes` 후 새로 시작하세요. Cluster 클라이언트는
+startup node 목록을 사용하며, Cluster 전용 장애조치 검증은 후속 단계에서 추가됩니다.
 중간에 종료했으면 `./lab.sh faults`와 `./lab.sh recover`로 확인·복구하세요.
 
 ## 전체 실구동 검증을 한 번에 실행
@@ -153,7 +171,77 @@ Windows 브라우저나 호스트의 `localhost:6379`로 접속하는 구성이 
 요청 또는 성공 응답을 받은 쓰기가 0개이면 실패로 처리합니다. 고정 노드가 장애 난 동안의 실험이라면 이 실패가 예상 결과일 수 있습니다.
 시험 한 번에서 데이터가 남았다고 모든 장애에서 무손실을 보장하는 것은 아닙니다.
 
+### 고도화된 시드와 주기적 생성
+
+`seed`는 다음 프로파일을 조합할 수 있습니다.
+
+| 프로파일 | 생성 데이터 |
+|---|---|
+| `users` | 사용자 Hash, email/tier/risk, 활성 사용자 Set |
+| `sessions` | device/IP가 있는 TTL 세션 |
+| `catalog` | 상품 Hash와 인기순 ZSET |
+| `events` | 사용자별 Stream 이벤트 |
+| `geo` | 위치 GEO 지점 |
+| `counters` | endpoint·HTTP 코드별 누적 카운터 |
+
+```bash
+./lab.sh seed --records 5000 --profiles users,sessions,catalog,events,geo,counters --payload-bytes 256
+```
+
+주기적 시뮬레이션은 매 interval마다 지정한 rate만큼 각 프로파일에 새 레코드를 추가합니다.
+실행 중 `Ctrl-C` 또는 SIGTERM을 받으면 현재 배치를 마무리하고 `/results` 아래 JSONL 로그에
+`finish` 이벤트를 기록합니다. 자동 재시도나 쓰기 재생은 하지 않습니다.
+
+```bash
+./lab.sh seed-simulate --seconds 3600 --interval 10 --rate 25 \
+  --profiles events,sessions,counters \
+  --mix read:70,write:25,delete:5 --hotset 10000 --ttl 900 --jitter 0.2 \
+  --run-id hourly-demo
+```
+
+시드 데이터는 학습용 합성 데이터이며, Cluster 모드에서는 관련 단일 레코드 키에 hash tag를
+사용합니다. 따라서 서로 다른 사용자 레코드가 특정 하나의 Cluster slot으로 몰리지 않습니다.
+`--mix`는 작업 비율, `--hotset`은 반복 접근할 키 수, `--ttl`은 write TTL, `--jitter`는
+주기 변동 비율입니다. 각 batch에는 성공 작업 수, 오류 수, batch latency, 누적 카운터가 기록됩니다.
+
+시뮬레이션 모델 예시는 다음과 같습니다.
+
+| 모델 | 옵션 |
+|---|---|
+| 신규 데이터 유입 | `--mix read:0,write:1,delete:0 --hotset 0` |
+| 캐시형 핫키 | `--mix read:80,write:15,delete:5 --hotset 1000 --ttl 300` |
+| 세션 churn | `--mix read:55,write:35,delete:10 --hotset 20000 --ttl 900` |
+| 불규칙 배치 | `--interval 10 --jitter 0.3` |
+
 ## 5. 명령 요약
+
+처음 사용하는 경우에는 전체 옵션을 외우지 말고 다음 명령부터 실행하세요.
+
+```bash
+./lab.sh overview
+```
+
+`overview`는 현재 `.env`의 Sentinel/Cluster 모드, Cluster 노드 수, 복제 수, 네트워크와
+다음 실행 단계를 보여줍니다. 자주 쓰는 짧은 명령도 제공합니다.
+
+| 긴 명령 | 짧은 명령 |
+|---|---|
+| `status` | `st` |
+| `seed` | `load` |
+| `seed-simulate` | `sim` |
+| `logs` | `log` |
+| `down` | `stop` |
+
+예를 들어 다음 흐름만으로 기본 실습을 시작할 수 있습니다.
+
+```bash
+./lab.sh overview
+./lab.sh up
+./lab.sh st
+./lab.sh demo
+./lab.sh load --records 2000 --profiles users,catalog
+./lab.sh stop
+```
 
 | 작업 | 명령 |
 |---|---|
@@ -161,7 +249,8 @@ Windows 브라우저나 호스트의 `localhost:6379`로 접속하는 구성이 
 | 기동/재기동 | `./lab.sh up` / `./lab.sh up --no-build` |
 | 상태 및 현재 Master | `./lab.sh status` / `./lab.sh master` |
 | 기본 자료구조 실습 | `./lab.sh demo` |
-| 합성 데이터 | `./lab.sh seed --users 10000 --payload-bytes 512` |
+| 합성 데이터 | `./lab.sh seed --records 10000 --profiles users,catalog,events --payload-bytes 512` |
+| 주기적 시드 시뮬레이션 | `./lab.sh seed-simulate --seconds 1800 --interval 5 --rate 20 --profiles events,sessions,counters` |
 | CLI 접속 | `./lab.sh cli master` / `./lab.sh cli redis-2` |
 | Sentinel 조회 | `./lab.sh cli sentinel-1 SENTINEL MASTER mymaster` |
 | 반복 쓰기 | `./lab.sh workload --seconds 120 --rate 5` |

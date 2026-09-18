@@ -1,0 +1,19 @@
+{
+  "size": 0,
+  "aggs": {
+    "metric_ranges": {
+      "histogram": {
+        "field": "metric_value",
+        "interval": 100
+      }
+    },
+    "anomalies": {
+      "filter": {
+        "term": {"scenario": "anomaly-spike"}
+      },
+      "aggs": {
+        "avg_value": {"avg": {"field": "metric_value"}}
+      }
+    }
+  }
+}

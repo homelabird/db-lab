@@ -75,3 +75,8 @@ sha256sum -c docs/original-files.sha256
 ```
 
 실제 운영 검증, 보안 감사, 성능 벤치마크를 완료한 제품으로 간주하지 마세요. 한 호스트에 모인 노드와 단일 프록시이므로 물리 서버 장애에 대한 HA 검증용도 아닙니다.
+
+단일 호스트에서 프로세스/컨테이너 재시작 정책까지 적용하려면 `compose.production.yaml`을
+`compose.yaml` 위에 overlay로 지정합니다. 이 overlay는 재시작 정책과 proxy/dashboard
+healthcheck만 제공하며, TLS·외부 secret 관리·원격 백업/PITR·다중 호스트 분산은 운영 환경에서
+별도로 강제해야 합니다.

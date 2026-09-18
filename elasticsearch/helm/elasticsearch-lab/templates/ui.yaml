@@ -1,0 +1,142 @@
+{{- if .Values.kibana.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "elasticsearch-lab.fullname" . }}-kibana
+  labels:
+    {{- include "elasticsearch-lab.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.kibana.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: kibana
+      {{- include "elasticsearch-lab.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: kibana
+        {{- include "elasticsearch-lab.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: kibana
+          image: {{ .Values.kibana.image }}
+          env:
+            - name: SERVER_HOST
+              value: 0.0.0.0
+            - name: ELASTICSEARCH_HOSTS
+              value: {{ printf "[\"http://%s:%d\"]" (include "elasticsearch-lab.esHttp" .) (int .Values.service.elasticsearch.port) | quote }}
+            - name: XPACK_SECURITY_ENABLED
+              value: {{ .Values.security.enabled | quote }}
+            - name: TELEMETRY_ENABLED
+              value: "false"
+          ports:
+            - name: http
+              containerPort: 5601
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 8
+            failureThreshold: 18
+          resources:
+            {{- toYaml .Values.kibana.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "elasticsearch-lab.fullname" . }}-kibana
+  labels:
+    {{- include "elasticsearch-lab.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.kibana.service.type }}
+  selector:
+    app.kubernetes.io/component: kibana
+    {{- include "elasticsearch-lab.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.kibana.service.port }}
+      targetPort: http
+{{- end }}
+{{- if .Values.cerebro.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "elasticsearch-lab.fullname" . }}-cerebro
+  labels:
+    {{- include "elasticsearch-lab.labels" . | nindent 4 }}
+data:
+  application.conf: |
+    secret = "change-me-in-kubernetes"
+    basePath = "/"
+    data.path = "/tmp/cerebro.db"
+    rest.history.size = 50
+    server.http.address = "0.0.0.0"
+    server.http.port = 9000
+    hosts = [
+      {
+        name = "elasticsearch"
+        host = "http://{{ include "elasticsearch-lab.esHttp" . }}:{{ .Values.service.elasticsearch.port }}"
+        protocol = http
+        auth = {
+          username = ""
+          password = ""
+        }
+      }
+    ]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "elasticsearch-lab.fullname" . }}-cerebro
+  labels:
+    {{- include "elasticsearch-lab.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.cerebro.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: cerebro
+      {{- include "elasticsearch-lab.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: cerebro
+        {{- include "elasticsearch-lab.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: cerebro
+          image: {{ .Values.cerebro.image }}
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Xms128m -Xmx256m"
+          ports:
+            - name: http
+              containerPort: 9000
+          volumeMounts:
+            - name: config
+              mountPath: /opt/cerebro/conf/application.conf
+              subPath: application.conf
+          resources:
+            {{- toYaml .Values.cerebro.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "elasticsearch-lab.fullname" . }}-cerebro
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "elasticsearch-lab.fullname" . }}-cerebro
+  labels:
+    {{- include "elasticsearch-lab.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.cerebro.service.type }}
+  selector:
+    app.kubernetes.io/component: cerebro
+    {{- include "elasticsearch-lab.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.cerebro.service.port }}
+      targetPort: http
+{{- end }}

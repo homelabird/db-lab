@@ -56,6 +56,20 @@ class CoreTests(unittest.TestCase):
 class EnvironmentTests(unittest.TestCase):
     def setUp(self): self.env=manage.parse_env(ROOT/'.env.example')
     def test_default_env_valid(self): manage.validate_env(self.env)
+    def test_cluster_env_valid(self):
+        self.env['DEPLOYMENT_MODE'] = 'cluster'
+        manage.validate_env(self.env)
+
+    def test_cluster_node_count_bounds(self):
+        self.env['CLUSTER_NODE_COUNT'] = '3'
+        self.env['CLUSTER_REPLICAS'] = '0'
+        manage.validate_env(self.env)
+        self.env['CLUSTER_NODE_COUNT'] = '101'
+        with self.assertRaises(ValueError): manage.validate_env(self.env)
+
+    def test_invalid_deployment_mode_rejected(self):
+        self.env['DEPLOYMENT_MODE'] = 'active-active'
+        with self.assertRaises(ValueError): manage.validate_env(self.env)
     def test_password_shell_injection_rejected(self):
         self.env['REDIS_PASSWORD']='$(touch /tmp/bad)'
         with self.assertRaises(ValueError): manage.validate_env(self.env)
@@ -139,6 +153,31 @@ class ManagementTests(unittest.TestCase):
     def test_workload_cli_parser(self):
         args=manage.parser().parse_args(['workload','--seconds','60','--mode','fixed','--fixed-node','redis-2'])
         self.assertEqual(args.seconds,60);self.assertEqual(args.fixed_node,'redis-2')
+
+    def test_cluster_nodes_selects_requested_prefix(self):
+        self.lab.env['DEPLOYMENT_MODE'] = 'cluster'
+        self.lab.env['CLUSTER_NODE_COUNT'] = '3'
+        self.assertEqual(self.lab.cluster_nodes(), ['redis-cluster-1', 'redis-cluster-2', 'redis-cluster-3'])
+
+    def test_cluster_init_parser_accepts_node_count(self):
+        args = manage.parser().parse_args(['cluster-init', '--cluster-nodes', '3'])
+        self.assertEqual(args.cluster_nodes, 3)
+
+    def test_seed_simulation_parser(self):
+        args = manage.parser().parse_args(['seed-simulate', '--seconds', '60',
+                                           '--interval', '2', '--rate', '5',
+                                           '--profiles', 'events,counters',
+                                           '--mix', 'read:70,write:25,delete:5',
+                                           '--hotset', '100', '--jitter', '0.2', '--ttl', '60'])
+        self.assertEqual((args.seconds, args.interval, args.rate, args.profiles),
+                         (60, 2, 5, 'events,counters'))
+        self.assertEqual((args.mix, args.hotset, args.jitter, args.ttl),
+                         ('read:70,write:25,delete:5', 100, 0.2, 60))
+
+    def test_user_friendly_aliases(self):
+        self.assertEqual(manage.parser().parse_args(['st']).command, 'st')
+        self.assertEqual(manage.parser().parse_args(['sim']).command, 'sim')
+        self.assertEqual(manage.parser().parse_args(['stop']).command, 'stop')
     def test_redis_cli_args_not_consumed(self):
         args=manage.parser().parse_args(['cli','redis-1','SCAN','0','MATCH','lab:*'])
         self.assertEqual(args.redis_args,['SCAN','0','MATCH','lab:*'])
@@ -194,6 +233,36 @@ class TopologyTests(unittest.TestCase):
     def test_external_master_rejected(self):
         with self.assertRaises(ValueError): CLIENT.node_name('203.0.113.1')
 
+    def test_simulation_mix_normalizes_weights(self):
+        self.assertEqual(CLIENT.parse_mix('read:70,write:25,delete:5'),
+                         {'read': 0.7, 'write': 0.25, 'delete': 0.05})
+
+    def test_simulation_mix_rejects_invalid_values(self):
+        for value in ('read:-1,write:1', 'read:0,write:0', 'read:1,unknown:1'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                CLIENT.parse_mix(value)
+
+    def test_cluster_slot_coverage(self):
+        previous = CLIENT.DEPLOYMENT_MODE
+        CLIENT.DEPLOYMENT_MODE = 'cluster'
+        try:
+            state = {'redis': {}, 'cluster': {}}
+            for i in range(1, 7):
+                name = f'redis-cluster-{i}'
+                state['redis'][name] = {'reachable': True}
+                state['cluster'][name] = {
+                    'cluster_state': 'ok',
+                    'cluster_slots_assigned': '16384',
+                    'cluster_slots_ok': '16384',
+                    'cluster_slots_fail': '0',
+                    'cluster_slots_pfail': '0',
+                }
+            self.assertEqual(CLIENT.topology_errors(state), [])
+            state['cluster']['redis-cluster-1']['cluster_slots_ok'] = '16383'
+            self.assertTrue(CLIENT.topology_errors(state))
+        finally:
+            CLIENT.DEPLOYMENT_MODE = previous
+
 
 try:
     import yaml
@@ -222,5 +291,34 @@ class ComposeTests(unittest.TestCase):
     def test_all_static_addresses_distinct(self):
         addresses=[s['networks']['labnet']['ipv4_address'] for s in self.doc['services'].values()]
         self.assertEqual(len(addresses),len(set(addresses)))
+
+
+@unittest.skipIf(yaml is None, 'PyYAML not installed; YAML parse tests skipped')
+class ClusterComposeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls): cls.doc=yaml.safe_load((ROOT/'compose.cluster.yaml').read_text())
+
+    def test_six_cluster_nodes_and_client(self):
+        self.assertEqual(
+            sorted(name for name in self.doc['services'] if name.startswith('redis-cluster-')),
+            [f'redis-cluster-{i}' for i in range(1, 7)],
+        )
+        self.assertEqual(set(self.doc['services']) - {'lab-client'},
+                         {f'redis-cluster-{i}' for i in range(1, 7)})
+
+    def test_cluster_has_no_sentinels_or_published_ports(self):
+        self.assertFalse(any(name.startswith('sentinel-') for name in self.doc['services']))
+        self.assertTrue(all(not service.get('ports') for service in self.doc['services'].values()))
+
+    def test_cluster_nodes_use_distinct_data_volumes(self):
+        volumes = [self.doc['services'][f'redis-cluster-{i}']['volumes'][0] for i in range(1, 7)]
+        self.assertEqual(len(set(volumes)), 6)
+
+    def test_cluster_environment_and_bus_port_are_configured(self):
+        node = self.doc['services']['redis-cluster-1']
+        self.assertEqual(node['environment']['LAB_MODE'], 'cluster')
+        self.assertIn('CLUSTER_BUS_PORT', node['environment'])
+        self.assertIn('cluster-announce-bus-port @@CLUSTER_BUS_PORT@@',
+                      (ROOT / 'config/cluster.conf.template').read_text())
 
 if __name__=='__main__': unittest.main(verbosity=2)

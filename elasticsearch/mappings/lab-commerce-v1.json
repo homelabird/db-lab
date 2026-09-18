@@ -1,0 +1,37 @@
+{
+  "dynamic": "strict",
+  "properties": {
+    "@timestamp": {"type": "date"},
+    "document_id": {"type": "keyword"},
+    "event_seq": {"type": "long"},
+    "user_id": {"type": "keyword"},
+    "trace_id": {"type": "keyword"},
+    "src_ip": {"type": "ip"},
+    "tags": {"type": "keyword"},
+    "scenario": {"type": "keyword"},
+    "message": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+    "payload": {"type": "keyword", "index": false, "doc_values": false},
+    "order_id": {"type": "keyword"},
+    "customer_id": {"type": "keyword"},
+    "order_status": {"type": "keyword"},
+    "total_amount": {"type": "double"},
+    "shipping": {"properties": {
+      "country": {"type": "keyword"},
+      "postal_code": {"type": "keyword"},
+      "geo": {"type": "geo_point"}
+    }},
+    "items": {"type": "nested", "properties": {
+      "sku": {"type": "keyword"},
+      "quantity": {"type": "integer"},
+      "price": {"type": "double"}
+    }},
+    "payment": {"properties": {
+      "method": {"type": "keyword"},
+      "masked_pan": {"type": "keyword", "index": false, "doc_values": false}
+    }},
+    "promotion": {"properties": {
+      "code": {"type": "keyword"},
+      "discount": {"type": "double"}
+    }}
+  }
+}

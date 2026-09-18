@@ -8,8 +8,15 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-INDICES = ('lab-transactions-v1', 'lab-web-logs-v1', 'lab-audit-v1')
-LAYOUT = {INDICES[0]: (12, 1, 50), INDICES[1]: (18, 1, 32), INDICES[2]: (8, 2, 18)}
+INDICES = ('lab-transactions-v1', 'lab-web-logs-v1', 'lab-audit-v1',
+           'lab-commerce-v1', 'lab-observability-v1')
+LAYOUT = {
+    INDICES[0]: (12, 1, 40),
+    INDICES[1]: (18, 1, 25),
+    INDICES[2]: (8, 2, 15),
+    INDICES[3]: (16, 2, 12),
+    INDICES[4]: (24, 1, 8),
+}
 RETRYABLE = {429, 502, 503, 504}
 
 

@@ -14,7 +14,7 @@
 ./lab.sh query 16-search-shards
 ```
 
-시드 인덱스 3개만의 기준은 primary 38개, replica copy 46개, 합계 84개입니다. replica 설정 1은 "샤드당 사본 한 개 추가"이므로 총 copy는 primary 수 × (1 + replica 설정)입니다. audit은 8 × (1 + 2) = 24개입니다.
+기본 시드 인덱스 5개의 기준은 primary 78개, replica copy 102개, 합계 180개입니다. commerce는 16 primary/2 replica, observability는 24 primary/1 replica를 사용합니다. replica 설정 1은 샤드당 사본 한 개 추가를 뜻합니다.
 
 ## 수동 이동
 

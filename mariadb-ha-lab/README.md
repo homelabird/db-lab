@@ -10,7 +10,19 @@
 
 ## 새 기능: 슬로우쿼리·단편화·장애 자동 실습
 
+```
+
+개별 SQL lab도 파일 경로 없이 목록과 이름으로 실행할 수 있습니다.
+
 ```bash
+./lab.sh labs
+./lab.sh run-lab 01-health galera1
+./lab.sh run-lab 08-auto-increment galera1 --allow-write
+```
+
+`labs`는 읽기 전용/쓰기 lab을 구분해 보여주며, 쓰기 SQL은 실수 방지를 위해
+`--allow-write` 없이는 실행하지 않습니다. lock/deadlock처럼 두 세션이 필요한 lab은
+각각의 터미널에서 같은 명령을 실행해야 합니다.bash
 # 기존 3노드가 정상 실행 중일 때, 별도 commerce 데이터 적재 불필요
 ./lab.sh scenario demo --rows 5000 --hold 20
 
@@ -101,6 +113,16 @@ chmod +x lab.sh
 
 이미지 태그 `mariadb:11.8`, `haproxy:3.0-alpine`, CloudBeaver `latest`는 같은 계열 안에서도 내용이 바뀔 수 있습니다. 실행 성공 후 `podman image inspect`로 digest를 기록하고 `.env`의 이미지 값을 `image@sha256:...`로 고정하면 재현성이 더 좋습니다. 모든 Galera 노드는 같은 빌드 이미지를 사용합니다. `./lab.sh build`는 이미지를 다시 빌드하지만 실행 중 노드의 무중단 업그레이드를 자동 수행하지 않습니다.
 
+운영에 가까운 단일 호스트 재시작 정책이 필요하면 랩 검증과 분리해 다음 overlay를 사용합니다.
+
+```bash
+docker compose -f compose.yaml -f compose.production.yaml up -d
+```
+
+이 overlay는 컨테이너 재시작과 proxy/dashboard healthcheck만 추가합니다. 다중 호스트 장애 격리,
+TLS, secret manager, 원격 백업/PITR, 이미지 digest 고정은 별도로 구성해야 하며 이 프로젝트만으로
+운영 배포가 완료되는 것은 아닙니다.
+
 ## 3. 접속
 
 | 접속점 | 기본 호스트 주소 | 용도 |
@@ -188,6 +210,31 @@ API 로그 JSON에는 기본 256바이트 payload를 추가합니다. 실제 데
 ```
 
 `seed` 중 실패하면 `lab_ops.dataset_manifest`에 `loading` 상태가 남습니다. 오류 원인을 고친 뒤 명시적 교체 옵션으로 다시 적재하세요. 기존 사용자 데이터나 운영 DB를 가리키도록 구성하지 마세요.
+
+재현 가능한 시드 프로필도 제공합니다.
+
+```bash
+./lab.sh seed --profile smoke
+./lab.sh seed --profile balanced
+./lab.sh seed --profile skewed-api
+./lab.sh seed --profile stress
+./lab.sh seed --profile large-replay
+```
+
+프로필은 기존 스키마의 실제 행 수·배치·payload 조합을 고정한 preset입니다. `stress`와
+`large-replay`는 충분한 디스크와 시간을 확보한 일회용 랩에서만 실행하세요.
+
+실행 중인 commerce dataset에 API 요청 트래픽을 주기적으로 추가하는 시뮬레이터도 지원합니다.
+기본 5분 동안 초당 10건을 넣으며, 기존 원본 Galera 볼륨을 삭제하지 않습니다.
+
+```bash
+./lab.sh simulate --seconds 1800 --rate 25 --mode mixed --seed 20260918
+```
+
+`--mode api`는 API 로그만, `--mode orders`는 기존 주문 조회·상태 변경만,
+`--mode mixed`는 API 로그 65%와 주문 작업 35%를 섞습니다. 주문 상태 변경은 기존
+트리거를 통해 `order_status_history`도 생성합니다. 결과에는 작업별 카운트와 p50/p95
+지연시간이 포함됩니다. 운영 데이터에는 사용하지 말고 시뮬레이션 결과를 보관하세요.
 
 기존 SQL 실습은 `standalone-original/labs/`, 새 클러스터 실습은 `labs/`와 `docs/WORKBOOK.md`를 봅니다. Sakila는 새 클러스터에 자동 적재하지 않고 기존 단일 서버 랩에서 계속 공부하도록 보존했습니다.
 

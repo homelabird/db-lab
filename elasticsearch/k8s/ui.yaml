@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kibana
+  namespace: elasticsearch-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kibana
+  template:
+    metadata:
+      labels:
+        app: kibana
+    spec:
+      containers:
+        - name: kibana
+          image: docker.elastic.co/kibana/kibana:7.17.29
+          env:
+            - name: SERVER_HOST
+              value: 0.0.0.0
+            - name: ELASTICSEARCH_HOSTS
+              value: '["http://elasticsearch-http:9200"]'
+            - name: XPACK_SECURITY_ENABLED
+              value: "false"
+            - name: TELEMETRY_ENABLED
+              value: "false"
+          ports:
+            - name: http
+              containerPort: 5601
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 8
+            failureThreshold: 18
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+  namespace: elasticsearch-lab
+spec:
+  selector:
+    app: kibana
+  ports:
+    - name: http
+      port: 5601
+      targetPort: 5601
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cerebro
+  namespace: elasticsearch-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cerebro
+  template:
+    metadata:
+      labels:
+        app: cerebro
+    spec:
+      containers:
+        - name: cerebro
+          image: lmenezes/cerebro:0.9.4
+          ports:
+            - name: http
+              containerPort: 9000
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: -Xms128m -Xmx256m
+          resources:
+            requests:
+              cpu: "50m"
+              memory: 256Mi
+            limits:
+              cpu: "500m"
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cerebro
+  namespace: elasticsearch-lab
+spec:
+  selector:
+    app: cerebro
+  ports:
+    - name: http
+      port: 9000
+      targetPort: 9000
+  type: ClusterIP

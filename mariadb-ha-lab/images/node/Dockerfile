@@ -21,7 +21,7 @@ RUN chmod 644 /etc/mysql/conf.d/80-lab.cnf \
  && bash -n /usr/local/bin/lab-entrypoint.sh \
  && bash -n /docker-entrypoint-initdb.d/10-lab-users.sh \
  && python3 -m compileall -q /opt/lab \
- && python3 -c 'import sys; sys.path.insert(0,"/opt/lab"); import health, state, seed, workload, scenario_worker'
+ && python3 -c 'import sys; sys.path.insert(0,"/opt/lab"); import health, state, seed, workload, simulator, scenario_worker'
 EXPOSE 3306 4567 4568 4444 9200
 ENTRYPOINT ["/usr/local/bin/lab-entrypoint.sh"]
 CMD ["mariadbd"]

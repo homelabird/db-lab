@@ -8,7 +8,7 @@ from lablib import APIError, ESClient, INDICES
 def main():
     client=ESClient(); client.assert_lab()
     index=os.getenv('INDEX',INDICES[0]); shard=int(os.getenv('SHARD','0'))
-    if index not in INDICES or shard<0: raise ValueError('Use one of the 3 seed indices and SHARD >= 0')
+    if index not in INDICES or shard<0: raise ValueError('Use one of the seed indices and SHARD >= 0')
     rows=client.request('GET',f'/_cat/shards/{index}?format=json')
     copies=[row for row in rows if int(row['shard'])==shard]
     source=next((row.get('node') for row in copies if row['prirep']=='p' and row['state']=='STARTED'),None)

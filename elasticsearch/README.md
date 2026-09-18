@@ -35,6 +35,8 @@ Compose 네트워크의 실제 대역에 대해 필요한 허용 규칙을 중�
 
 ```bash
 ./lab.sh status
+./lab.sh ui
+./lab.sh demo                  # 5MiB smoke test
 ./lab.sh logs es01 --tail 100
 ./lab.sh scenario list
 ./lab.sh scenario 01
@@ -44,6 +46,11 @@ Compose 네트워크의 실제 대역에 대해 필요한 허용 규칙을 중�
 ./lab.sh down
 ```
 
+`./lab.sh demo`는 클러스터를 시작하고 5MiB 데이터를 적재한 뒤 전체 검증까지
+수행하는 가장 쉬운 정상 동작 확인 방법입니다. 기본 100MiB 데이터는
+`./lab.sh seed`를 별도로 실행합니다. `./lab.sh ui`는 Elasticsearch, Cerebro,
+Kibana와 Kibana Console 주소를 출력합니다.
+
 기본 호스트 바인딩은 **`0.0.0.0`(모든 IPv4 인터페이스)** 입니다. Elasticsearch는 `0.0.0.0:9200`, Cerebro는 `0.0.0.0:9000`, Kibana는 `0.0.0.0:5601`으로 포트를 공개합니다. Cerebro와 Kibana는 같은 Elasticsearch 클러스터를 동시에 사용합니다.
 
 다른 PC에서는 Cerebro `http://<서버IP>:9000`, Kibana `http://<서버IP>:5601`, Elasticsearch `http://<서버IP>:9200`에 접속하세요. 서버 자체에서는 `http://127.0.0.1:9000`, `http://127.0.0.1:5601`, `http://127.0.0.1:9200`을 사용할 수 있습니다. **`0.0.0.0/0`은 CIDR 대역 표기이며 바인딩 값이나 브라우저 접속 주소가 아닙니다.**
@@ -51,6 +58,23 @@ Compose 네트워크의 실제 대역에 대해 필요한 허용 규칙을 중�
 기존 프로젝트의 `.env`가 있다면 새 기본값보다 우선합니다. `KIBANA_PORT=5601`을 추가하고 `./lab.sh compose up -d kibana`를 실행하세요. 이미 존재하는 `.env`의 바인딩 설정까지 바꾸는 경우에는 `./lab.sh compose up -d --force-recreate es01 cerebro kibana`를 사용합니다. 포트 설정 적용에는 컨테이너 재생성이 필요하며 named volume은 보존됩니다.
 
 `./lab.sh up`은 클러스터만 기동하고 시드는 자동 실행하지 않습니다. `./lab.sh verify`는 사용자의 **실제 Elasticsearch**에서 문서 수, 5개 이상의 데이터 노드, 샤드 배치, 검색 예제 22개를 검사합니다. 모든 샤드가 안정적인 green 상태여야 하므로 장애 시나리오를 진행하기 전에 실행하세요.
+
+## Kubernetes 배포 및 버전 업그레이드
+
+Compose 외에 `./lab.sh k8s apply`로 Elasticsearch 3노드 StatefulSet, Kibana,
+Cerebro를 Kubernetes에 배포할 수 있습니다. `./lab.sh k8s verify`는 실제
+클러스터 health와 3노드 구성을 검사하고, `./lab.sh k8s upgrade
+docker.elastic.co/elasticsearch/elasticsearch:7.17.29`는 7.17.x 범위의
+rolling update를 수행합니다. 상세 조건과 삭제 주의사항은
+[Kubernetes 가이드](docs/KUBERNETES.md)를 참고하세요.
+
+재사용 가능한 Helm Chart도 제공하며 다음처럼 설치합니다.
+
+```bash
+./lab.sh helm lint helm/elasticsearch-lab
+./lab.sh helm upgrade --install es-lab ./helm/elasticsearch-lab \
+  -n elasticsearch-lab --create-namespace
+```
 
 이전 랩이 실행 중이면 포트 9200/9000/5601이 겹칠 수 있습니다. 이전 랩을 종료하거나 `.env`의 `ES_PORT`, `CEREBRO_PORT`, `KIBANA_PORT`, `ES_URL`을 함께 변경하세요. 새 프로젝트명은 `cerebro-seed-lab`, 컨테이너 이름 접두사는 `cerebro-seed-`이며, 기존 볼륨을 자동 이관하거나 삭제하지 않습니다.
 
@@ -82,7 +106,7 @@ Compose 네트워크의 실제 대역에 대해 필요한 허용 규칙을 중�
 |---|---|
 | Elasticsearch | 7.17.29, `es01`~`es05` 5개, 모두 master/data/ingest 역할 |
 | Cerebro | 0.9.4 |
-| JVM heap | 노드당 512MiB, 5개 합계 2.5GiB |
+| JVM heap | 노드당 640MiB, 5개 합계 3.125GiB |
 | 원문 데이터 크기 | UTF-8 `_source` JSON + 줄바꿈 합계 약 100MiB |
 | 날짜 | 2026-08-01 00:00:00 UTC 이상, 2026-09-01 00:00:00 UTC 미만 |
 | 난수 seed | 42 |
@@ -94,7 +118,9 @@ Compose 네트워크의 실제 대역에 대해 필요한 허용 규칙을 중�
 | `lab-transactions-v1` | 66,796 | 약 50MiB | 12 | 1 | 24 |
 | `lab-web-logs-v1` | 47,956 | 약 32MiB | 18 | 1 | 36 |
 | `lab-audit-v1` | 27,888 | 약 18MiB | 8 | 2 | 24 |
-| **합계** | **142,640** | **약 100MiB** | **38** | — | **84** |
+| `lab-commerce-v1` | — | 약 12MiB | 16 | 2 | 48 |
+| `lab-observability-v1` | — | 약 8MiB | 24 | 1 | 48 |
+| **합계** | **약 142,000** | **약 100MiB** | **78** | — | **180** |
 
 \* 제공 환경에서 기본 설정으로 생성한 결과입니다. 정확한 실행 결과는 `reports/seed-manifest.json`으로 확인하세요. 용량·기간·payload·seed 변경 시 문서 수는 달라집니다.
 
@@ -123,7 +149,7 @@ Compose 네트워크의 실제 대역에 대해 필요한 허용 규칙을 중�
 # 데이터셋이 없는 새 클러스터에서 소량 시험
 ./lab.sh seed --size-mb 5
 
-# 이미 다른 설정으로 시드가 있으면, 명시적으로 3개 인덱스를 삭제·재생성
+# 이미 다른 설정으로 시드가 있으면, 명시적으로 5개 인덱스를 삭제·재생성
 # 해당 인덱스의 실습 수정·추가 데이터도 삭제됩니다.
 ./lab.sh seed --size-mb 100 --recreate --yes
 

@@ -23,6 +23,8 @@ podman stats --no-stream
 
 명령이 실패하면 다음 진단 명령을 별도로 실행하세요. `status`는 장애 중 부분 정보를 출력하고 오류로 끝날 수 있습니다. 진단을 위해 장애를 성공으로 덮어쓰지 않습니다.
 
+명령을 잊었을 때는 `./lab.sh scenarios`와 `./lab.sh summary`를 먼저 사용하세요. 일반적인 재시작은 `./lab.sh stop && ./lab.sh start`, 데이터까지 지우는 초기화는 되돌릴 수 없으므로 `./lab.sh clean --yes`입니다.
+
 ## 2. Podman/compose/DNS 문제
 
 호스트에 `podman`, `podman-compose`, `python3`, `bash`, `tee`가 필요합니다. `podman compose`는 별도 compose provider를 호출하는 wrapper이며 provider에 따라 동작이 다를 수 있습니다. 이 lab은 독립 실행 파일인 `podman-compose`를 명시적으로 사용합니다. [S8]
@@ -36,6 +38,18 @@ podman info
 ./lab.sh config
 podman network inspect kzk-lab-net
 ```
+
+KRaft를 사용할 때는 `KAFKA_MODE=kraft`를 모든 명령에 일관되게 적용하세요. 이 모드는 ZooKeeper 컨테이너 없이 3개 Kafka 노드가 controller quorum을 구성하고, `kraft-status`로 quorum 상태를 확인합니다.
+
+```bash
+KAFKA_MODE=kraft ./lab.sh doctor
+KAFKA_MODE=kraft ./lab.sh kraft-status
+KAFKA_MODE=kraft ./lab.sh logs kafka1
+```
+
+KRaft의 `KRAFT_CLUSTER_ID`와 Kafka data volume은 ZooKeeper 모드와 분리됩니다. 모드를 바꿀 때 기존 volume을 강제로 재사용하지 말고 `down` 후 새 모드로 시작하세요. 기존 ZooKeeper metadata를 KRaft로 변환하는 migration 절차는 이 학습 프로젝트의 범위가 아닙니다.
+
+노드 수는 Compose 파일을 직접 편집하지 말고 `NODES=5 ./lab.sh up` 또는 `./lab.sh up --nodes 5`로 지정합니다. `lab.sh`가 `.state/compose.generated.yaml`을 생성하며, ZooKeeper ensemble/KRaft voter와 broker bootstrap을 동일하게 맞춥니다. 최대 100개까지 Compose를 생성할 수 있고, ZooKeeper에서는 짝수 노드를 거부합니다. 노드 수를 변경할 때에는 기존 클러스터를 내린 뒤 재기동하세요.
 
 오래된 CNI backend에서 서비스 이름을 해석하지 못하면 해당 배포판의 Podman DNS 플러그인 구성을 점검하세요. 최신 Netavark/Aardvark 구성에서도 패키지 누락, rootless 네트워크, 사용자 설정을 확인합니다. 다른 lab을 포함하는 전체 network/system prune은 해결 절차에 포함하지 않습니다. [S8]
 
