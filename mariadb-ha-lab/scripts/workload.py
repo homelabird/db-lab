@@ -14,7 +14,7 @@ import uuid
 
 import pymysql
 
-NODES = ('galera1', 'galera2', 'galera3')
+NODES = tuple(filter(None, os.environ.get('GALERA_NODES', 'galera1,galera2,galera3').split(',')))
 RETRYABLE = {1047, 1062, 1205, 1213, 2002, 2003, 2006, 2013}
 
 

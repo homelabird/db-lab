@@ -15,6 +15,7 @@ x-node: &node
     SST_PASSWORD: ${SST_PASSWORD:?Run lab.sh init}
     BUFFER_POOL_SIZE: ${BUFFER_POOL_SIZE:-256M}
     GCACHE_SIZE: ${GCACHE_SIZE:-128M}
+    GALERA_NODES: ${GALERA_NODES:-galera1,galera2,galera3,galera4,galera5}
     LAB_MODE: galera
     TZ: Asia/Seoul
   networks: [labnet]
@@ -56,6 +57,26 @@ services:
       SERVER_ID: "103"
     ports: ["${BIND_ADDRESS:-127.0.0.1}:${NODE3_PORT:-13303}:3306"]
     volumes: [galera3_data:/var/lib/mysql, galera3_control:/var/lib/labctl]
+  galera4:
+    <<: *node
+    container_name: ${LAB_PROJECT:-mariadb-ha}-galera4
+    hostname: galera4
+    environment:
+      <<: *node-env
+      NODE_NAME: galera4
+      SERVER_ID: "104"
+    ports: ["${BIND_ADDRESS:-127.0.0.1}:${NODE4_PORT:-13304}:3306"]
+    volumes: [galera4_data:/var/lib/mysql, galera4_control:/var/lib/labctl]
+  galera5:
+    <<: *node
+    container_name: ${LAB_PROJECT:-mariadb-ha}-galera5
+    hostname: galera5
+    environment:
+      <<: *node-env
+      NODE_NAME: galera5
+      SERVER_ID: "105"
+    ports: ["${BIND_ADDRESS:-127.0.0.1}:${NODE5_PORT:-13305}:3306"]
+    volumes: [galera5_data:/var/lib/mysql, galera5_control:/var/lib/labctl]
   proxy:
     image: localhost/${LAB_PROJECT:-mariadb-ha}-proxy:lab
     build:
@@ -80,6 +101,8 @@ services:
     container_name: ${LAB_PROJECT:-mariadb-ha}-dashboard
     entrypoint: [python3, /opt/lab/dashboard.py]
     user: "65534:65534"
+    environment:
+      GALERA_NODES: ${GALERA_NODES:-galera1,galera2,galera3}
     networks: [labnet]
     ports: ["${BIND_ADDRESS:-127.0.0.1}:${DASHBOARD_PORT:-18081}:8080"]
     healthcheck:
@@ -132,6 +155,10 @@ volumes:
   galera1_control:
   galera2_control:
   galera3_control:
+  galera4_data:
+  galera4_control:
+  galera5_data:
+  galera5_control:
   cloudbeaver_workspace:
   restore_data:
   restore_control:

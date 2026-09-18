@@ -76,7 +76,7 @@ if [[ $mode == galera ]]; then
   args+=(--wsrep-on=ON --wsrep-provider=/opt/lab/libgalera_smm.so
     --wsrep-cluster-name=mariadb-study "--wsrep-node-name=$node"
     "--wsrep-node-address=$address" "--wsrep-node-incoming-address=$node:3306"
-    --wsrep-cluster-address=gcomm://galera1,galera2,galera3
+    "--wsrep-cluster-address=gcomm://${GALERA_NODES:-galera1,galera2,galera3}"
     --wsrep-sst-method=mariabackup "--wsrep-sst-auth=sst:${SST_PASSWORD}"
     --wsrep-slave-threads=2
     "--wsrep-provider-options=gcache.size=${GCACHE_SIZE:-128M};gcache.recover=yes;pc.recovery=TRUE")

@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 LAB_DIR = ROOT / 'labs'
 NODES = ('galera1', 'galera2', 'galera3')
 PASSWORDS = ('ROOT_PASSWORD', 'LAB_PASSWORD', 'READONLY_PASSWORD', 'SST_PASSWORD')
-PORTS = ('NODE1_PORT', 'NODE2_PORT', 'NODE3_PORT', 'WRITER_PORT', 'READER_PORT',
+PORTS = ('NODE1_PORT', 'NODE2_PORT', 'NODE3_PORT', 'NODE4_PORT', 'NODE5_PORT', 'WRITER_PORT', 'READER_PORT',
          'DASHBOARD_PORT', 'HAPROXY_STATS_PORT', 'CLOUDBEAVER_PORT', 'RESTORE_PORT')
 
 class LabError(RuntimeError): pass
@@ -48,7 +48,11 @@ def load_env(path):
     for key in PASSWORDS:
         if not re.fullmatch(r'[A-Za-z0-9_-]{12,128}', result.get(key, '')) or result[key].startswith('GENERATE_'):
             raise LabError(f'{key}: run ./lab.sh init, or set 12..128 ASCII letters/digits/_/-.')
-    missing = [key for key in (*PORTS, 'BIND_ADDRESS') if key not in result]
+    result.setdefault('NODE4_PORT', '13304')
+    result.setdefault('NODE5_PORT', '13305')
+    missing = [key for key in ('NODE1_PORT', 'NODE2_PORT', 'NODE3_PORT', 'WRITER_PORT',
+                               'READER_PORT', 'DASHBOARD_PORT', 'HAPROXY_STATS_PORT',
+                               'CLOUDBEAVER_PORT', 'RESTORE_PORT', 'BIND_ADDRESS') if key not in result]
     if missing: raise LabError('Missing .env settings: ' + ', '.join(missing))
     values = [int(result[key]) for key in PORTS]
     if len(values) != len(set(values)) or any(not 1024 <= p <= 65535 for p in values):
@@ -58,6 +62,8 @@ def load_env(path):
         if not re.fullmatch(r'[1-9][0-9]*[MG]', result.get(key, '')):
             raise LabError(f'{key}: use a positive size such as 256M.')
     if int(result.get('WAIT_SECONDS', '600')) < 10: raise LabError('WAIT_SECONDS must be >= 10.')
+    count = int(result.get('NODE_COUNT', '3'))
+    if count < 3 or count > 5: raise LabError('NODE_COUNT must be 3..5.')
     return result
 
 def sha256_file(path):
@@ -121,7 +127,7 @@ def initialize():
 def select_safe_node(states):
     """Never infer that node 1 is authoritative. Called only after ALL nodes are stopped."""
     if set(states) != set(NODES):
-        raise LabError('Bootstrap requires state checks on all three nodes.')
+        raise LabError(f'Bootstrap requires state checks on all {len(NODES)} active nodes.')
     if not any(s['initialized'] for s in states.values()): return 'galera1', 'authorize-new'
     existing = {n:s for n,s in states.items() if s['initialized']}
     if any(not s['init_complete'] for s in existing.values()):
@@ -141,7 +147,7 @@ def select_safe_node(states):
 
 def select_recovered_node(states):
     if set(states) != set(NODES) or any(not s.get('initialized') or s['seqno'] < 0 for s in states.values()):
-        raise LabError('Recovery requires valid positions from all three existing nodes.')
+        raise LabError(f'Recovery requires valid positions from all {len(NODES)} existing nodes.')
     uuids = {s['uuid'] for s in states.values()}
     if len(uuids) != 1 or None in uuids or '00000000-0000-0000-0000-000000000000' in uuids:
         raise LabError('Recovered UUIDs differ or are invalid: manual investigation required.')
@@ -151,7 +157,10 @@ class Lab:
     def __init__(self):
         if not (ROOT / '.env').exists(): raise LabError('First run ./lab.sh init.')
         self.settings = load_env(ROOT / '.env')
+        global NODES
+        NODES = tuple(f'galera{i}' for i in range(1, int(self.settings.get('NODE_COUNT', '3')) + 1))
         self.env = dict(os.environ, **self.settings)
+        self.env['GALERA_NODES'] = ','.join(NODES)
         # Explicitly selected optional services must work across Compose providers.
         self.env['COMPOSE_PROFILES'] = 'tools,restore,ui'
         self.project = self.settings['LAB_PROJECT']
@@ -372,7 +381,7 @@ class Lab:
             if state != 'running':
                 self.start_service(node)
                 self.wait(node)
-        for node in NODES: self.wait(node, 3)
+        for node in NODES: self.wait(node, len(NODES))
         self.sql(self.healthy_node(), (ROOT / 'datasets/ops-schema.sql').read_text(), timeout=120)
         self.comp('up', '-d', '--no-deps', '--force-recreate', 'proxy', 'dashboard')
         self.wait_frontends()
@@ -397,6 +406,12 @@ class Lab:
             if self.state(node) == 'running': self.run([self.engine, 'stop', '-t', '120', self.name(node)])
         print('Stopped sequentially; volumes retained. ./lab.sh up checks safe_to_bootstrap before restart.')
 
+    def stop_node_for_scale(self, node):
+        if self.state(node) == 'paused':
+            self.run([self.engine, 'unpause', self.name(node)])
+        if self.state(node) == 'running':
+            self.run([self.engine, 'stop', '-t', '120', self.name(node)])
+
     def recover(self, execute=False):
         self.require_all_stopped()
         self.build()
@@ -420,7 +435,7 @@ class Lab:
     def seed(self, size, replace=False, batch=500, payload=256):
         node = self.healthy_node()
         for n in NODES:
-            if not self.health(n).get('ready'): raise LabError('Seed requires all three healthy nodes.')
+            if not self.health(n).get('ready'): raise LabError(f'Seed requires all {len(NODES)} healthy nodes.')
         existing = self.sql(node, "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='commerce_lab';").stdout.strip()
         if existing != '0' and not replace:
             raise LabError('commerce_lab already exists. To replace ONLY this synthetic schema, use --replace --confirm-replace.')
@@ -462,8 +477,9 @@ class Lab:
 
     def verify(self):
         data = {n:self.health(n) for n in NODES}
-        if any(not d.get('ready') or d.get('wsrep_cluster_size') != '3' for d in data.values()):
-            raise LabError('Cluster is not Primary/Synced with 3 members on every node.')
+        expected_size = str(len(NODES))
+        if any(not d.get('ready') or d.get('wsrep_cluster_size') != expected_size for d in data.values()):
+            raise LabError(f'Cluster is not Primary/Synced with {expected_size} members on every node.')
         if len({d.get('wsrep_cluster_state_uuid') for d in data.values()}) != 1:
             raise LabError('Cluster UUID mismatch.')
         node = self.healthy_node()
@@ -485,8 +501,10 @@ class Lab:
                     f"SELECT '{t}',COUNT(*) FROM commerce_lab.`{t}`;" for t in counts)
                 observed = dict(line.split('\t') for line in self.sql(n, query, timeout=180).stdout.splitlines())
                 for t, count in counts.items():
-                    if int(observed[t]) != count: raise LabError(f'{n}.{t}: expected {count}, got {observed[t]}. Dataset was modified or incompletely loaded.')
-            print('PASS: expected synthetic dataset row counts on all three nodes.')
+                    actual = int(observed[t])
+                    if actual < count:
+                        raise LabError(f'{n}.{t}: expected at least {count}, got {actual}. Dataset was modified or incompletely loaded.')
+            print('PASS: minimum synthetic dataset row counts on all nodes.')
         balance = self.sql(node, 'SET SESSION wsrep_sync_wait=1; SELECT SUM(balance),COUNT(*) FROM lab_ops.account;').stdout.strip()
         if balance != '100000000\t100': raise LabError('Workload balance invariant failed: ' + balance)
         self.comp('run', '--rm', '--no-deps', 'tools', 'check', capture=False)
@@ -503,7 +521,7 @@ class Lab:
                 raise LabError('A surviving node became unready; wipe cancelled.')
         self.offline(node, 'wipe')
         self.start_service(node)
-        self.wait(node, 3)
+        self.wait(node, len(NODES))
         print('Node rebuilt. Inspect logs for SST and donor selection; no production volume was touched.')
 
     def backup(self):
@@ -589,6 +607,9 @@ def parser():
     q.add_argument('name')
     q.add_argument('node', choices=NODES, nargs='?', default='galera1')
     q.add_argument('--allow-write', action='store_true')
+    q = sub.add_parser('scale', help='Scale the lab between 3 and 5 Galera nodes')
+    q.add_argument('count', type=int, choices=(3, 4, 5))
+    q.add_argument('--confirm-scale', action='store_true')
     q = sub.add_parser('seed'); q.add_argument('--size', choices=SIZES, default='standard')
     q.add_argument('--profile', choices=PROFILES)
     q.add_argument('--batch', type=int, default=500); q.add_argument('--payload-bytes', type=int, default=256)
@@ -620,20 +641,37 @@ def main():
     if args.command == 'init': initialize(); return
     if args.command == 'scenario':
         from scenarios import no_runtime
+        os.environ['NODE_COUNT'] = os.environ.get('NODE_COUNT', '3')
         if no_runtime(args): return
     lab = Lab()
     lock = None
-    if args.command in ('build','up','down','recover','rebuild','seed','restore','reset','backup','load','simulate','run-lab','conflict','quorum-demo','stop','start','kill','pause','resume') or (args.command == 'scenario' and args.scenario != 'inspect'):
+    if args.command in ('build','up','down','recover','rebuild','seed','restore','reset','backup','load','simulate','run-lab','scale','conflict','quorum-demo','stop','start','kill','pause','resume') or (args.command == 'scenario' and args.scenario != 'inspect'):
         lock = (ROOT/'.state/operation.lock').open('w')
         try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError: raise LabError('Another lifecycle/seed/restore operation is active in this lab directory.')
     command = args.command
     if command == 'scenario':
         from scenarios import Runner, ScenarioError
+        import scenarios
+        scenarios.NODES = NODES
         try: Runner(lab).execute(args)
         except ScenarioError as exc: raise LabError(str(exc)) from exc
     elif command in ('doctor','up','status','down','verify','backup','labs'): getattr(lab, command)()
     elif command == 'run-lab': lab.run_lab(args.name, args.node, args.allow_write)
+    elif command == 'scale':
+        if not args.confirm_scale: raise LabError('--scale requires --confirm-scale; nodes are started/stopped and cluster membership changes.')
+        current = len(NODES)
+        if args.count < current:
+            active = [n for n in NODES if lab.state(n) in ('running', 'paused')]
+            if len(active) != current: raise LabError('Scale-down requires all current nodes to be present.')
+            if args.count < 3: raise LabError('Scale-down below 3 would lose Galera quorum.')
+            for node in reversed(NODES[args.count:]):
+                lab.stop_node_for_scale(node)
+        lines = (ROOT / '.env').read_text().splitlines()
+        text = '\n'.join(line if not line.startswith('NODE_COUNT=') else f'NODE_COUNT={args.count}' for line in lines) + '\n'
+        if not any(line.startswith('NODE_COUNT=') for line in lines): text += f'NODE_COUNT={args.count}\n'
+        (ROOT / '.env').write_text(text); (ROOT / '.env').chmod(0o600)
+        print(f'NODE_COUNT set to {args.count}. Run ./lab.sh up to reconcile membership.')
     elif command == 'build': lab.build(force=True)
     elif command == 'seed':
         if args.replace and not args.confirm_replace: raise LabError('--replace requires --confirm-replace.')

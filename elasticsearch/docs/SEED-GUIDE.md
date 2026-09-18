@@ -99,6 +99,10 @@ refresh 복원·문서 수 확인·manifest 기록까지 수행합니다.
 
 주요 옵션: `--size-mb`는 다섯 인덱스 합계 `_source` 목표 MiB, `--seed`는 재현 가능한
 난수 seed, `--start-date`/`--days`는 시간 범위, `--payload-bytes`는 비색인 payload,
+`--max-docs-per-shard`는 primary shard 하나의 목표 최대 문서 수, `--max-source-mb-per-shard`는
+primary shard 하나의 목표 최대 `_source` MiB입니다. 두 옵션은 기존 레이아웃보다 필요한
+primary shard 수가 많을 때 자동으로 shard 수를 늘립니다. Elasticsearch의 shard는 생성 후
+크기를 줄일 수 없으므로 기존 데이터에는 적용되지 않으며 `--recreate --yes`가 필요합니다.
 `--batch-size`/`--max-batch-mb`는 Bulk 크기, `--generate-only`는 ES 없이 파일만
 생성, `--recreate --yes`는 세 seed 인덱스를 삭제 후 재생성합니다.
 
@@ -109,6 +113,8 @@ refresh 복원·문서 수 확인·manifest 기록까지 수행합니다.
 ```bash
 ./lab.sh seed --size-mb 5
 ./lab.sh seed --size-mb 100
+./lab.sh seed --size-mb 100 --max-docs-per-shard 10000 --recreate --yes
+./lab.sh seed --size-mb 100 --max-source-mb-per-shard 2 --recreate --yes
 ./lab.sh seed --size-mb 300 --batch-size 300 --max-batch-mb 2
 ```
 

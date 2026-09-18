@@ -57,7 +57,7 @@ def register(subparsers):
         if name in ('slow', 'fragmentation'):
             p.add_argument('--leave-broken', action='store_true', help='비교/개선은 생략하고 문제 테이블을 남김')
         if name in ('node-failure', 'node-hang'):
-            p.add_argument('--node', choices=NODES, default='galera1')
+            p.add_argument('--node', choices=tuple(f'galera{i}' for i in range(1, 6)), default='galera1')
         if name in ('node-failure', 'node-hang', 'quorum', 'lock', 'demo'):
             lo, hi, default = (30, 180, 45) if name == 'quorum' else ((6,120,12) if name == 'lock' else (5,180,20))
             p.add_argument('--hold', type=bounded_int(lo,hi), default=default, help='장애/잠금 유지 목표 시간(초); 복구 대기는 별도')
@@ -98,13 +98,14 @@ def private_json(path, data):
 
 def check_health(status):
     if set(status) != set(NODES):
-        raise ScenarioError('세 노드 모두의 상태가 필요합니다')
+        raise ScenarioError('%d개 노드 모두의 상태가 필요합니다' % len(NODES))
+    expected_size = str(len(NODES))
     for n, s in status.items():
-        if not s.get('ready') or str(s.get('wsrep_cluster_size')) != '3' or s.get('node',n) != n:
-            raise ScenarioError('%s가 Primary/Synced/size=3이 아닙니다. ./lab.sh status로 확인하세요' % n)
+        if not s.get('ready') or str(s.get('wsrep_cluster_size')) != expected_size or s.get('node',n) != n:
+            raise ScenarioError('%s가 Primary/Synced/size=%s가 아닙니다. ./lab.sh status로 확인하세요' % (n, expected_size))
     ids = {s.get('wsrep_cluster_state_uuid') for s in status.values()}
     if len(ids) != 1 or None in ids or '' in ids:
-        raise ScenarioError('세 노드의 클러스터 UUID가 같지 않습니다')
+        raise ScenarioError('%d개 노드의 클러스터 UUID가 같지 않습니다' % len(NODES))
 
 
 class Runner:

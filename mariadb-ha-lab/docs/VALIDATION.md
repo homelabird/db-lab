@@ -13,7 +13,7 @@
 | 파괴적 명령 방어 | running/paused 볼륨 접근 거부, 살아 있으나 unready인 클러스터 자동 bootstrap 거부, 불건전한 donor가 있을 때 rebuild 거부 | mock 기반 제어 흐름 테스트 통과 |
 | 상태 판정 | SQL 연결만 성공한 경우 제외, Primary/Synced/connected/ready 조건, donor/joiner/non-Primary 제외 | 단위 테스트 통과 |
 | 환경 설정 | 랜덤 비밀번호·권한 600, 기존 .env 보존, 포트·프로젝트명·입력 제한 | 임시 디렉터리 테스트 통과 |
-| Compose | YAML 파싱, 3개 server_id, 독립 볼륨, restore 네트워크 분리, localhost 포트, privileged/host-network/socket bind 부재 | 구조 검사 통과 |
+| Compose | YAML 파싱, 3~5개 server_id, 독립 볼륨, restore 네트워크 분리, localhost 포트, privileged/host-network/socket bind 부재 | 구조 검사 통과 |
 | 데이터 생성 | tiny/small/standard/large SQL 생성, Sequence 범위 연속성, FK ID 범위 치환, 배치 경계, 가격 조건 보존, helper table 의존 제거 | 생성 결과 검사 통과 |
 | Shell/Python 문법 | 신규 shell의 `bash -n`, Python compileall, CLI 도움말 | 통과 |
 | 웹 대시보드 | 실제 Chromium에서 로컬 HTML 실행, **명시적인 합성 API fixture**로 정상 3노드·저하 1노드, 수동 새로고침, JSON 펼침, 1440px/390px 레이아웃 | 통과, JS 오류 없음 |

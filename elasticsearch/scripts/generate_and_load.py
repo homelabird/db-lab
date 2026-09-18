@@ -32,13 +32,45 @@ def config_from_args(args):
         raise ValueError('--days >= 1; 0 <= --payload-bytes <= 1048576')
     if args.batch_size < 1 or args.max_batch_mb <= 0 or not math.isfinite(args.max_batch_mb):
         raise ValueError('--batch-size and --max-batch-mb must be positive')
+    if args.max_docs_per_shard is not None and args.max_docs_per_shard < 1:
+        raise ValueError('--max-docs-per-shard must be >= 1')
+    if args.max_source_mb_per_shard is not None and (
+            args.max_source_mb_per_shard <= 0 or not math.isfinite(args.max_source_mb_per_shard)):
+        raise ValueError('--max-source-mb-per-shard must be finite and > 0')
     if args.retries < 0 or args.min_nodes < 1 or args.wait_seconds <= 0 or args.timeout <= 0:
         raise ValueError('Invalid retries, min-nodes, wait-seconds or timeout')
     config = {'generator_version': GENERATOR_VERSION, 'size_mib': args.size_mb,
               'seed': args.seed, 'start_date': parse_start(args.start_date).isoformat(),
               'days': args.days, 'payload_bytes': args.payload_bytes}
     config['total_target_source_bytes'] = int(args.size_mb * 1024 * 1024)
+    config['max_docs_per_shard'] = args.max_docs_per_shard
+    config['max_source_bytes_per_shard'] = (
+        int(args.max_source_mb_per_shard * 1024 * 1024)
+        if args.max_source_mb_per_shard is not None else None)
+    config['layout'] = tuned_layout(config)
     return config
+
+
+def layout_for(config, index):
+    return config.get('layout', LAYOUT)[index]
+
+
+def tuned_layout(config):
+    """Increase primary shards so configured per-shard ceilings can be met."""
+    layout = {index: list(LAYOUT[index]) for index in INDICES}
+    if config.get('max_docs_per_shard') is None and config.get('max_source_bytes_per_shard') is None:
+        return {index: tuple(values) for index, values in layout.items()}
+    for index in INDICES:
+        budget = budget_for(config, index)
+        required = 1
+        if config.get('max_source_bytes_per_shard'):
+            required = max(required, math.ceil(budget / config['max_source_bytes_per_shard']))
+        if config.get('max_docs_per_shard'):
+            sample = list(documents(config, index))[:100]
+            average = sum(len(source) + 1 for _, source in sample) / len(sample)
+            required = max(required, math.ceil(math.ceil(budget / average) / config['max_docs_per_shard']))
+        layout[index][0] = max(layout[index][0], required)
+    return {index: tuple(values) for index, values in layout.items()}
 
 
 def budget_for(config, index):
@@ -51,11 +83,11 @@ def budget_for(config, index):
 def definition(config, index):
     mapping = json.loads((ROOT / 'mappings' / f'{index}.json').read_text(encoding='utf-8'))
     metadata = {'config': config, 'source_budget_bytes': budget_for(config, index),
-                'index': index, 'shards': LAYOUT[index][0], 'replicas': LAYOUT[index][1],
+                'index': index, 'shards': layout_for(config, index)[0], 'replicas': layout_for(config, index)[1],
                 'mapping_sha256': hashlib.sha256(compact(mapping)).hexdigest()}
     signature = hashlib.sha256(compact(metadata)).hexdigest()
     mapping['_meta'] = {'seed_lab': {'signature': signature, **metadata}}
-    return {'settings': {'number_of_shards': LAYOUT[index][0], 'number_of_replicas': LAYOUT[index][1],
+    return {'settings': {'number_of_shards': layout_for(config, index)[0], 'number_of_replicas': layout_for(config, index)[1],
                          'refresh_interval': '1s', 'index.unassigned.node_left.delayed_timeout': '45s'},
             'mappings': mapping}
 
@@ -181,7 +213,7 @@ def prepare_indices(client, config, recreate=False):
                 raise RuntimeError(f'{index} is an older/different dataset. Nothing was deleted. '
                                    'Back up as needed, then use --recreate --yes (deletes only the 5 seed indices).')
             settings = record.get('settings', {}).get('index', {})
-            if int(settings.get('number_of_shards', -1)) != LAYOUT[index][0]:
+            if int(settings.get('number_of_shards', -1)) != layout_for(config, index)[0]:
                 raise RuntimeError(f'Shard layout changed for {index}; use --recreate --yes.')
     for index in INDICES:
         if recreate and index in existing:
@@ -235,7 +267,7 @@ def seed_index(client, config, index, args, output=None):
                 print(f'[WARNING] Restore refresh_interval={previous_refresh} manually for {index}: {restore_error}', file=sys.stderr)
     result = {'documents': count, 'target_source_bytes': budget_for(config, index),
               'source_bytes': source_bytes, 'bulk_wire_bytes': wire_bytes, 'largest_source_line_bytes': max_source,
-              'primary_shards': LAYOUT[index][0], 'replicas': LAYOUT[index][1],
+              'primary_shards': layout_for(config, index)[0], 'replicas': layout_for(config, index)[1],
               'first_document_id': f'{index}-0000000000',
               'signature': definition(config, index)['mappings']['_meta']['seed_lab']['signature']}
     if client:
@@ -262,6 +294,10 @@ def parser():
                    help='Number of calendar days used for synthetic @timestamp values (default: 31)')
     p.add_argument('--payload-bytes', type=int, default=256,
                    help='Extra non-indexed synthetic _source payload per document (default: 256)')
+    p.add_argument('--max-docs-per-shard', type=int, default=None,
+                   help='Tune primary shard count so each shard targets at most this many documents')
+    p.add_argument('--max-source-mb-per-shard', type=float, default=None,
+                   help='Tune primary shard count so each shard targets at most this MiB of generated _source')
     p.add_argument('--batch-size', type=int, default=int(os.getenv('BULK_SIZE', '500')),
                    help='Maximum documents per Bulk request (default: 500)')
     p.add_argument('--max-batch-mb', type=float, default=4,
@@ -275,7 +311,7 @@ def parser():
     p.add_argument('--wait-seconds', type=float, default=300,
                    help='Maximum cluster wait time in seconds (default: 300)')
     p.add_argument('--recreate', action='store_true',
-                   help='Delete and recreate only the 3 known seed indices')
+                   help='Delete and recreate only the 5 known seed indices')
     p.add_argument('--yes', action='store_true',
                    help='Explicitly acknowledge the data deletion requested by --recreate')
     p.add_argument('--generate-only', action='store_true',

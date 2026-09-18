@@ -21,25 +21,29 @@ def verify(client, manifest, min_nodes=5):
     data_nodes=sum(any(role=='data' or role.startswith('data_') for role in n.get('roles',[])) for n in nodes['nodes'].values())
     if data_nodes<min_nodes: raise RuntimeError(f'Expected >= {min_nodes} data nodes, got {data_nodes}')
     checks=[]
+    expected_layout = {
+        index: (manifest['indices'][index]['primary_shards'], manifest['indices'][index]['replicas'])
+        for index in INDICES
+    }
     for index in INDICES:
         detail=client.request('GET',f'/{index}')[index]
         settings=detail['settings']['index']
         expected=manifest['indices'][index]
         actual=client.request('GET',f'/{index}/_count')['count']
         if actual!=expected['documents']: raise RuntimeError(f'{index}: expected={expected["documents"]}, actual={actual}; stop live load / clean up practice data.')
-        if (int(settings['number_of_shards']),int(settings['number_of_replicas']))!=LAYOUT[index][:2]:
+        if (int(settings['number_of_shards']),int(settings['number_of_replicas']))!=expected_layout[index]:
             raise RuntimeError(f'{index}: shard settings differ from the baseline; restore replica/allocation scenarios.')
         signature=detail['mappings'].get('_meta',{}).get('seed_lab',{}).get('signature')
         if signature!=expected['signature']: raise RuntimeError(f'{index}: mapping seed signature mismatch')
         checks.append({'index':index,'documents':actual,'status':'PASS'})
     shards=client.request('GET','/_cat/shards/'+','.join(INDICES)+'?format=json')
     p=sum(s['prirep']=='p' for s in shards); r=sum(s['prirep']=='r' for s in shards)
-    expected_p = sum(value[0] for value in LAYOUT.values())
-    expected_r = sum(value[0] * value[1] for value in LAYOUT.values())
+    expected_p = sum(value[0] for value in expected_layout.values())
+    expected_r = sum(value[0] * value[1] for value in expected_layout.values())
     if (p,r)!=(expected_p, expected_r) or any(s['state']!='STARTED' for s in shards):
         raise RuntimeError(f'Expected {expected_p} primary + {expected_r} replica STARTED copies; got p={p}, r={r}')
     for index in INDICES:
-        for shard in range(LAYOUT[index][0]):
+        for shard in range(expected_layout[index][0]):
             copies=[s for s in shards if s['index']==index and int(s['shard'])==shard]
             if len(copies)!=1+LAYOUT[index][1] or len({s['node'] for s in copies})!=len(copies):
                 raise RuntimeError(f'Unexpected copy count or shared host for {index} shard {shard}')

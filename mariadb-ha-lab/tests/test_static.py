@@ -275,6 +275,10 @@ class ComposeTests(unittest.TestCase):
     def test_operational_services_have_healthchecks(self):
         for service in ('proxy', 'dashboard'):
             self.assertIn('healthcheck', self.cfg['services'][service])
+    def test_scaleout_services_have_unique_identity_and_volumes(self):
+        for node, server_id in (('galera4', '104'), ('galera5', '105')):
+            self.assertEqual(self.cfg['services'][node]['environment']['SERVER_ID'], server_id)
+            self.assertEqual(len(self.cfg['services'][node]['volumes']), 2)
     def test_restore_network_isolated(self):
         self.assertTrue(set(self.cfg['services']['restore']['networks']).isdisjoint(
             self.cfg['services']['galera1']['networks']))

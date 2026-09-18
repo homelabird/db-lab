@@ -18,7 +18,7 @@ chmod +x lab.sh
 ./lab.sh scenario demo --rows 5000 --hold 20
 ```
 
-`commerce_lab`의 큰 데이터를 먼저 적재할 필요는 없습니다. 각 시나리오가 **incident_lab**에 필요한 합성 데이터를 직접 만듭니다. 모든 노드가 같은 UUID의 Primary/Synced, cluster size=3 상태여야 시작합니다.
+`commerce_lab`의 큰 데이터를 먼저 적재할 필요는 없습니다. 각 시나리오가 **incident_lab**에 필요한 합성 데이터를 직접 만듭니다. 설정된 모든 노드가 같은 UUID의 Primary/Synced, 현재 membership 크기 상태여야 시작합니다.
 
 이미 이전 `mariadb-ha-lab`을 실행 중이라면 **프로젝트가 있는 상위 폴더에서** 업데이트 ZIP을 덮어씁니다.
 

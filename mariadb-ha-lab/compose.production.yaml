@@ -9,6 +9,10 @@ services:
     restart: unless-stopped
   galera3:
     restart: unless-stopped
+  galera4:
+    restart: unless-stopped
+  galera5:
+    restart: unless-stopped
   proxy:
     restart: unless-stopped
   dashboard:

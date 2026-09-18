@@ -23,6 +23,20 @@
 `labs`는 읽기 전용/쓰기 lab을 구분해 보여주며, 쓰기 SQL은 실수 방지를 위해
 `--allow-write` 없이는 실행하지 않습니다. lock/deadlock처럼 두 세션이 필요한 lab은
 각각의 터미널에서 같은 명령을 실행해야 합니다.bash
+
+Galera 노드는 3~5개 범위에서 명시적으로 확장·축소할 수 있습니다.
+
+```bash
+./lab.sh scale 4 --confirm-scale
+./lab.sh up
+./lab.sh status
+./lab.sh scale 3 --confirm-scale
+./lab.sh up
+```
+
+scale-out은 새 노드를 SST로 가입시키고, scale-down은 마지막 노드부터 정상 종료합니다.
+3개 미만 축소는 quorum 손실 방지를 위해 거부합니다. 노드 수를 바꾼 뒤에는 반드시
+`./lab.sh verify`로 전체 membership과 UUID를 확인하세요.bash
 # 기존 3노드가 정상 실행 중일 때, 별도 commerce 데이터 적재 불필요
 ./lab.sh scenario demo --rows 5000 --hold 20
 

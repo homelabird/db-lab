@@ -7,7 +7,8 @@ from pathlib import Path
 import time
 import urllib.request
 
-NODES = ('galera1','galera2','galera3')
+import os
+NODES = tuple(filter(None, os.environ.get('GALERA_NODES', 'galera1,galera2,galera3').split(',')))
 
 def fetch(node):
     try:

@@ -60,6 +60,8 @@ Scenario names are the script names without .sh:
 Typical seed workflow:
   ./lab.sh up
   ./lab.sh seed --size-mb 5       # quick smoke test
+  ./lab.sh seed --size-mb 100 --max-docs-per-shard 10000 --recreate --yes
+  ./lab.sh seed --size-mb 100 --max-source-mb-per-shard 2 --recreate --yes
   ./lab.sh seed                   # default 100 MiB synthetic dataset
   ./lab.sh verify                 # counts, mappings, shards, and queries
   ./lab.sh size                   # current Lucene store size
