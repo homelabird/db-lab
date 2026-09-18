@@ -176,6 +176,8 @@ services:
 networks:
   es-lab:
     driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
 volumes:
   es01-data: null
   es02-data: null

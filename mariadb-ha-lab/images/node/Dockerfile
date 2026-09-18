@@ -15,7 +15,8 @@ COPY images/node/entrypoint.sh /usr/local/bin/lab-entrypoint.sh
 COPY images/node/init-users.sh /docker-entrypoint-initdb.d/10-lab-users.sh
 COPY scripts/ /opt/lab/
 COPY datasets/ /opt/lab/datasets/
-RUN chmod 755 /usr/local/bin/lab-entrypoint.sh /docker-entrypoint-initdb.d/10-lab-users.sh \
+RUN chmod 644 /etc/mysql/conf.d/80-lab.cnf \
+ && chmod 755 /usr/local/bin/lab-entrypoint.sh /docker-entrypoint-initdb.d/10-lab-users.sh \
  && find /opt/lab -type f -exec chmod 644 {} + \
  && bash -n /usr/local/bin/lab-entrypoint.sh \
  && bash -n /docker-entrypoint-initdb.d/10-lab-users.sh \

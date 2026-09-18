@@ -187,6 +187,10 @@ class DatasetTests(unittest.TestCase):
                     self.assertTrue(all(hi-lo+1<=500 for lo,hi in spans))
 
 class SafetyContractTests(unittest.TestCase):
+    def test_lab_entrypoint_is_executable(self):
+        mode = (ROOT / 'lab.sh').stat().st_mode
+        self.assertTrue(mode & 0o111, 'lab.sh must retain an executable Git file mode')
+
     def test_offline_refuses_running(self):
         instance=object.__new__(lab.Lab)
         with patch.object(instance,'state',return_value='running'),patch.object(instance,'comp') as comp:

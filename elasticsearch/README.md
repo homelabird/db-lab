@@ -26,6 +26,13 @@ sudo sysctl -w vm.max_map_count=262144
 `scripts/*.sh`와 `scenarios/*.sh`는 호환성을 위해 그대로 남아 있으며,
 `lab.sh`가 해당 스크립트로 전달합니다.
 
+일부 개발 컨테이너/Codespaces 호스트는 `iptables-legacy`의 기본
+`FORWARD DROP` 때문에 컨테이너끼리 통신하지 못할 수 있습니다. `lab.sh up`은
+Compose 네트워크의 실제 대역에 대해 필요한 허용 규칙을 중복 없이 자동으로
+추가하고, `es01`에서 `es02`로 연결되는지 확인한 뒤 계속 진행합니다. 자동
+수정 권한이 없으면 표시되는 `iptables-legacy` 명령을 관리자 권한으로 한 번
+실행한 뒤 `./lab.sh up`을 다시 실행하세요.
+
 ```bash
 ./lab.sh status
 ./lab.sh logs es01 --tail 100
