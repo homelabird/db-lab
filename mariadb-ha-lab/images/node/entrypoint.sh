@@ -60,11 +60,15 @@ elif [[ ! -f /var/lib/labctl/init-complete ]]; then
   echo '[lab] Use lab.sh rebuild NODE --confirm-rebuild (healthy cluster) or reset a disposable lab.' >&2
   exit 1
 fi
-cat > /etc/mysql/conf.d/81-lab-runtime.cnf <<EOF
+if [[ -w /etc/mysql/conf.d ]]; then
+  cat > /etc/mysql/conf.d/81-lab-runtime.cnf <<EOF
 [mariadb]
 innodb_buffer_pool_size=${BUFFER_POOL_SIZE:-256M}
 EOF
-chmod 644 /etc/mysql/conf.d/81-lab-runtime.cnf
+  chmod 644 /etc/mysql/conf.d/81-lab-runtime.cnf
+else
+  echo '[lab] Runtime config directory is not writable; using image defaults.' >&2
+fi
 args=(mariadbd "--server-id=${SERVER_ID:-1}")
 if [[ $mode == galera ]]; then
   # Resolve this container's CURRENT address. No static host subnet or host networking required.
