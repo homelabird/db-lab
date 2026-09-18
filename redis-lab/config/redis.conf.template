@@ -1,0 +1,35 @@
+# Initial template only. Runtime config is writable /data/state/redis.conf.
+bind 0.0.0.0
+port 6379
+protected-mode yes
+requirepass @@REDIS_PASSWORD@@
+masterauth @@REDIS_PASSWORD@@
+daemonize no
+logfile ""
+loglevel notice
+dir /data/db
+dbfilename dump.rdb
+appendonly yes
+appenddirname appendonlydir
+appendfilename appendonly.aof
+appendfsync everysec
+save 300 100
+stop-writes-on-bgsave-error yes
+rdbcompression yes
+replica-read-only yes
+replica-serve-stale-data yes
+replica-announce-ip @@NODE_IP@@
+replica-announce-port 6379
+repl-diskless-sync yes
+repl-diskless-sync-delay 1
+repl-backlog-size 4mb
+replica-priority 100
+maxmemory @@REDIS_MAXMEMORY@@
+maxmemory-policy noeviction
+maxclients 1000
+min-replicas-to-write 0
+min-replicas-max-lag 10
+slowlog-log-slower-than 10000
+slowlog-max-len 128
+latency-monitor-threshold 100
+tcp-keepalive 60

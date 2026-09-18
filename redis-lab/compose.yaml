@@ -1,0 +1,225 @@
+x-podman:
+  in_pod: false
+
+x-redis-common: &redis-common
+  image: localhost/${LAB_NAME:-rslab}-redis:1.1
+  restart: "no"
+  stop_grace_period: 15s
+  mem_limit: ${REDIS_CONTAINER_MEMORY:-512m}
+  labels:
+    io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+  healthcheck:
+    test: ["CMD-SHELL", 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli -h 127.0.0.1 --raw PING | grep -qx PONG']
+    interval: 5s
+    timeout: 3s
+    retries: 5
+    start_period: 15s
+
+x-env: &redis-env
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?Run ./lab.sh init first}
+  SENTINEL_PASSWORD: ${SENTINEL_PASSWORD:?Run ./lab.sh init first}
+  MASTER_NAME: ${MASTER_NAME:-mymaster}
+  PRIMARY_IP: ${REDIS_1_IP:-10.89.77.11}
+  REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-192mb}
+  DOWN_AFTER_MS: ${DOWN_AFTER_MS:-5000}
+  FAILOVER_TIMEOUT_MS: ${FAILOVER_TIMEOUT_MS:-30000}
+
+services:
+  redis-1:
+    <<: *redis-common
+    container_name: ${LAB_NAME:-rslab}-redis-1
+    build:
+      context: .
+      dockerfile: Containerfile
+      target: redis-node
+      args:
+        REDIS_IMAGE: ${REDIS_IMAGE:-docker.io/library/redis:7.4.11-alpine}
+    environment:
+      <<: *redis-env
+      LAB_MODE: redis
+      NODE_NAME: redis-1
+      NODE_IP: ${REDIS_1_IP:-10.89.77.11}
+      INITIAL_ROLE: master
+    volumes: ["redis-1-data:/data"]
+    networks:
+      labnet:
+        ipv4_address: ${REDIS_1_IP:-10.89.77.11}
+        aliases: [redis-1]
+
+  redis-2:
+    <<: *redis-common
+    container_name: ${LAB_NAME:-rslab}-redis-2
+    environment:
+      <<: *redis-env
+      LAB_MODE: redis
+      NODE_NAME: redis-2
+      NODE_IP: ${REDIS_2_IP:-10.89.77.12}
+      INITIAL_ROLE: replica
+    volumes: ["redis-2-data:/data"]
+    networks:
+      labnet:
+        ipv4_address: ${REDIS_2_IP:-10.89.77.12}
+        aliases: [redis-2]
+
+  redis-3:
+    <<: *redis-common
+    container_name: ${LAB_NAME:-rslab}-redis-3
+    environment:
+      <<: *redis-env
+      LAB_MODE: redis
+      NODE_NAME: redis-3
+      NODE_IP: ${REDIS_3_IP:-10.89.77.13}
+      INITIAL_ROLE: replica
+    volumes: ["redis-3-data:/data"]
+    networks:
+      labnet:
+        ipv4_address: ${REDIS_3_IP:-10.89.77.13}
+        aliases: [redis-3]
+
+  sentinel-1:
+    <<: *redis-common
+    container_name: ${LAB_NAME:-rslab}-sentinel-1
+    mem_limit: ${SENTINEL_CONTAINER_MEMORY:-128m}
+    environment:
+      <<: *redis-env
+      LAB_MODE: sentinel
+      NODE_NAME: sentinel-1
+      NODE_IP: ${SENTINEL_1_IP:-10.89.77.21}
+    volumes: ["sentinel-1-state:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", 'REDISCLI_AUTH="$$SENTINEL_PASSWORD" redis-cli -h 127.0.0.1 -p 26379 --raw PING | grep -qx PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    networks:
+      labnet:
+        ipv4_address: ${SENTINEL_1_IP:-10.89.77.21}
+        aliases: [sentinel-1]
+
+  sentinel-2:
+    <<: *redis-common
+    container_name: ${LAB_NAME:-rslab}-sentinel-2
+    mem_limit: ${SENTINEL_CONTAINER_MEMORY:-128m}
+    environment:
+      <<: *redis-env
+      LAB_MODE: sentinel
+      NODE_NAME: sentinel-2
+      NODE_IP: ${SENTINEL_2_IP:-10.89.77.22}
+    volumes: ["sentinel-2-state:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", 'REDISCLI_AUTH="$$SENTINEL_PASSWORD" redis-cli -h 127.0.0.1 -p 26379 --raw PING | grep -qx PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    networks:
+      labnet:
+        ipv4_address: ${SENTINEL_2_IP:-10.89.77.22}
+        aliases: [sentinel-2]
+
+  sentinel-3:
+    <<: *redis-common
+    container_name: ${LAB_NAME:-rslab}-sentinel-3
+    mem_limit: ${SENTINEL_CONTAINER_MEMORY:-128m}
+    environment:
+      <<: *redis-env
+      LAB_MODE: sentinel
+      NODE_NAME: sentinel-3
+      NODE_IP: ${SENTINEL_3_IP:-10.89.77.23}
+    volumes: ["sentinel-3-state:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", 'REDISCLI_AUTH="$$SENTINEL_PASSWORD" redis-cli -h 127.0.0.1 -p 26379 --raw PING | grep -qx PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    networks:
+      labnet:
+        ipv4_address: ${SENTINEL_3_IP:-10.89.77.23}
+        aliases: [sentinel-3]
+
+  lab-client:
+    image: localhost/${LAB_NAME:-rslab}-client:1.1
+    build:
+      context: .
+      dockerfile: Containerfile
+      target: client
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-docker.io/library/python:3.12-slim-bookworm}
+    container_name: ${LAB_NAME:-rslab}-lab-client
+    restart: "no"
+    mem_limit: ${CLIENT_CONTAINER_MEMORY:-192m}
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+    environment:
+      <<: *redis-env
+      REDIS_NODES: ${REDIS_1_IP:-10.89.77.11}:6379,${REDIS_2_IP:-10.89.77.12}:6379,${REDIS_3_IP:-10.89.77.13}:6379
+      SENTINEL_NODES: ${SENTINEL_1_IP:-10.89.77.21}:26379,${SENTINEL_2_IP:-10.89.77.22}:26379,${SENTINEL_3_IP:-10.89.77.23}:26379
+      SANDBOX_HOST: ${SANDBOX_IP:-10.89.77.40}
+    volumes: ["client-results:/results"]
+    networks:
+      labnet:
+        ipv4_address: ${CLIENT_IP:-10.89.77.30}
+        aliases: [lab-client]
+
+  redis-sandbox:
+    <<: *redis-common
+    profiles: [sandbox]
+    container_name: ${LAB_NAME:-rslab}-redis-sandbox
+    environment:
+      <<: *redis-env
+      LAB_MODE: redis
+      NODE_NAME: redis-sandbox
+      NODE_IP: ${SANDBOX_IP:-10.89.77.40}
+      INITIAL_ROLE: master
+      REDIS_MAXMEMORY: 64mb
+    volumes: ["sandbox-data:/data"]
+    networks:
+      labnet:
+        ipv4_address: ${SANDBOX_IP:-10.89.77.40}
+        aliases: [redis-sandbox]
+
+networks:
+  labnet:
+    name: ${LAB_NAME:-rslab}-net
+    driver: bridge
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+    ipam:
+      config:
+        - subnet: ${LAB_SUBNET:-10.89.77.0/24}
+
+volumes:
+  redis-1-data:
+    name: ${LAB_NAME:-rslab}-redis-1-data
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+  redis-2-data:
+    name: ${LAB_NAME:-rslab}-redis-2-data
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+  redis-3-data:
+    name: ${LAB_NAME:-rslab}-redis-3-data
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+  sentinel-1-state:
+    name: ${LAB_NAME:-rslab}-sentinel-1-state
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+  sentinel-2-state:
+    name: ${LAB_NAME:-rslab}-sentinel-2-state
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+  sentinel-3-state:
+    name: ${LAB_NAME:-rslab}-sentinel-3-state
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+  client-results:
+    name: ${LAB_NAME:-rslab}-client-results
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}
+  sandbox-data:
+    name: ${LAB_NAME:-rslab}-sandbox-data
+    labels:
+      io.redis-sentinel-lab.id: ${LAB_NAME:-rslab}

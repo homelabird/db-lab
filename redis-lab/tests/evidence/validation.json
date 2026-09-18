@@ -1,0 +1,38 @@
+{
+  "artifact_version": "2.0.0-operations",
+  "recorded_at": "2026-09-18T04:59:10.362218+00:00",
+  "offline": {
+    "status": "PASS",
+    "total_tests": 170,
+    "failures": 0,
+    "skipped": 0,
+    "existing_tests": 107,
+    "new_tests": 63,
+    "local_tcp_tests_included": 10,
+    "tcp_peer": "test double / echo server, NOT Redis"
+  },
+  "syntax": {
+    "bash": "PASS",
+    "sh": "PASS",
+    "python_compileall": "PASS"
+  },
+  "runtime": {
+    "status": "BLOCKED",
+    "podman": null,
+    "podman_compose": null,
+    "redis_server": null,
+    "attempted_command": "./ops.sh validate --yes",
+    "exit_code": 2
+  },
+  "unverified": [
+    "Redis command integration",
+    "jemalloc active defragmentation",
+    "RDB/COW effects",
+    "Sentinel failover",
+    "container image build/pull",
+    "Podman network/volumes",
+    "rootless SELinux/cgroup resource limits"
+  ],
+  "python": "3.13.5",
+  "source_download": "curl could not resolve download.redis.io; container download tool also failed"
+}

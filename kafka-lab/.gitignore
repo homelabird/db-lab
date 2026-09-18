@@ -1,0 +1,5 @@
+.env
+.state/
+reports/run-*/
+__pycache__/
+*.pyc

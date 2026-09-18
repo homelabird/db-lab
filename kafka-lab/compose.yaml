@@ -1,0 +1,289 @@
+# ZooKeeper mode ONLY: deliberately no process.roles / controller.quorum.voters.
+# Every service has its own network namespace (--in-pod=false).
+services:
+  zk1:
+    image: docker.io/confluentinc/cp-zookeeper:${CP_VERSION:-7.9.0}
+    container_name: ${LAB_NAME:-kzk-lab}-zk1
+    hostname: zk1
+    restart: "no"
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+    environment:
+      ZOOKEEPER_SERVER_ID: "1"
+      ZOOKEEPER_CLIENT_PORT: "2181"
+      ZOOKEEPER_TICK_TIME: "2000"
+      ZOOKEEPER_INIT_LIMIT: "10"
+      ZOOKEEPER_SYNC_LIMIT: "5"
+      ZOOKEEPER_SERVERS: "zk1:2888:3888;zk2:2888:3888;zk3:2888:3888"
+      # cp-zookeeper maps only selected ZOOKEEPER_* settings; use a supported JVM property.
+      KAFKA_OPTS: "-Dzookeeper.4lw.commands.whitelist=ruok,srvr,mntr,stat"
+      ZOOKEEPER_ADMIN_ENABLE_SERVER: "false"
+      ZOOKEEPER_QUORUM_LISTEN_ON_ALL_IPS: "true"
+      ZOOKEEPER_AUTOPURGE_SNAP_RETAIN_COUNT: "3"
+      ZOOKEEPER_AUTOPURGE_PURGE_INTERVAL: "1"
+      KAFKA_HEAP_OPTS: ${ZOOKEEPER_HEAP_OPTS:--Xms128m -Xmx256m}
+    volumes:
+      - zk1-data:/var/lib/zookeeper/data:U
+      - zk1-log:/var/lib/zookeeper/log:U
+    networks: [labnet]
+    stop_grace_period: 20s
+
+  zk2:
+    image: docker.io/confluentinc/cp-zookeeper:${CP_VERSION:-7.9.0}
+    container_name: ${LAB_NAME:-kzk-lab}-zk2
+    hostname: zk2
+    restart: "no"
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+    environment:
+      ZOOKEEPER_SERVER_ID: "2"
+      ZOOKEEPER_CLIENT_PORT: "2181"
+      ZOOKEEPER_TICK_TIME: "2000"
+      ZOOKEEPER_INIT_LIMIT: "10"
+      ZOOKEEPER_SYNC_LIMIT: "5"
+      ZOOKEEPER_SERVERS: "zk1:2888:3888;zk2:2888:3888;zk3:2888:3888"
+      # cp-zookeeper maps only selected ZOOKEEPER_* settings; use a supported JVM property.
+      KAFKA_OPTS: "-Dzookeeper.4lw.commands.whitelist=ruok,srvr,mntr,stat"
+      ZOOKEEPER_ADMIN_ENABLE_SERVER: "false"
+      ZOOKEEPER_QUORUM_LISTEN_ON_ALL_IPS: "true"
+      ZOOKEEPER_AUTOPURGE_SNAP_RETAIN_COUNT: "3"
+      ZOOKEEPER_AUTOPURGE_PURGE_INTERVAL: "1"
+      KAFKA_HEAP_OPTS: ${ZOOKEEPER_HEAP_OPTS:--Xms128m -Xmx256m}
+    volumes:
+      - zk2-data:/var/lib/zookeeper/data:U
+      - zk2-log:/var/lib/zookeeper/log:U
+    networks: [labnet]
+    stop_grace_period: 20s
+
+  zk3:
+    image: docker.io/confluentinc/cp-zookeeper:${CP_VERSION:-7.9.0}
+    container_name: ${LAB_NAME:-kzk-lab}-zk3
+    hostname: zk3
+    restart: "no"
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+    environment:
+      ZOOKEEPER_SERVER_ID: "3"
+      ZOOKEEPER_CLIENT_PORT: "2181"
+      ZOOKEEPER_TICK_TIME: "2000"
+      ZOOKEEPER_INIT_LIMIT: "10"
+      ZOOKEEPER_SYNC_LIMIT: "5"
+      ZOOKEEPER_SERVERS: "zk1:2888:3888;zk2:2888:3888;zk3:2888:3888"
+      # cp-zookeeper maps only selected ZOOKEEPER_* settings; use a supported JVM property.
+      KAFKA_OPTS: "-Dzookeeper.4lw.commands.whitelist=ruok,srvr,mntr,stat"
+      ZOOKEEPER_ADMIN_ENABLE_SERVER: "false"
+      ZOOKEEPER_QUORUM_LISTEN_ON_ALL_IPS: "true"
+      ZOOKEEPER_AUTOPURGE_SNAP_RETAIN_COUNT: "3"
+      ZOOKEEPER_AUTOPURGE_PURGE_INTERVAL: "1"
+      KAFKA_HEAP_OPTS: ${ZOOKEEPER_HEAP_OPTS:--Xms128m -Xmx256m}
+    volumes:
+      - zk3-data:/var/lib/zookeeper/data:U
+      - zk3-log:/var/lib/zookeeper/log:U
+    networks: [labnet]
+    stop_grace_period: 20s
+
+  kafka1:
+    image: docker.io/confluentinc/cp-kafka:${CP_VERSION:-7.9.0}
+    container_name: ${LAB_NAME:-kzk-lab}-kafka1
+    hostname: kafka1
+    restart: "no"
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+    depends_on: [zk1, zk2, zk3]
+    environment:
+      KAFKA_BROKER_ID: "1"
+      KAFKA_ZOOKEEPER_CONNECT: "zk1:2181,zk2:2181,zk3:2181"
+      KAFKA_ZOOKEEPER_SESSION_TIMEOUT_MS: "12000"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka1:9092,EXTERNAL://${ADVERTISED_HOST:-localhost}:${KAFKA1_PORT:-19092}"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      KAFKA_NUM_PARTITIONS: "6"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: "3"
+      KAFKA_MIN_INSYNC_REPLICAS: "2"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "3"
+      KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: "6"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "3"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "2"
+      KAFKA_TRANSACTION_STATE_LOG_NUM_PARTITIONS: "3"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "1000"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+      KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: "false"
+      KAFKA_AUTO_LEADER_REBALANCE_ENABLE: "false"
+      KAFKA_CONTROLLED_SHUTDOWN_ENABLE: "true"
+      KAFKA_REPLICA_LAG_TIME_MAX_MS: "10000"
+      KAFKA_LOG_RETENTION_HOURS: "24"
+      KAFKA_LOG_SEGMENT_BYTES: "16777216"
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: "10000"
+      KAFKA_LOG_CLEANER_ENABLE: "true"
+      KAFKA_LOG_CLEANER_DEDUPE_BUFFER_SIZE: "33554432"
+      KAFKA_HEAP_OPTS: ${KAFKA_HEAP_OPTS:--Xms256m -Xmx512m}
+    ports:
+      - "${BIND_IP:-127.0.0.1}:${KAFKA1_PORT:-19092}:9093"
+    volumes:
+      - kafka1-data:/var/lib/kafka/data:U
+    networks: [labnet]
+    stop_grace_period: 30s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  kafka2:
+    image: docker.io/confluentinc/cp-kafka:${CP_VERSION:-7.9.0}
+    container_name: ${LAB_NAME:-kzk-lab}-kafka2
+    hostname: kafka2
+    restart: "no"
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+    depends_on: [zk1, zk2, zk3]
+    environment:
+      KAFKA_BROKER_ID: "2"
+      KAFKA_ZOOKEEPER_CONNECT: "zk1:2181,zk2:2181,zk3:2181"
+      KAFKA_ZOOKEEPER_SESSION_TIMEOUT_MS: "12000"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka2:9092,EXTERNAL://${ADVERTISED_HOST:-localhost}:${KAFKA2_PORT:-29092}"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      KAFKA_NUM_PARTITIONS: "6"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: "3"
+      KAFKA_MIN_INSYNC_REPLICAS: "2"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "3"
+      KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: "6"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "3"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "2"
+      KAFKA_TRANSACTION_STATE_LOG_NUM_PARTITIONS: "3"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "1000"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+      KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: "false"
+      KAFKA_AUTO_LEADER_REBALANCE_ENABLE: "false"
+      KAFKA_CONTROLLED_SHUTDOWN_ENABLE: "true"
+      KAFKA_REPLICA_LAG_TIME_MAX_MS: "10000"
+      KAFKA_LOG_RETENTION_HOURS: "24"
+      KAFKA_LOG_SEGMENT_BYTES: "16777216"
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: "10000"
+      KAFKA_LOG_CLEANER_ENABLE: "true"
+      KAFKA_LOG_CLEANER_DEDUPE_BUFFER_SIZE: "33554432"
+      KAFKA_HEAP_OPTS: ${KAFKA_HEAP_OPTS:--Xms256m -Xmx512m}
+    ports:
+      - "${BIND_IP:-127.0.0.1}:${KAFKA2_PORT:-29092}:9093"
+    volumes:
+      - kafka2-data:/var/lib/kafka/data:U
+    networks: [labnet]
+    stop_grace_period: 30s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  kafka3:
+    image: docker.io/confluentinc/cp-kafka:${CP_VERSION:-7.9.0}
+    container_name: ${LAB_NAME:-kzk-lab}-kafka3
+    hostname: kafka3
+    restart: "no"
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+    depends_on: [zk1, zk2, zk3]
+    environment:
+      KAFKA_BROKER_ID: "3"
+      KAFKA_ZOOKEEPER_CONNECT: "zk1:2181,zk2:2181,zk3:2181"
+      KAFKA_ZOOKEEPER_SESSION_TIMEOUT_MS: "12000"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka3:9092,EXTERNAL://${ADVERTISED_HOST:-localhost}:${KAFKA3_PORT:-39092}"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      KAFKA_NUM_PARTITIONS: "6"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: "3"
+      KAFKA_MIN_INSYNC_REPLICAS: "2"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "3"
+      KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: "6"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "3"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "2"
+      KAFKA_TRANSACTION_STATE_LOG_NUM_PARTITIONS: "3"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "1000"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+      KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: "false"
+      KAFKA_AUTO_LEADER_REBALANCE_ENABLE: "false"
+      KAFKA_CONTROLLED_SHUTDOWN_ENABLE: "true"
+      KAFKA_REPLICA_LAG_TIME_MAX_MS: "10000"
+      KAFKA_LOG_RETENTION_HOURS: "24"
+      KAFKA_LOG_SEGMENT_BYTES: "16777216"
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: "10000"
+      KAFKA_LOG_CLEANER_ENABLE: "true"
+      KAFKA_LOG_CLEANER_DEDUPE_BUFFER_SIZE: "33554432"
+      KAFKA_HEAP_OPTS: ${KAFKA_HEAP_OPTS:--Xms256m -Xmx512m}
+    ports:
+      - "${BIND_IP:-127.0.0.1}:${KAFKA3_PORT:-39092}:9093"
+    volumes:
+      - kafka3-data:/var/lib/kafka/data:U
+    networks: [labnet]
+    stop_grace_period: 30s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  tools:
+    image: localhost/${LAB_NAME:-kzk-lab}-tools:1.0
+    build:
+      context: ./client
+      dockerfile: Containerfile
+    container_name: ${LAB_NAME:-kzk-lab}-tools
+    restart: "no"
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+    environment:
+      BOOTSTRAP_SERVERS: "kafka1:9092,kafka2:9092,kafka3:9092"
+      ZK_SERVERS: "zk1:2181,zk2:2181,zk3:2181"
+    networks: [labnet]
+
+networks:
+  labnet:
+    name: ${LAB_NAME:-kzk-lab}-net
+    driver: bridge
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+
+volumes:
+  zk1-data:
+    name: ${LAB_NAME:-kzk-lab}-zk1-data
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+  zk1-log:
+    name: ${LAB_NAME:-kzk-lab}-zk1-log
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+  zk2-data:
+    name: ${LAB_NAME:-kzk-lab}-zk2-data
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+  zk2-log:
+    name: ${LAB_NAME:-kzk-lab}-zk2-log
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+  zk3-data:
+    name: ${LAB_NAME:-kzk-lab}-zk3-data
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+  zk3-log:
+    name: ${LAB_NAME:-kzk-lab}-zk3-log
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+  kafka1-data:
+    name: ${LAB_NAME:-kzk-lab}-kafka1-data
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+  kafka2-data:
+    name: ${LAB_NAME:-kzk-lab}-kafka2-data
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+  kafka3-data:
+    name: ${LAB_NAME:-kzk-lab}-kafka3-data
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}

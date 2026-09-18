@@ -1,0 +1,58 @@
+{
+  "version": "1.1.0-reviewed",
+  "date": "2026-09-17",
+  "overall": "PARTIALLY_VERIFIED",
+  "environment": {
+    "python": "3.13.5",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "PyYAML": "6.0.3"
+  },
+  "original_tests": {
+    "tests_run": 69,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "revised_tests": {
+    "tests_run": 107,
+    "new_regression_tests": 38,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "scope": "unit/regression/structure with mocked Redis and Podman; real temporary shell I/O with final Redis exec stubbed"
+  },
+  "syntax_checks": {
+    "bash": "PASS",
+    "sh": "PASS",
+    "python_compileall": "PASS",
+    "yaml_structure": "PASS"
+  },
+  "live_acceptance": {
+    "status": "BLOCKED",
+    "passed": false,
+    "exit_code": 2,
+    "observed_command": "./lab.sh validate --yes",
+    "missing_executables": [
+      "podman",
+      "podman-compose",
+      "docker",
+      "redis-server",
+      "redis-cli"
+    ],
+    "redis_download_attempt": "DNS resolution failure; download did not succeed",
+    "pip_dependency_attempt": "failed; redis-py/podman-compose were not installed",
+    "evidence": "tests/live-validation-attempt.json"
+  },
+  "not_verified": [
+    "image pulling and build",
+    "Podman compose rendering/runtime",
+    "real Redis parser and redis-py integration",
+    "replication and Sentinel election",
+    "live client failover",
+    "named-volume ownership and SELinux",
+    "RDB validation/backup/restore against real Redis",
+    "pause and network isolation"
+  ],
+  "logs": "tests/offline-test-results.txt",
+  "source_review_note": "Redis 7.4.11-alpine tag found in official-images library/redis; source review is not an image-pull test."
+}

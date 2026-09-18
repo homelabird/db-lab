@@ -1,0 +1,242 @@
+# Kafka + ZooKeeper 학습 Lab
+
+**ZooKeeper 3개 + Kafka broker 3개를 Podman Compose로 구성하는 로컬 실습 프로젝트입니다. KRaft가 아닙니다.**
+
+카프카 기본 송수신, 파티션/복제/ISR, 컨슈머 그룹/오프셋/lag를 학습한 다음 직접 장애를 넣고 복구할 수 있습니다. 데이터 파일은 들어 있지 않습니다. 실행할 때 Python 생성기가 합성 JSON 이벤트를 만들어 실제 Kafka producer로 전송합니다.
+
+> **검증 범위:** 제작 환경에서 75개 단위·모의 테스트 및 Bash/YAML 검사가 통과했습니다. 이 환경에는 Podman/Docker가 없어 이미지 다운로드, 실제 Kafka 기동·장애 전환, UI 접속은 실행하지 못했습니다. 실제 실행 검증용 `smoke`와 `scripts/test-live.sh`가 포함되어 있습니다. 자세한 내역은 `reports/VALIDATION.md`에 있습니다.
+
+## 1. 구성과 버전
+
+```text
+                             선택적 읽기 전용 Kafka UI :8088
+                                           |
+데이터 생성기/CLI ──────────────── Kafka API ─┤
+                                           |
+                           +---------------+---------------+
+                           |               |               |
+                        kafka1          kafka2          kafka3
+                       broker.id=1     broker.id=2     broker.id=3
+                           |               |               |
+                           +---------------+---------------+
+                                           |
+                              ZooKeeper 연결/메타데이터
+                                           |
+                                 zk1 ── zk2 ── zk3
+                                 3-node ensemble
+```
+
+메시지 본문은 **Kafka broker**가 저장합니다. ZooKeeper를 통해 메시지를 중계하는 구조가 아닙니다. ZooKeeper 모드에서는 Kafka broker 중 하나가 Kafka controller 역할도 담당합니다. ZooKeeper 자체의 leader와 Kafka controller는 다른 역할입니다. [S2, S3, S5]
+
+| 항목 | 이 Lab의 설정 |
+|---|---|
+| Kafka 이미지 | `docker.io/confluentinc/cp-kafka:7.9.0` |
+| ZooKeeper 이미지 | `docker.io/confluentinc/cp-zookeeper:7.9.0` |
+| Kafka 계열 | Apache Kafka 3.9 계열 / ZooKeeper 모드 |
+| Python 클라이언트 | Python 3.12, `confluent-kafka==2.8.2` |
+| 선택 UI | `ghcr.io/kafbat/kafka-ui:v1.3.0`, 읽기 전용 |
+| 일반 토픽 복제 | `replication.factor=3`, `min.insync.replicas=2` |
+| 기본 producer | `acks=all`, idempotence 활성화, delivery callback 확인 |
+| 데이터 보존 | 일반 토픽 24시간, segment 16MiB |
+| 데이터 볼륨 | Kafka 3개 + ZooKeeper data/log 각 3개 = named volume 9개 |
+| 보안 | **인증/TLS 없음. 기본 호스트 바인딩은 127.0.0.1.** |
+
+CP 7.9.x는 Kafka 3.9.x 계열이며 ZooKeeper 구성을 지원합니다. Kafka 4.0에서는 ZooKeeper 모드가 제거되었으므로 `latest`나 CP 8.x로 바꾸면 안 됩니다. 핵심 이미지는 학습용 고정 태그를 선택했으며, 최신 보안 패치를 보장하는 선택이 아닙니다. 운영 환경에 그대로 배포하지 마세요. [S1, S2]
+
+태그는 고정했지만 이미지 digest까지 잠그지는 않았습니다. Python base image의 patch release도 고정하지 않았습니다. 따라서 바이트 단위 재현 빌드는 보장하지 않습니다.
+
+## 2. 준비
+
+목표 환경은 **Linux + Podman(rootless 가능)** 입니다. Linux x86_64를 우선 대상으로 작성했습니다. ARM, Windows/macOS Podman machine, 각 배포판별 실기동 호환성은 이 패키지 제작 환경에서 확인하지 않았습니다.
+
+설계상 권장 자원은 **4 vCPU, RAM 8GB, 여유 디스크 10GB 이상**입니다. 이는 실측 벤치마크가 아니라 이 Lab의 JVM/데이터 규모를 위한 권장 예산입니다. 다른 JVM/DB 실습을 동시에 켜면 더 필요합니다.
+
+Fedora 계열:
+
+```bash
+sudo dnf install -y podman podman-compose python3
+```
+
+Ubuntu/Debian 계열:
+
+```bash
+sudo apt update
+sudo apt install -y podman podman-compose python3
+```
+
+Podman 4/5 계열과 `podman-compose` 1.x를 대상으로 합니다. `--in-pod=false` 옵션을 지원해야 합니다. 이 프로젝트는 `podman compose`의 외부 provider 자동 선택이 아니라 **`podman-compose` 실행 파일을 직접 사용**합니다. netavark/aardvark-dns 등 컨테이너 DNS가 정상이어야 합니다. [S8]
+
+호스트에 Kafka, JDK, Python Kafka 패키지를 설치할 필요는 없습니다. 이미지 레지스트리와 PyPI에 대한 최초 다운로드 접근은 필요합니다. 컨테이너 실행은 한 사용자로 통일하고 `sudo podman`과 일반 `podman`을 섞지 마세요.
+
+## 3. 바로 시작
+
+```bash
+unzip kafka-zookeeper-lab.zip
+cd kafka-zookeeper-lab
+chmod +x lab.sh scripts/*.sh
+
+# .env가 없으면 .env.example을 자동 복사합니다.
+./lab.sh doctor
+./lab.sh up
+
+# 실제 broker 응답과 읽은 데이터의 누락/중복 검사
+./lab.sh smoke
+
+# 합성 금융 거래 10,000건 생성 → Kafka에 적재
+./lab.sh seed --kind payments --count 10000
+
+# leader / replica / ISR 확인
+./lab.sh topics
+
+# 10건 미리 보기: consumer-group offset은 변경하지 않음
+./lab.sh read lab.payments --max 10
+
+# 같은 데이터의 일부를 consumer group으로 실제 처리/commit
+./lab.sh consume lab.payments study-g1 --count 1000 --duration 60
+./lab.sh lag lab.payments study-g1
+```
+
+`up`은 ZooKeeper 3노드의 leader/follower 상태를 확인한 후 Kafka를 기동합니다. 단순히 컨테이너가 `Running`이라는 이유로 준비 완료로 간주하지 않습니다. 이후 broker 3개와 leader/ISR 상태를 확인하고 기본 토픽을 만듭니다.
+
+`smoke`는 고유한 새 토픽에 120건을 넣고, broker delivery 확인 120건과 실제 읽기 120건, `sequence=0..119`의 누락/중복을 검사합니다. 성공했을 때만 `status: PASS`가 출력됩니다. 이 테스트를 통과해도 모든 장애 시나리오나 원격 listener가 검증된 것은 아닙니다.
+
+## 4. 기본 데이터와 크기
+
+| 토픽 | 파티션 | 데이터 예 |
+|---|---:|---|
+| `lab.payments` | 12 | 합성 계정, 가맹점, 금액, 채널, 승인 결과, 위험 점수 |
+| `lab.access` | 6 | 합성 사용자, 문서용 IP, 경로, HTTP 상태, 응답 시간 |
+| `lab.metrics` | 6 | 합성 장치, 지역, 온도, CPU/메모리 사용률 |
+| `lab.manual` | 3 | 직접 입력하는 console producer 실습용 |
+
+기본 토픽은 모두 RF=3입니다. 실제 계좌/고객 정보는 사용하지 않습니다. JSON 값과 별도로 Kafka record **key**도 전달합니다.
+
+```bash
+# 종류별 데이터
+./lab.sh seed --kind payments --count 20000 --payload-bytes 512
+./lab.sh seed --kind access --count 15000 --payload-bytes 256
+./lab.sh seed --kind metrics --count 10000 --payload-bytes 128
+
+# 약 100MiB: 생성된 key+JSON value의 합계 기준
+./lab.sh seed --kind payments --mib 100 --payload-bytes 1024 --rate 3000
+
+# 제한 시간 동안 계속 입력: 초당 목표 500건, 60초
+./lab.sh seed --kind access --duration 60 --rate 500
+```
+
+`--mib 100`은 **논리적 key+value 크기**입니다. 브로커 디스크 사용량이나 네트워크 전송량 100MiB를 의미하지 않습니다. RF=3의 복제본, record batch/index/segment, 파일시스템과 이미지 공간이 별도로 필요합니다. 마지막 메시지 단위로 목표를 넘을 수 있습니다.
+
+`--payload-bytes`는 JSON 전체 크기가 아니라 JSON 안 `payload` 필드의 크기입니다. 기본값은 256바이트입니다. 메모리에 전체 데이터를 모으지 않고 한 건씩 생성하며, 실패한 delivery나 flush 미완료는 성공으로 세지 않습니다. 결과의 `queued`가 아니라 **`delivered`, `failed`, `pending`**을 확인하세요.
+
+입력 옵션별 상한은 `--mib 512`, `--count 2000000`, `--duration 600`입니다. 건수/시간 모드의 총 바이트 수는 메시지 크기와 전송률에 따라 달라집니다. 여러 번 실행한 누적 디스크 사용량까지 제한하는 quota는 아닙니다. 기본 보존 24시간과 디스크 여유를 함께 확인하세요. 기본 전송률은 1,000건/초이며 `--rate 0`은 무제한입니다.
+
+`--seed 42`는 합성 필드의 난수 재현용입니다. 실행마다 `run_id`와 시작 시간이 달라 전체 바이트가 항상 같지는 않습니다. `event_id=run_id:sequence`로 한 번의 실행을 추적할 수 있습니다.
+
+## 5. 화면으로 보기 — 선택 사항
+
+```bash
+./lab.sh ui up
+```
+
+기본 주소:
+
+```text
+http://localhost:8088
+```
+
+UI 없이도 모든 핵심 학습/장애 명령을 사용할 수 있습니다. UI는 broker/topic/partition/message/consumer group 관찰을 위한 **읽기 전용 설정**입니다. Kafka 자체에는 ACL이 없으므로 UI 설정이 클러스터의 보안 경계인 것은 아닙니다.
+
+### 다른 PC에서 접근하는 경우
+
+`.env`를 편집합니다. 아래 IP는 예시이므로 실제 Linux 서버의 IP로 바꾸세요.
+
+```dotenv
+BIND_IP=0.0.0.0
+ADVERTISED_HOST=192.168.0.50
+```
+
+```bash
+# 데이터 볼륨은 보존하면서 listener 설정을 반영
+./lab.sh down
+./lab.sh up
+./lab.sh ui up
+```
+
+외부 Kafka client의 bootstrap 예시:
+
+```text
+192.168.0.50:19092,192.168.0.50:29092,192.168.0.50:39092
+```
+
+내부 실습 도구는 `kafka1:9092,kafka2:9092,kafka3:9092`로 접근합니다. 외부 client는 bootstrap 이후에도 각 broker의 advertised address로 접속하므로 **세 broker 포트 모두 접근 가능**해야 합니다. `0.0.0.0`은 bind 주소이지 advertised destination이 아니며 `/0` 같은 CIDR을 넣지 않습니다. [S3]
+
+외부 인터페이스 개방 시 인터넷에 포트 포워딩하지 말고, 실습망/관리 PC로 방화벽 접근을 제한하세요. ZooKeeper 포트는 호스트에 공개하지 않습니다.
+
+## 6. 장애 실습
+
+### 직접 장애를 유지하며 관찰
+
+```bash
+./lab.sh fault kill-broker 1
+./lab.sh topics
+./lab.sh status
+./lab.sh logs kafka2
+./lab.sh recover
+```
+
+`fault`는 자동 복구하지 않습니다. 학습자가 관찰한 뒤 `recover`로 복구합니다.
+
+### 자동 데모 9개
+
+```bash
+./lab.sh demo broker-failover
+./lab.sh demo controller-failover
+./lab.sh demo min-isr
+./lab.sh demo zk-one
+./lab.sh demo zk-quorum
+./lab.sh demo lag
+./lab.sh demo hot-key
+./lab.sh demo oversize
+./lab.sh demo retention
+```
+
+데모마다 새로운 `lab.demo.*` 토픽을 만듭니다. 기본 학습 데이터를 삭제하거나 운영 중인 그룹의 오프셋을 초기화하지 않습니다. 정상 종료·오류·Ctrl+C에서 노드 복구를 시도하고 **복구 확인까지 성공해야** `DEMO PASS`를 출력합니다. SIGKILL/호스트 종료에서는 trap이 실행되지 않으므로 `recover`가 필요합니다.
+
+데모 결과는 `reports/run-*/output.log`, 종료 코드는 `exit-code.txt`에 남습니다. 데이터/topic 자체는 복구 후에도 남고, 데모가 설정한 토픽별 retention 등도 유지됩니다. `recover`는 노드 상태 복원이지 데이터/토픽 설정의 시점 복원이 아닙니다.
+
+장애 내용, 관찰값, 대응 절차는 `docs/03-failure-scenarios.md`를 먼저 읽으세요.
+
+## 7. 종료와 초기화
+
+```bash
+# 컨테이너/네트워크 제거. Kafka/ZooKeeper 데이터 볼륨 보존.
+./lab.sh down
+
+# 이후 재기동
+./lab.sh up
+
+# 이 Lab의 데이터도 삭제. 되돌릴 수 없음.
+./lab.sh reset --yes
+```
+
+중단된 demo lock이 남았다면:
+
+```bash
+./lab.sh recover
+./lab.sh unlock --yes
+```
+
+스크립트는 `kzk-lab` 이름과 `io.kzk.lab` 라벨을 확인하고 대상을 제한합니다. `podman system prune`, 전체 컨테이너 삭제, 호스트 디스크 채우기는 하지 않습니다. `.env`의 `LAB_NAME`은 사용 중에 바꾸지 마세요. 다른 이름으로 바꾸면 기존 환경을 지우는 대신 별도 환경으로 취급합니다.
+
+## 8. 읽는 순서
+
+| 문서 | 내용 |
+|---|---|
+| `docs/01-kafka-basics.md` | broker/topic/partition/key/offset, replica/ISR, ZooKeeper 역할 |
+| `docs/02-hands-on.md` | 기본 CLI, consumer group, rebalance, offset reset, replica 이동 |
+| `docs/03-failure-scenarios.md` | 9개 데모와 수동 장애의 원인·관찰·복구 |
+| `docs/04-troubleshooting.md` | Podman, DNS/listener, 권한, OOM, 로그 수집과 대응 순서 |
+| `docs/SOURCES.md` | 공식 문서와 버전 선택 근거 |
+| `reports/VALIDATION.md` | 통과한 검사와 미실행 항목 |
+
+**첫 실습은 `up → smoke → seed → read → consume → lag → broker-failover → min-isr` 순서로 진행하세요.**

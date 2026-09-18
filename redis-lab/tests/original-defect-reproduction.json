@@ -1,0 +1,19 @@
+[
+  {
+    "id": "R1",
+    "observed": "verify() returned normally for a workload with zero successful writes",
+    "result": "None"
+  },
+  {
+    "id": "R2",
+    "observed": "a rejected request with an existing different value is misclassified as absent",
+    "bucket": "rejected_absent"
+  },
+  {
+    "id": "R3",
+    "observed": "failed readiness leaves the previous successful failover-test.json unchanged",
+    "report": {
+      "passed": true
+    }
+  }
+]

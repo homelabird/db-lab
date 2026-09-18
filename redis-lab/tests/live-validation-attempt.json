@@ -1,0 +1,17 @@
+{
+  "run_id": "live-20260917T024708-5550c4cd",
+  "status": "BLOCKED",
+  "passed": false,
+  "time_utc": "2026-09-17T02:47:08.458472+00:00",
+  "steps": [
+    {
+      "name": "runtime availability",
+      "status": "BLOCKED"
+    }
+  ],
+  "engine": "actual podman containers only",
+  "logs": "output/live-20260917T024708-5550c4cd",
+  "note": "One host, one observed run; PASS is not a production HA or zero-data-loss guarantee.",
+  "error": "Missing executable(s): podman, podman-compose",
+  "finished_utc": "2026-09-17T02:47:08.458817+00:00"
+}

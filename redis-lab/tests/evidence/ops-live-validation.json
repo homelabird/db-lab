@@ -1,0 +1,6 @@
+{
+  "status": "BLOCKED",
+  "scope": "Real Podman/Redis integration",
+  "steps": [],
+  "error": "Podman and podman-compose must be installed"
+}

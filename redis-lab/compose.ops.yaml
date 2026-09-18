@@ -1,0 +1,80 @@
+x-podman:
+  in_pod: false
+services:
+  redis-perf:
+    image: localhost/${LAB_NAME:-rslab}-perf:2.0
+    build:
+      context: .
+      dockerfile: Containerfile.ops
+      target: perf
+      args:
+        REDIS_IMAGE: ${REDIS_IMAGE:-docker.io/library/redis:7.4.11-alpine}
+    container_name: ${LAB_NAME:-rslab}-redis-perf
+    restart: "no"
+    mem_limit: 640m
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Run ./lab.sh init}
+    labels:
+      io.redis-sentinel-lab.ops: ${LAB_NAME:-rslab}
+    volumes: [ops-perf-data:/data]
+    networks:
+      labnet:
+        aliases: [redis-perf]
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli --raw PING | grep -qx PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+  ops-runner:
+    image: localhost/${LAB_NAME:-rslab}-ops:2.0
+    build:
+      context: .
+      dockerfile: Containerfile.ops
+      target: runner
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-docker.io/library/python:3.12-slim-bookworm}
+    container_name: ${LAB_NAME:-rslab}-ops-runner
+    restart: "no"
+    init: true
+    mem_limit: 384m
+    environment: &ops-env
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Run ./lab.sh init}
+      SENTINEL_PASSWORD: ${SENTINEL_PASSWORD:?Run ./lab.sh init}
+      MASTER_NAME: ${MASTER_NAME:-mymaster}
+      REDIS_NODES: ${REDIS_1_IP:-10.89.77.11}:6379,${REDIS_2_IP:-10.89.77.12}:6379,${REDIS_3_IP:-10.89.77.13}:6379
+      SENTINEL_NODES: ${SENTINEL_1_IP:-10.89.77.21}:26379,${SENTINEL_2_IP:-10.89.77.22}:26379,${SENTINEL_3_IP:-10.89.77.23}:26379
+      PERF_HOST: redis-perf
+      PROXY_HOST: net-proxy
+      OPS_RESULTS: /results/ops
+      PROXY_TOKEN: ${SENTINEL_PASSWORD:?Run ./lab.sh init}
+    labels:
+      io.redis-sentinel-lab.ops: ${LAB_NAME:-rslab}
+    volumes: [ops-results:/results]
+    networks: [labnet]
+  net-proxy:
+    image: localhost/${LAB_NAME:-rslab}-ops:2.0
+    container_name: ${LAB_NAME:-rslab}-net-proxy
+    command: [python, -m, ops.proxy]
+    restart: "no"
+    init: true
+    mem_limit: 96m
+    environment:
+      <<: *ops-env
+    labels:
+      io.redis-sentinel-lab.ops: ${LAB_NAME:-rslab}
+    networks:
+      labnet:
+        aliases: [net-proxy]
+networks:
+  labnet:
+    external: true
+    name: ${LAB_NAME:-rslab}-net
+volumes:
+  ops-perf-data:
+    name: ${LAB_NAME:-rslab}-ops-perf-data
+    labels:
+      io.redis-sentinel-lab.ops: ${LAB_NAME:-rslab}
+  ops-results:
+    name: ${LAB_NAME:-rslab}-ops-results
+    labels:
+      io.redis-sentinel-lab.ops: ${LAB_NAME:-rslab}

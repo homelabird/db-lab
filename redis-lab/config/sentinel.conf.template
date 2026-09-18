@@ -1,0 +1,17 @@
+# Each Sentinel gets its own writable state volume. Do NOT replace on restart.
+bind 0.0.0.0
+port 26379
+protected-mode yes
+requirepass @@SENTINEL_PASSWORD@@
+daemonize no
+logfile ""
+loglevel notice
+dir /data/state
+sentinel announce-ip @@NODE_IP@@
+sentinel announce-port 26379
+sentinel monitor @@MASTER_NAME@@ @@PRIMARY_IP@@ 6379 2
+sentinel auth-pass @@MASTER_NAME@@ @@REDIS_PASSWORD@@
+sentinel down-after-milliseconds @@MASTER_NAME@@ @@DOWN_AFTER_MS@@
+sentinel failover-timeout @@MASTER_NAME@@ @@FAILOVER_TIMEOUT_MS@@
+sentinel parallel-syncs @@MASTER_NAME@@ 1
+sentinel deny-scripts-reconfig yes

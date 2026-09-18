@@ -1,0 +1,17 @@
+# Optional: ./lab.sh ui up
+services:
+  ui:
+    image: ${UI_IMAGE:-ghcr.io/kafbat/kafka-ui:v1.3.0}
+    container_name: ${LAB_NAME:-kzk-lab}-ui
+    restart: "no"
+    labels:
+      io.kzk.lab: ${LAB_NAME:-kzk-lab}
+    environment:
+      KAFKA_CLUSTERS_0_NAME: zookeeper-lab
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      KAFKA_CLUSTERS_0_READONLY: "true"
+      DYNAMIC_CONFIG_ENABLED: "false"
+      JAVA_OPTS: "-Xms128m -Xmx384m"
+    ports:
+      - "${BIND_IP:-127.0.0.1}:${UI_PORT:-8088}:8080"
+    networks: [labnet]

@@ -1,0 +1,2 @@
+Created .env with random Redis/Sentinel passwords (0600).
+BLOCKED: Missing executable(s): podman, podman-compose

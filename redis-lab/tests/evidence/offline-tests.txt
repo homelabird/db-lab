@@ -1,0 +1,189 @@
+test_changed_password_fails_without_overwriting (test_entrypoint.EntrypointTests.test_changed_password_fails_without_overwriting) ... ok
+test_primary_has_no_replicaof (test_entrypoint.EntrypointTests.test_primary_has_no_replicaof) ... ok
+test_replica_config_initializes (test_entrypoint.EntrypointTests.test_replica_config_initializes) ... ok
+test_rewritten_role_survives_restart (test_entrypoint.EntrypointTests.test_rewritten_role_survives_restart) ... ok
+test_sentinel_epoch_survives_restart (test_entrypoint.EntrypointTests.test_sentinel_epoch_survives_restart) ... ok
+test_sentinel_has_separate_auth_and_writable_config (test_entrypoint.EntrypointTests.test_sentinel_has_separate_auth_and_writable_config) ... ok
+test_unsafe_password_refused (test_entrypoint.EntrypointTests.test_unsafe_password_refused) ... ok
+test_cleanup_never_flushes (test_ops_core.HistAndValidationTests.test_cleanup_never_flushes) ... ok
+test_cleanup_rejects_foreign_key_even_from_server (test_ops_core.HistAndValidationTests.test_cleanup_rejects_foreign_key_even_from_server) ... ok
+test_empty_hist (test_ops_core.HistAndValidationTests.test_empty_hist) ... ok
+test_foreign_prefix_rejected (test_ops_core.HistAndValidationTests.test_foreign_prefix_rejected) ... ok
+test_invalid_latency (test_ops_core.HistAndValidationTests.test_invalid_latency) ... ok
+test_load_good (test_ops_core.HistAndValidationTests.test_load_good) ... ok
+test_load_memory_limit (test_ops_core.HistAndValidationTests.test_load_memory_limit) ... ok
+test_load_rate_limit (test_ops_core.HistAndValidationTests.test_load_rate_limit) ... ok
+test_owned_prefix (test_ops_core.HistAndValidationTests.test_owned_prefix) ... ok
+test_quantile_bounds (test_ops_core.HistAndValidationTests.test_quantile_bounds) ... ok
+test_stats_uncertain_vs_rejected (test_ops_core.HistAndValidationTests.test_stats_uncertain_vs_rejected) ... ok
+test_write_not_sent_is_not_uncertain (test_ops_core.HistAndValidationTests.test_write_not_sent_is_not_uncertain) ... ok
+test_zero (test_ops_core.HistAndValidationTests.test_zero) ... ok
+test_extra_container_allowlist (test_ops_core.HostAndComposeTests.test_extra_container_allowlist) ... ok
+test_extra_volume_allowlist (test_ops_core.HostAndComposeTests.test_extra_volume_allowlist) ... ok
+test_main_defaults (test_ops_core.HostAndComposeTests.test_main_defaults) ... ok
+test_no_host_ports_privileged_or_binds (test_ops_core.HostAndComposeTests.test_no_host_ports_privileged_or_binds) ... ok
+test_perf_has_memory_limit (test_ops_core.HostAndComposeTests.test_perf_has_memory_limit) ... ok
+test_runner_rejects_unbounded_time (test_ops_core.HostAndComposeTests.test_runner_rejects_unbounded_time) ... usage: python3 -m unittest run [-h] [--seconds SECONDS] [--mib MIB]
+                               [--fields FIELDS] [--workers WORKERS]
+                               [--delay-ms DELAY_MS]
+                               {bigkey,fragmentation,eviction,connections,slow-consumer,persistence,latency,cache-stampede,stream-pending}
+python3 -m unittest run: error: argument --seconds: Expected 3..60
+ok
+test_same_external_network (test_ops_core.HostAndComposeTests.test_same_external_network) ... ok
+test_auth_config_refused (test_ops_core.RecoveryTests.test_auth_config_refused) ... ok
+test_failed_report_is_not_previous_pass (test_ops_core.RecoveryTests.test_failed_report_is_not_previous_pass) ... PASS: /tmp/tmp_tq7xmkk/20260918T045907-first-59188a/report.html
+FAIL: /tmp/tmp_tq7xmkk/20260918T045907-second-d04b93/report.html
+ok
+test_guard_unknown_setting_blocked (test_ops_core.RecoveryTests.test_guard_unknown_setting_blocked) ... ok
+test_html_escapes_values (test_ops_core.RecoveryTests.test_html_escapes_values) ... FAIL: /tmp/tmp5z3pkb9n/20260918T045907-example-1d1abe/report.html
+ok
+test_journal_precedes_mutation (test_ops_core.RecoveryTests.test_journal_precedes_mutation) ... ok
+test_new_run_replaces_latest_with_running (test_ops_core.RecoveryTests.test_new_run_replaces_latest_with_running) ... PASS: /tmp/tmp8k44su68/20260918T045907-first-31332f/report.html
+ok
+test_new_scenario_rejects_stale_journal (test_ops_core.RecoveryTests.test_new_scenario_rejects_stale_journal) ... ok
+test_recover_does_not_reapply_to_restarted_server (test_ops_core.RecoveryTests.test_recover_does_not_reapply_to_restarted_server) ... ok
+test_restore_error_retains_journal (test_ops_core.RecoveryTests.test_restore_error_retains_journal) ... ok
+test_restore_on_exception (test_ops_core.RecoveryTests.test_restore_on_exception) ... ok
+test_scenario_lock_rejects_concurrency (test_ops_core.RecoveryTests.test_scenario_lock_rejects_concurrency) ... ok
+test_bulk_binary (test_ops_core.RespCodecTests.test_bulk_binary) ... ok
+test_closed_socket (test_ops_core.RespCodecTests.test_closed_socket) ... ok
+test_empty_command (test_ops_core.RespCodecTests.test_empty_command) ... ok
+test_encode_binary (test_ops_core.RespCodecTests.test_encode_binary) ... ok
+test_endpoints (test_ops_core.RespCodecTests.test_endpoints) ... ok
+test_error_is_value_for_pipeline_drain (test_ops_core.RespCodecTests.test_error_is_value_for_pipeline_drain) ... ok
+test_huge_reply (test_ops_core.RespCodecTests.test_huge_reply) ... ok
+test_info_nested (test_ops_core.RespCodecTests.test_info_nested) ... ok
+test_integer (test_ops_core.RespCodecTests.test_integer) ... ok
+test_invalid_framing (test_ops_core.RespCodecTests.test_invalid_framing) ... ok
+test_invalid_type (test_ops_core.RespCodecTests.test_invalid_type) ... ok
+test_nested_array (test_ops_core.RespCodecTests.test_nested_array) ... ok
+test_nil_array (test_ops_core.RespCodecTests.test_nil_array) ... ok
+test_nil_bulk (test_ops_core.RespCodecTests.test_nil_bulk) ... ok
+test_none_argument (test_ops_core.RespCodecTests.test_none_argument) ... ok
+test_pairs (test_ops_core.RespCodecTests.test_pairs) ... ok
+test_pairs_odd (test_ops_core.RespCodecTests.test_pairs_odd) ... ok
+test_simple (test_ops_core.RespCodecTests.test_simple) ... ok
+test_bounds (test_ops_core.RulesTests.test_bounds) ... ok
+test_rejected_update_preserves_old_rule (test_ops_core.RulesTests.test_rejected_update_preserves_old_rule) ... ok
+test_set_and_expire (test_ops_core.RulesTests.test_set_and_expire) ... ok
+test_unknown_rule (test_ops_core.RulesTests.test_unknown_rule) ... ok
+test_authenticated_control_updates_rule (test_ops_tcp.ProxyTcpTests.test_authenticated_control_updates_rule) ... ok
+test_bidirectional_delay (test_ops_tcp.ProxyTcpTests.test_bidirectional_delay) ... ok
+test_control_rejects_no_auth (test_ops_tcp.ProxyTcpTests.test_control_rejects_no_auth) ... ok
+test_drop_rule_closes_connection (test_ops_tcp.ProxyTcpTests.test_drop_rule_closes_connection) ... ok
+test_no_replay_after_connection_drop (test_ops_tcp.TransportTests.test_no_replay_after_connection_drop) ... ok
+test_pipeline_drains_errors (test_ops_tcp.TransportTests.test_pipeline_drains_errors) ... ok
+test_pipeline_return_errors (test_ops_tcp.TransportTests.test_pipeline_return_errors) ... ok
+test_real_tcp_get_set_binary (test_ops_tcp.TransportTests.test_real_tcp_get_set_binary) ... ok
+test_threaded_load_runs_over_real_tcp (test_ops_tcp.TransportTests.test_threaded_load_runs_over_real_tcp) ... [load_start] {"phase": "load", "target": "perf", "seconds": 1, "offered_rps": 60}
+ok
+test_wrong_auth_is_server_error (test_ops_tcp.TransportTests.test_wrong_auth_is_server_error) ... ok
+test_all_services_owned (test_project.ComposeTests.test_all_services_owned) ... ok
+test_all_static_addresses_distinct (test_project.ComposeTests.test_all_static_addresses_distinct) ... ok
+test_distinct_writable_sentinel_volumes (test_project.ComposeTests.test_distinct_writable_sentinel_volumes) ... ok
+test_no_automatic_restart (test_project.ComposeTests.test_no_automatic_restart) ... ok
+test_no_bind_mounts (test_project.ComposeTests.test_no_bind_mounts) ... ok
+test_no_privileged_services (test_project.ComposeTests.test_no_privileged_services) ... ok
+test_no_published_ports (test_project.ComposeTests.test_no_published_ports) ... ok
+test_sandbox_is_optional (test_project.ComposeTests.test_sandbox_is_optional) ... ok
+test_separate_pod_namespaces (test_project.ComposeTests.test_separate_pod_namespaces) ... ok
+test_seven_default_services (test_project.ComposeTests.test_seven_default_services) ... ok
+test_acked_missing (test_project.CoreTests.test_acked_missing) ... ok
+test_acked_present (test_project.CoreTests.test_acked_present) ... ok
+test_bounded_int (test_project.CoreTests.test_bounded_int) ... ok
+test_duplicate_endpoint_rejected (test_project.CoreTests.test_duplicate_endpoint_rejected) ... ok
+test_empty_host_rejected (test_project.CoreTests.test_empty_host_rejected) ... ok
+test_endpoints (test_project.CoreTests.test_endpoints) ... ok
+test_error_classification (test_project.CoreTests.test_error_classification) ... ok
+test_int_limit (test_project.CoreTests.test_int_limit) ... ok
+test_not_sent_absent (test_project.CoreTests.test_not_sent_absent) ... ok
+test_path_traversal_rejected (test_project.CoreTests.test_path_traversal_rejected) ... ok
+test_payload_size (test_project.CoreTests.test_payload_size) ... ok
+test_payload_unique (test_project.CoreTests.test_payload_unique) ... ok
+test_port_rejected (test_project.CoreTests.test_port_rejected) ... ok
+test_read_run_filters_metadata (test_project.CoreTests.test_read_run_filters_metadata) ... ok
+test_rejected_absent (test_project.CoreTests.test_rejected_absent) ... ok
+test_run_id (test_project.CoreTests.test_run_id) ... ok
+test_truncated_log_rejected (test_project.CoreTests.test_truncated_log_rejected) ... ok
+test_uncertain_absent (test_project.CoreTests.test_uncertain_absent) ... ok
+test_uncertain_present (test_project.CoreTests.test_uncertain_present) ... ok
+test_bad_lab_name (test_project.EnvironmentTests.test_bad_lab_name) ... ok
+test_default_env_valid (test_project.EnvironmentTests.test_default_env_valid) ... ok
+test_duplicate_env_key (test_project.EnvironmentTests.test_duplicate_env_key) ... ok
+test_duplicate_ip_rejected (test_project.EnvironmentTests.test_duplicate_ip_rejected) ... ok
+test_env_not_executed (test_project.EnvironmentTests.test_env_not_executed) ... ok
+test_gateway_ip_rejected (test_project.EnvironmentTests.test_gateway_ip_rejected) ... ok
+test_outside_subnet_rejected (test_project.EnvironmentTests.test_outside_subnet_rejected) ... ok
+test_password_shell_injection_rejected (test_project.EnvironmentTests.test_password_shell_injection_rejected) ... ok
+test_random_env_creation_and_reuse (test_project.EnvironmentTests.test_random_env_creation_and_reuse) ... Created .env with random Redis/Sentinel passwords (0600).
+ok
+test_cli_password_not_in_argv (test_project.ManagementTests.test_cli_password_not_in_argv) ... ok
+test_environment_change_is_detected (test_project.ManagementTests.test_environment_change_is_detected) ... ok
+test_fault_dynamically_targets_current_master (test_project.ManagementTests.test_fault_dynamically_targets_current_master) ... Injecting kill into redis-3.
+ok
+test_fault_recovery_preserves_original_ip (test_project.ManagementTests.test_fault_recovery_preserves_original_ip) ... ok
+test_node_allowlist (test_project.ManagementTests.test_node_allowlist) ... ok
+test_owned_container_allowed (test_project.ManagementTests.test_owned_container_allowed) ... ok
+test_password_redaction (test_project.ManagementTests.test_password_redaction) ... ok
+test_redis_cli_args_not_consumed (test_project.ManagementTests.test_redis_cli_args_not_consumed) ... ok
+test_reset_requires_confirmation (test_project.ManagementTests.test_reset_requires_confirmation) ... ok
+test_restore_requires_confirmation (test_project.ManagementTests.test_restore_requires_confirmation) ... ok
+test_sentinel_cli_uses_correct_password (test_project.ManagementTests.test_sentinel_cli_uses_correct_password) ... ok
+test_unowned_container_refused (test_project.ManagementTests.test_unowned_container_refused) ... ok
+test_unowned_volume_refused (test_project.ManagementTests.test_unowned_volume_refused) ... ok
+test_volume_allowlist (test_project.ManagementTests.test_volume_allowlist) ... ok
+test_workload_cli_parser (test_project.ManagementTests.test_workload_cli_parser) ... ok
+test_external_master_rejected (test_project.TopologyTests.test_external_master_rejected) ... ok
+test_healthy_topology (test_project.TopologyTests.test_healthy_topology) ... ok
+test_missing_sentinel_rejected (test_project.TopologyTests.test_missing_sentinel_rejected) ... ok
+test_quorum_failure_rejected (test_project.TopologyTests.test_quorum_failure_rejected) ... ok
+test_replica_syncing_rejected (test_project.TopologyTests.test_replica_syncing_rejected) ... ok
+test_replica_wrong_upstream_rejected (test_project.TopologyTests.test_replica_wrong_upstream_rejected) ... ok
+test_sdown_rejected (test_project.TopologyTests.test_sdown_rejected) ... ok
+test_sentinel_stale_view_rejected (test_project.TopologyTests.test_sentinel_stale_view_rejected) ... ok
+test_two_masters_rejected (test_project.TopologyTests.test_two_masters_rejected) ... ok
+test_interruption_before_config_rename_can_be_retried (test_regressions.EntrypointInterruptedInitializationTests.test_interruption_before_config_rename_can_be_retried) ... ok
+test_invalid_initial_role_refused (test_regressions.EntrypointInterruptedInitializationTests.test_invalid_initial_role_refused) ... ok
+test_runtime_config_without_fingerprint_refused (test_regressions.EntrypointInterruptedInitializationTests.test_runtime_config_without_fingerprint_refused) ... ok
+test_baseline_failure_does_not_inject_fault (test_regressions.FailoverReportRegressionTests.test_baseline_failure_does_not_inject_fault) ... ok
+test_cleanup_failure_never_reports_pass (test_regressions.FailoverReportRegressionTests.test_cleanup_failure_never_reports_pass) ... ok
+test_fault_and_recovery_errors_both_preserved (test_regressions.FailoverReportRegressionTests.test_fault_and_recovery_errors_both_preserved) ... ok
+test_interruption_is_reported_as_failure (test_regressions.FailoverReportRegressionTests.test_interruption_is_reported_as_failure) ... ok
+test_master_change_during_recovery_fails (test_regressions.FailoverReportRegressionTests.test_master_change_during_recovery_fails) ... ok
+test_readiness_failure_replaces_stale_pass_report (test_regressions.FailoverReportRegressionTests.test_readiness_failure_replaces_stale_pass_report) ... ok
+test_success_requires_recovery (test_regressions.FailoverReportRegressionTests.test_success_requires_recovery) ... ok
+test_timeout_budget_respects_configuration (test_regressions.FailoverReportRegressionTests.test_timeout_budget_respects_configuration) ... ok
+test_build_failure_is_fail_not_pass (test_regressions.LiveSuiteReportingTests.test_build_failure_is_fail_not_pass) ... ok
+test_destructive_suite_requires_confirmation (test_regressions.LiveSuiteReportingTests.test_destructive_suite_requires_confirmation) ... ok
+test_no_runtime_is_blocked_not_pass (test_regressions.LiveSuiteReportingTests.test_no_runtime_is_blocked_not_pass) ... ok
+test_preflight_error_is_blocked (test_regressions.LiveSuiteReportingTests.test_preflight_error_is_blocked) ... ok
+test_stale_success_replaced_when_blocked (test_regressions.LiveSuiteReportingTests.test_stale_success_replaced_when_blocked) ... ok
+test_workload_log_parser_ignores_partial_json (test_regressions.LiveSuiteReportingTests.test_workload_log_parser_ignores_partial_json) ... ok
+test_fault_marker_written_before_first_filesystem_mutation (test_regressions.RestoreAndPersistenceRegressionTests.test_fault_marker_written_before_first_filesystem_mutation) ... ok
+test_missing_metadata_fields_refused_before_container_changes (test_regressions.RestoreAndPersistenceRegressionTests.test_missing_metadata_fields_refused_before_container_changes) ... ok
+test_non_object_metadata_refused (test_regressions.RestoreAndPersistenceRegressionTests.test_non_object_metadata_refused) ... ok
+test_persistence_marker_removed_only_after_successful_write (test_regressions.RestoreAndPersistenceRegressionTests.test_persistence_marker_removed_only_after_successful_write) ... ok
+test_persistence_recovery_marker_kept_when_write_test_fails (test_regressions.RestoreAndPersistenceRegressionTests.test_persistence_recovery_marker_kept_when_write_test_fails) ... ok
+test_rdb_validation_failure_precedes_stop_or_erase (test_regressions.RestoreAndPersistenceRegressionTests.test_rdb_validation_failure_precedes_stop_or_erase) ... ok
+test_acknowledged_present_is_success (test_regressions.VerificationRegressionTests.test_acknowledged_present_is_success) ... ok
+test_all_not_sent_is_not_a_successful_verification (test_regressions.VerificationRegressionTests.test_all_not_sent_is_not_a_successful_verification) ... ok
+test_all_rejected_is_not_a_successful_verification (test_regressions.VerificationRegressionTests.test_all_rejected_is_not_a_successful_verification) ... ok
+test_empty_finished_log_is_not_success (test_regressions.VerificationRegressionTests.test_empty_finished_log_is_not_success) ... ok
+test_incomplete_log_clears_old_verification_pass (test_regressions.VerificationRegressionTests.test_incomplete_log_clears_old_verification_pass) ... ok
+test_incomplete_log_refused (test_regressions.VerificationRegressionTests.test_incomplete_log_refused) ... ok
+test_missing_acknowledged_data_fails (test_regressions.VerificationRegressionTests.test_missing_acknowledged_data_fails) ... ok
+test_not_sent_existing_empty_value_is_not_absent (test_regressions.VerificationRegressionTests.test_not_sent_existing_empty_value_is_not_absent) ... ok
+test_redis_error_clears_old_verification_pass (test_regressions.VerificationRegressionTests.test_redis_error_clears_old_verification_pass) ... ok
+test_rejected_existing_different_value_is_not_absent (test_regressions.VerificationRegressionTests.test_rejected_existing_different_value_is_not_absent) ... ok
+test_uncertain_only_does_not_prove_service_success (test_regressions.VerificationRegressionTests.test_uncertain_only_does_not_prove_service_success) ... ok
+test_existing_run_refused (test_regressions.WorkloadControlTests.test_existing_run_refused) ... ok
+test_parser_passes_explicit_run_id (test_regressions.WorkloadControlTests.test_parser_passes_explicit_run_id) ... ok
+test_stop_file_finishes_journal_cleanly (test_regressions.WorkloadControlTests.test_stop_file_finishes_journal_cleanly) ... ok
+test_unsafe_explicit_run_id_rejected (test_regressions.WorkloadControlTests.test_unsafe_explicit_run_id_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 170 tests in 2.307s
+
+OK
+Observe: ./lab.sh status ; ./lab.sh logs sentinel-1
+Recovery: ./lab.sh recover redis-3
