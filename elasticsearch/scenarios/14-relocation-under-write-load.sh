@@ -7,7 +7,7 @@ cat <<'MSG'
 This scenario needs two terminals.
 
 Terminal A - continuous indexing (~100 docs/s):
-  RATE=100 ./scripts/11-live-load.sh
+  RATE=100 ./lab.sh load
 
 Terminal B - while writes continue:
   ./scenarios/01-manual-shard-move.sh

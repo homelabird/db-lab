@@ -22,7 +22,7 @@
 ### 1. 최근 10건
 
 ```bash
-./scripts/08-query-examples.sh 01-latest
+./lab.sh query 01-latest
 cat queries/01-latest.json
 ```
 
@@ -31,7 +31,7 @@ cat queries/01-latest.json
 ### 2. 특정 사용자
 
 ```bash
-./scripts/08-query-examples.sh 02-user
+./lab.sh query 02-user
 ```
 
 `term`의 필드는 `user_id`입니다. `user_id.keyword`로 바꾸지 않습니다.
@@ -39,8 +39,8 @@ cat queries/01-latest.json
 ### 3. 문장 검색
 
 ```bash
-./scripts/08-query-examples.sh 03-message
-./scripts/08-query-examples.sh 17-analyze
+./lab.sh query 03-message
+./lab.sh query 17-analyze
 ```
 
 두 단어가 바로 붙어 있을 필요는 없습니다. phrase 검색을 요구한다면 14-phrase와 비교하세요.
@@ -48,7 +48,7 @@ cat queries/01-latest.json
 ### 4. 복합 조건
 
 ```bash
-./scripts/08-query-examples.sh 04-high-risk
+./lab.sh query 04-high-risk
 ```
 
 filter 안의 APP와 range 조건은 AND이고 must_not은 KR을 제외합니다. size=10이어도 `hits.total.value`로 전체 조건 일치 건수를 확인할 수 있습니다.
@@ -56,7 +56,7 @@ filter 안의 APP와 range 조건은 AND이고 must_not은 KR을 제외합니다
 ### 5. 로그인 실패
 
 ```bash
-./scripts/08-query-examples.sh 05-failed-login
+./lab.sh query 05-failed-login
 ```
 
 action과 result는 대문자 keyword입니다. 소문자로 검색했을 때의 결과도 비교하세요.
@@ -64,7 +64,7 @@ action과 result는 대문자 keyword입니다. 소문자로 검색했을 때의
 ### 6. 건수만 확인
 
 ```bash
-./scripts/08-query-examples.sh 09-count-risk
+./lab.sh query 09-count-risk
 ```
 
 `/_count`의 count를 봅니다. 검색 결과 hits 목록을 가져와 클라이언트에서 세는 방식이 아닙니다.
@@ -72,7 +72,7 @@ action과 result는 대문자 keyword입니다. 소문자로 검색했을 때의
 ### 7. 기관별 거래 집계
 
 ```bash
-./scripts/08-query-examples.sh 10-by-institution
+./lab.sh query 10-by-institution
 ```
 
 서로 다른 통화를 합산하지 않도록 KRW filter가 있습니다. `aggregations.by_institution.buckets` 안의 key, doc_count, total_amount, avg_risk를 읽습니다.
@@ -80,7 +80,7 @@ action과 result는 대문자 keyword입니다. 소문자로 검색했을 때의
 ### 8. 지연시간 집계
 
 ```bash
-./scripts/08-query-examples.sh 11-latency
+./lab.sh query 11-latency
 ```
 
 평균은 전체 응답시간 분포를 한 수치로 압축합니다. 의도적으로 주입한 느린 payment 로그가 상위 percentile에 어떻게 반영되는지 봅니다. 정확한 수치는 실제 실행 결과를 사용하세요.
@@ -88,7 +88,7 @@ action과 result는 대문자 keyword입니다. 소문자로 검색했을 때의
 ### 9. 일별 요청량
 
 ```bash
-./scripts/08-query-examples.sh 12-daily
+./lab.sh query 12-daily
 ```
 
 기본 생성 기간이 UTC이고 bucket은 Asia/Seoul이므로 첫날·마지막 날 구간의 건수가 가운데 날짜와 다를 수 있습니다. 표본 날짜 범위도 직접 확인하세요.
@@ -96,7 +96,7 @@ action과 result는 대문자 keyword입니다. 소문자로 검색했을 때의
 ### 10. PIT 페이지 조회
 
 ```bash
-./scripts/10-pit-pagination.sh --pages 3 --page-size 10
+./lab.sh pit --pages 3 --page-size 10
 ```
 
 각 응답 마지막 hit의 sort 배열 전체를 그대로 다음 요청으로 넘깁니다. 최신 pit_id를 이어 사용하고 종료 시 닫아야 합니다. 코드에는 페이지 간 중복 ID 검사도 있습니다.
@@ -122,7 +122,7 @@ action과 result는 대문자 keyword입니다. 소문자로 검색했을 때의
 APP 중 "사기 모의 거래 또는 100만원 이상"을 원했다면 bool 안에 `minimum_should_match: 1`을 추가합니다.
 
 ```bash
-./scripts/08-query-examples.sh 20-should --show-only
+./lab.sh query 20-should --show-only
 ```
 
 공식 의미는 `QUERY-GUIDE.md`의 각 절에 연결된 Elasticsearch 7.17 문서로 확인할 수 있습니다.

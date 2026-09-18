@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source ./scripts/common.sh
 if [[ -f "$LAB_ROOT/reports/faults/active.json" ]]; then
-  echo '[error] Active fault drill: run ./scripts/13-fault-lab.sh recover first.' >&2
+  echo '[error] Active fault drill: run ./lab.sh fault recover first.' >&2
   exit 1
 fi
 export PYTHONPATH="$LAB_ROOT/scripts${PYTHONPATH:+:$PYTHONPATH}"

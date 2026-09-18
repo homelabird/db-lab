@@ -514,7 +514,7 @@ class CLIContractTests(unittest.TestCase):
                               capture_output=True, timeout=90)
     def test_actual_cli_default_suite(self):
         self.api.master = 'es04'
-        result = self.call('scripts/13-fault-lab.sh', 'run', 'all', '--yes')
+        result = self.call('lab.sh', 'fault', 'run', 'all', '--yes')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('[suite-PASS]', result.stdout)
         summaries = list(self.reports.glob('suite-*.json'))
@@ -545,11 +545,11 @@ class CLIContractTests(unittest.TestCase):
                 self.assertIn('recovery-PASS', result.stdout)
     def test_manual_apply_then_check_then_recover(self):
         for args in (('apply','write-block','--yes'), ('check',), ('recover',)):
-            result = self.call('scripts/13-fault-lab.sh', *args)
+            result = self.call('lab.sh', 'fault', *args)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse((self.reports/'active.json').exists())
     def test_cli_requires_confirmation_no_http_writes(self):
-        result = self.call('scripts/13-fault-lab.sh', 'run', 'node-stop')
+        result = self.call('lab.sh', 'fault', 'run', 'node-stop')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('--yes', result.stderr)
         self.assertEqual(self.api.calls, [])
@@ -562,12 +562,12 @@ class CLIContractTests(unittest.TestCase):
         result = self.call('scenarios/03-too-many-replicas.sh', '--restore')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
     def test_failed_manual_check_is_not_later_reported_as_pass(self):
-        result = self.call('scripts/13-fault-lab.sh', 'apply', 'write-block', '--yes')
+        result = self.call('lab.sh', 'fault', 'apply', 'write-block', '--yes')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.api.allow_blocked_write = True
-        result = self.call('scripts/13-fault-lab.sh', 'check')
+        result = self.call('lab.sh', 'fault', 'check')
         self.assertNotEqual(result.returncode, 0)
-        result = self.call('scripts/13-fault-lab.sh', 'recover')
+        result = self.call('lab.sh', 'fault', 'recover')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         reports = [json.loads(p.read_text()) for p in self.reports.glob('*.json')]
         self.assertEqual(reports[0]['result'], 'FAIL')

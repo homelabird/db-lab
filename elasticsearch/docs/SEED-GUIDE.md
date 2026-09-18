@@ -53,7 +53,7 @@ Bulk action 메타데이터와 재시도 전송량은 위 기준에 포함되지
 ## 4. 기본 실행: 생성과 적재를 한 번에
 
 ```bash
-./scripts/04-seed-data.sh
+./lab.sh seed
 ```
 
 동작 순서: 최소 5개 노드와 클러스터 확인 → 기존 인덱스 시드 signature 검사 → 없는 인덱스 생성 → 임시 refresh 비활성화 → 제한된 크기로 Bulk 적재 → refresh 설정 복원 → 명시적 refresh → 문서 수 대조 → manifest 기록.
@@ -65,19 +65,19 @@ Bulk action 메타데이터와 재시도 전송량은 위 기준에 포함되지
 새 데이터셋을 생성할 때:
 
 ```bash
-./scripts/04-seed-data.sh --size-mb 5
-./scripts/04-seed-data.sh --size-mb 100
-./scripts/04-seed-data.sh --size-mb 300 --batch-size 300 --max-batch-mb 2
+./lab.sh seed --size-mb 5
+./lab.sh seed --size-mb 100
+./lab.sh seed --size-mb 300 --batch-size 300 --max-batch-mb 2
 ```
 
 다른 설정의 시드가 이미 있다면 아래처럼 **삭제를 명시해야** 합니다.
 
 ```bash
 # 거래·웹·감사 인덱스 3개 안의 모든 데이터가 삭제됩니다.
-./scripts/04-seed-data.sh --size-mb 300 --recreate --yes
+./lab.sh seed --size-mb 300 --recreate --yes
 
 # 날짜를 변경한 새 시드. 기존 검색 예제의 고정 날짜 범위도 직접 조정해야 합니다.
-./scripts/04-seed-data.sh --start-date 2026-09-01T00:00:00Z --days 7 --recreate --yes
+./lab.sh seed --start-date 2026-09-01T00:00:00Z --days 7 --recreate --yes
 ```
 
 `--seed`는 재현 가능한 난수 데이터 설정입니다. `--payload-bytes 0`은 추가 payload를 없애며, 같은 원문 크기를 맞추기 위해 문서 수가 늘어날 수 있습니다. 시간대 없는 날짜는 받지 않습니다. `Z` 또는 `+09:00` 같은 오프셋을 포함하세요.
@@ -98,7 +98,7 @@ HTTP 200만으로 Bulk 성공을 판정하지 않습니다. 응답의 각 item�
 
 ```bash
 # ES가 꺼져 있어도 가능. 이 실행 모드에서만 로컬 원문 파일을 저장합니다.
-./scripts/04-seed-data.sh --generate-only --size-mb 100
+./lab.sh seed --generate-only --size-mb 100
 
 ls -lh datasets/generated/
 head -n 2 datasets/generated/lab-transactions-v1.bulk.ndjson
@@ -107,7 +107,7 @@ head -n 2 datasets/generated/lab-transactions-v1.bulk.ndjson
 파일은 action 한 줄, source 한 줄을 반복하는 **Bulk NDJSON**입니다. 전체 JSON 배열이 아닙니다. 각 줄과 마지막 줄에 LF가 있으며 원문 100MiB 외에 action 줄도 들어가므로 파일 합계는 100MiB보다 큽니다. 파일 생성만 한 상태는 적재 완료가 아닙니다. ES에 넣으려면 일반 시드 명령을 실행하세요. 생성 파일을 읽어 올리는 별도 importer가 아니라 동일 설정으로 다시 생성·스트리밍하는 구조입니다.
 
 ```bash
-./scripts/04-seed-data.sh --size-mb 100
+./lab.sh seed --size-mb 100
 ```
 
 대용량 Bulk 파일 전체를 하나의 HTTP 요청으로 보내지 마세요. 이 랩의 배치 분할 경로를 사용합니다.
@@ -115,7 +115,7 @@ head -n 2 datasets/generated/lab-transactions-v1.bulk.ndjson
 ## 8. 실제 환경 검증
 
 ```bash
-./scripts/09-verify-seed.sh
+./lab.sh verify
 ```
 
 manifest의 클러스터 UUID·시드 signature, 실제 문서 수, 5개 이상 data node, 인덱스별 shard/replica 설정, 38 primary + 46 replica가 서로 다른 노드에 STARTED인지 확인합니다. 22개 검색 예제도 실제 요청합니다. 정상일 때 `reports/live-verification.json`에 PASS를 기록합니다. 이 결과를 생성기 오프라인 테스트 결과와 혼동하지 마세요.

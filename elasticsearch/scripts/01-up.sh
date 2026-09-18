@@ -2,6 +2,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source ./scripts/common.sh
+
+map_count=$(cat /proc/sys/vm/max_map_count 2>/dev/null || echo 0)
+if ! [[ "$map_count" =~ ^[0-9]+$ ]] || (( map_count < 262144 )); then
+  cat >&2 <<EOF
+[error] Elasticsearch requires vm.max_map_count >= 262144.
+[error] Current value: ${map_count}
+[hint] Run: sudo sysctl -w vm.max_map_count=262144
+[hint] Persist it with: echo 'vm.max_map_count=262144' | sudo tee /etc/sysctl.d/99-elasticsearch.conf
+EOF
+  exit 1
+fi
+
 compose up -d
 python3 ./scripts/lablib.py wait --nodes 5 --yellow --seconds "${WAIT_SECONDS:-300}"
 guard_lab
@@ -14,4 +26,4 @@ if [[ "${ES_BIND_IP:-0.0.0.0}" == "0.0.0.0" ]]; then
 else
   printf 'Cerebro: http://%s:%s\nElasticsearch: http://%s:%s\n' "${ES_BIND_IP}" "${CEREBRO_PORT:-9000}" "${ES_BIND_IP}" "${ES_PORT:-9200}"
 fi
-echo 'Data is NOT seeded automatically. Next: ./scripts/04-seed-data.sh'
+echo 'Data is NOT seeded automatically. Next: ./lab.sh seed'

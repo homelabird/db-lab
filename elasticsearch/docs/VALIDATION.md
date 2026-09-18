@@ -60,11 +60,11 @@ Python 실행 환경에서 기본 seed=42, 시작일=2026-08-01 UTC, 31일, payl
 ## 사용자 환경에서 이어 실행할 실제 검사
 
 ```bash
-./scripts/compose.sh config
+./lab.sh compose config
 ./scripts/01-up.sh
-./scripts/04-seed-data.sh
-./scripts/09-verify-seed.sh
-./scripts/10-pit-pagination.sh --pages 3 --page-size 10
+./lab.sh seed
+./lab.sh verify
+./lab.sh pit --pages 3 --page-size 10
 ./scripts/07-dataset-size.sh
 ```
 

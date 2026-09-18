@@ -4,8 +4,8 @@
 
 ```bash
 ./scripts/01-up.sh
-./scripts/04-seed-data.sh
-./scripts/09-verify-seed.sh
+./lab.sh seed
+./lab.sh verify
 ```
 
 기본 시드는 **2026년 8월 UTC 데이터**입니다. `now-15m`처럼 현재 시간 기준 조건을 처음부터 넣으면 결과가 0건일 수 있습니다. 아래 예제는 이 문제를 피하도록 전체 기간 또는 고정 날짜를 사용합니다.
@@ -13,21 +13,21 @@
 ## 1. 제일 먼저 실행해 볼 명령
 
 ```bash
-./scripts/08-query-examples.sh 01-latest
+./lab.sh query 01-latest
 ```
 
 거래 인덱스에서 시간순으로 최근 10건을 조회합니다. 입력 요청만 보고 싶을 때:
 
 ```bash
-./scripts/08-query-examples.sh 01-latest --show-only
+./lab.sh query 01-latest --show-only
 ```
 
 이 명령은 네트워크 요청 없이 HTTP method, path, JSON body를 출력합니다. 다른 예제도 `01`처럼 번호만 주거나 전체 이름을 줄 수 있습니다.
 
 ```bash
-./scripts/08-query-examples.sh list
-./scripts/08-query-examples.sh 03
-./scripts/08-query-examples.sh 10-by-institution
+./lab.sh query list
+./lab.sh query 03
+./lab.sh query 10-by-institution
 ```
 
 ## 2. Elasticsearch는 어떻게 요청하는가
@@ -76,7 +76,7 @@ curl --fail-with-body -sS -X POST "$ES_URL/lab-transactions-v1/_search?pretty" \
 브라우저로 Cerebro에 들어가 등록된 클러스터를 선택한 다음 REST 화면을 엽니다. 다음 출력에서 method, path, body를 각각 옮겨 입력하세요.
 
 ```bash
-./scripts/08-query-examples.sh 04-high-risk --show-only
+./lab.sh query 04-high-risk --show-only
 ```
 
 Method는 `POST`, path는 `/lab-transactions-v1/_search`, body는 JSON 객체입니다. JSON 본문 안에 `POST /...`를 같이 넣지 않습니다. JSON에는 `//` 주석이나 마지막 항목 뒤의 불필요한 쉼표를 넣지 마세요.
@@ -107,7 +107,7 @@ HTTP 200이어도 `timed_out` 또는 `_shards.failed`가 있으면 완전한 검
 특정 사용자 거래를 찾습니다.
 
 ```bash
-./scripts/08-query-examples.sh 02-user
+./lab.sh query 02-user
 ```
 
 본문의 핵심은 다음과 같습니다.
@@ -121,7 +121,7 @@ HTTP 200이어도 `timed_out` 또는 `_shards.failed`가 있으면 완전한 검
 필드 타입부터 확인하는 습관이 중요합니다.
 
 ```bash
-./scripts/08-query-examples.sh 21-mapping
+./lab.sh query 21-mapping
 ```
 
 **여기서는 `user_id.keyword`, `service.keyword`가 아닙니다.** 두 필드는 원래 keyword입니다. `.keyword`를 무조건 붙이지 마세요.
@@ -131,7 +131,7 @@ HTTP 200이어도 `timed_out` 또는 `_shards.failed`가 있으면 완전한 검
 ## 5. `text`에는 `match`: 전문 검색
 
 ```bash
-./scripts/08-query-examples.sh 03-message
+./lab.sh query 03-message
 ```
 
 ```json
@@ -149,7 +149,7 @@ HTTP 200이어도 `timed_out` 또는 `_shards.failed`가 있으면 완전한 검
 분석 결과도 직접 볼 수 있습니다.
 
 ```bash
-./scripts/08-query-examples.sh 17-analyze
+./lab.sh query 17-analyze
 ```
 
 `Payment Gateway Timeout`을 분석한 토큰을 확인하고, 입력의 대문자·공백이 어떻게 처리되는지 보세요. 시드 message는 추가 형태소 분석기 설치 없이 연습할 수 있도록 영어 로그 문장으로 작성했습니다. 한국어 검색 품질을 이 데이터셋으로 평가하지 않습니다.
@@ -157,7 +157,7 @@ HTTP 200이어도 `timed_out` 또는 `_shards.failed`가 있으면 완전한 검
 문구와 순서를 고려하고 싶다면:
 
 ```bash
-./scripts/08-query-examples.sh 14-phrase
+./lab.sh query 14-phrase
 ```
 
 ```json
@@ -173,7 +173,7 @@ HTTP 200이어도 `timed_out` 또는 `_shards.failed`가 있으면 완전한 검
 "APP 거래이면서 risk_score가 800 이상이고, 국가가 KR은 아닌 거래"를 찾습니다.
 
 ```bash
-./scripts/08-query-examples.sh 04-high-risk
+./lab.sh query 04-high-risk
 ```
 
 ```json
@@ -204,7 +204,7 @@ HTTP 200이어도 `timed_out` 또는 `_shards.failed`가 있으면 완전한 검
 ### `should`를 OR로 썼는데 결과가 너무 많을 때
 
 ```bash
-./scripts/08-query-examples.sh 20-should
+./lab.sh query 20-should
 ```
 
 이 예제는 APP 거래 중 `is_fraud=true` 또는 `amount>=1000000`을 요구합니다. 핵심은 `minimum_should_match: 1`입니다.
@@ -216,8 +216,8 @@ bool에 must/filter가 함께 있으면 should의 기본 필수 개수는 0이 �
 ## 7. 숫자와 시간 범위
 
 ```bash
-./scripts/08-query-examples.sh 08-http-5xx
-./scripts/08-query-examples.sh 06-time-range
+./lab.sh query 08-http-5xx
+./lab.sh query 06-time-range
 ```
 
 ```json
@@ -248,7 +248,7 @@ bool에 must/filter가 함께 있으면 should의 기본 필수 개수는 0이 �
 문서 본문은 필요 없고 고위험 건수만 필요하면:
 
 ```bash
-./scripts/08-query-examples.sh 09-count-risk
+./lab.sh query 09-count-risk
 ```
 
 대상 경로가 `/_search`가 아니라 `/_count`이며 `count` 응답을 확인합니다.
@@ -256,7 +256,7 @@ bool에 must/filter가 함께 있으면 should의 기본 필수 개수는 0이 �
 필드에 검색 가능한 값이 존재하는 문서를 찾으면:
 
 ```bash
-./scripts/08-query-examples.sh 15-error-exists
+./lab.sh query 15-error-exists
 ```
 
 이 예제는 `_source`에 키가 적혀 있는지만 확인하는 일반 JSON 검사와 다릅니다. exists는 필드가 색인된 값으로 존재하는지 판단합니다. 값이 null이거나 매핑에서 색인되지 않는 등 상황에 따라 원문에 키가 있어도 결과가 다를 수 있습니다.
@@ -264,7 +264,7 @@ bool에 must/filter가 함께 있으면 should의 기본 필수 개수는 0이 �
 여러 행위 중 하나를 찾는 `terms` 예:
 
 ```bash
-./scripts/08-query-examples.sh 22-privileged
+./lab.sh query 22-privileged
 ```
 
 `term`은 단일 값, `terms`는 배열로 전달한 값 중 하나가 일치하는 조건으로 이해하고 시작하면 됩니다.
@@ -274,7 +274,7 @@ bool에 must/filter가 함께 있으면 should의 기본 필수 개수는 0이 �
 기관별 KRW 거래 건수, 거래 합계, 평균 위험도를 조회합니다.
 
 ```bash
-./scripts/08-query-examples.sh 10-by-institution
+./lab.sh query 10-by-institution
 ```
 
 ```json
@@ -306,9 +306,9 @@ terms aggregation은 기본적으로 상위 bucket을 반환합니다. 고유값
 ## 10. 응답시간 P95/P99, 날짜별 집계
 
 ```bash
-./scripts/08-query-examples.sh 11-latency
-./scripts/08-query-examples.sh 12-daily
-./scripts/08-query-examples.sh 13-audit-actions
+./lab.sh query 11-latency
+./lab.sh query 12-daily
+./lab.sh query 13-audit-actions
 ```
 
 11번은 서비스별 평균과 50/95/99 percentile을 반환합니다. payment 서비스에 느린 오류 로그를 일부러 넣었으므로 평균만 보는 것과 percentile을 함께 보는 차이를 관찰할 수 있습니다. percentile 집계는 근사 알고리즘이므로 정확한 정렬 순위값과 항상 동일하다고 가정하지 마세요.
@@ -322,7 +322,7 @@ terms aggregation은 기본적으로 상위 bucket을 반환합니다. 고유값
 ## 11. 여러 인덱스에 걸친 사용자 검색
 
 ```bash
-./scripts/08-query-examples.sh 19-user-timeline
+./lab.sh query 19-user-timeline
 ```
 
 경로에 인덱스를 쉼표로 연결하여 한 번에 검색합니다.
@@ -338,7 +338,7 @@ POST /lab-transactions-v1,lab-web-logs-v1,lab-audit-v1/_search
 ## 12. 검색은 노드와 샤드를 어떻게 사용하는가
 
 ```bash
-./scripts/08-query-examples.sh 16-search-shards
+./lab.sh query 16-search-shards
 ./scenarios/12-primary-vs-replica.sh
 ```
 
@@ -365,7 +365,7 @@ curl --fail-with-body -sS -X POST "$ES_URL/lab-transactions-v1/_search?pretty" \
 from은 0부터 시작합니다. 깊은 페이지로 갈수록 비용이 커지고 기본 설정에서 `from + size`는 10,000 제한을 받습니다. 이 제한을 무턱대고 늘리는 대신 안정적인 대량 페이지 조회에는 PIT + search_after를 사용해봅니다.
 
 ```bash
-./scripts/10-pit-pagination.sh --pages 3 --page-size 10
+./lab.sh pit --pages 3 --page-size 10
 ```
 
 스크립트의 흐름은 다음과 같습니다.
@@ -387,7 +387,7 @@ PIT 검색의 경로는 `/_search`이며 인덱스 경로를 다시 붙이지 �
 ## 14. 쿼리 검증과 성능 관찰
 
 ```bash
-./scripts/08-query-examples.sh 18-validate
+./lab.sh query 18-validate
 ```
 
 `_validate/query?explain=true`는 Query DSL 조건의 유효성을 확인하는 도구입니다. 전체 검색 요청의 aggregation·sort까지 모든 부분을 대신 실행해 검증하는 것은 아닙니다. valid=true라도 실제 데이터가 조건에 맞아야 결과가 나옵니다.
@@ -395,7 +395,7 @@ PIT 검색의 경로는 `/_search`이며 인덱스 경로를 다시 붙이지 �
 실제 예제 전체 실행:
 
 ```bash
-./scripts/08-query-examples.sh all --save-dir reports/query-results
+./lab.sh query all --save-dir reports/query-results
 ```
 
 첫 실행과 반복 실행의 took은 캐시, JIT, 부하, 디스크 상태 등에 따라 달라질 수 있습니다. `took` 한 번만으로 성능을 결론내리지 마세요. `_search`에 `profile: true`를 넣어 내부 실행을 관찰하는 방법도 있지만 측정 부하가 있어 이 기본 예제에는 항상 켜두지 않았습니다.

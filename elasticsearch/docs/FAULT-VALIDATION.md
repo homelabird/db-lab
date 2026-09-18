@@ -59,16 +59,16 @@ cluster.name 불일치, `_na_`, cluster UUID 변경, 부족한 노드, 잘못된
 
 ```bash
 ./scripts/12-offline-tests.sh
-./scripts/09-verify-seed.sh
-./scripts/13-fault-lab.sh run node-stop --node es03 --yes
-./scripts/13-fault-lab.sh run node-crash --node es03 --yes
-./scripts/13-fault-lab.sh run master-failover --yes
-./scripts/13-fault-lab.sh run all --yes
+./lab.sh verify
+./lab.sh fault run node-stop --node es03 --yes
+./lab.sh fault run node-crash --node es03 --yes
+./lab.sh fault run master-failover --yes
+./lab.sh fault run all --yes
 
 # 기본 suite에 포함하지 않는 선택 검사
-./scripts/13-fault-lab.sh run disk-watermark --yes
-./scripts/13-fault-lab.sh run zone-awareness --yes
-./scripts/13-fault-lab.sh run rebalance-disabled --yes
+./lab.sh fault run disk-watermark --yes
+./lab.sh fault run zone-awareness --yes
+./lab.sh fault run rebalance-disabled --yes
 ```
 
 이후 `reports/faults/*.json`에서 `fault_check.status`, `recovery.status`, `result`를 따로 확인하세요. `active.json`이 남으면 원복이 완료되지 않은 것입니다. 저장된 이전 PASS를 새 실행 결과로 오인하지 않도록 `run_id`와 UTC 시간을 확인하세요.

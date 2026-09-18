@@ -4,11 +4,11 @@
 
 ```bash
 ./scripts/01-up.sh
-./scripts/04-seed-data.sh
-./scripts/09-verify-seed.sh
-./scripts/08-query-examples.sh list
-./scripts/08-query-examples.sh 04-high-risk
-./scripts/10-pit-pagination.sh
+./lab.sh seed
+./lab.sh verify
+./lab.sh query list
+./lab.sh query 04-high-risk
+./lab.sh pit
 ./scripts/03-status.sh
 ./scripts/07-dataset-size.sh
 ./scenarios/01-manual-shard-move.sh

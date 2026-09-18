@@ -13,5 +13,5 @@ free -h || true
 echo '5 ES nodes: default 512 MiB heap each (2.5 GiB total heap), plus native memory/page cache/Cerebro.'
 echo 'Practical lab guideline: >=8 GiB VM/host RAM, 6 GiB available; 10 GiB+ free disk for images/data.'
 echo 'Ports: 9200 (ES), 9000 (UI). Stop the old lab or change ES_PORT / CEREBRO_PORT / ES_URL in .env.'
-echo 'Use ./scripts/compose.sh config to check the resolved Compose configuration.'
+echo 'Use ./lab.sh compose config to check the resolved Compose configuration.'
 exit "$status"

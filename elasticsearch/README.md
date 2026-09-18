@@ -9,24 +9,37 @@ Linux / Bash / Python 3.9+ / curl 7.76+ / Podman Compose 기준입니다. Python
 ```bash
 # 이 README가 있는 프로젝트 디렉터리에서 실행
 cp .env.example .env
-chmod +x scripts/*.sh scripts/*.py scenarios/*.sh
+chmod +x lab.sh scripts/*.sh scripts/*.py scenarios/*.sh
 
 sudo sysctl -w vm.max_map_count=262144
-./scripts/00-doctor.sh
-./scripts/01-up.sh
-./scripts/04-seed-data.sh
-./scripts/09-verify-seed.sh
+./lab.sh doctor
+./lab.sh up
+./lab.sh seed
+./lab.sh verify
 
-./scripts/08-query-examples.sh list
-./scripts/08-query-examples.sh 01-latest
-./scripts/08-query-examples.sh 04-high-risk
+./lab.sh query list
+./lab.sh query 01-latest
+./lab.sh query 04-high-risk
+```
+
+모든 관리 작업은 `lab.sh` 하나로 실행할 수 있습니다. 기존 번호별
+`scripts/*.sh`와 `scenarios/*.sh`는 호환성을 위해 그대로 남아 있으며,
+`lab.sh`가 해당 스크립트로 전달합니다.
+
+```bash
+./lab.sh status
+./lab.sh logs es01 --tail 100
+./lab.sh scenario list
+./lab.sh scenario 06-node-failure-and-recovery --test --yes
+./lab.sh fault list
+./lab.sh down
 ```
 
 기본 호스트 바인딩은 **`0.0.0.0`(모든 IPv4 인터페이스)** 입니다. Elasticsearch는 `0.0.0.0:9200`, Cerebro는 `0.0.0.0:9000`으로 포트를 공개합니다.
 
 다른 PC에서는 Cerebro `http://<서버IP>:9000`, Elasticsearch `http://<서버IP>:9200`에 접속하세요. 서버 자체에서는 기존처럼 `http://127.0.0.1:9000`, `http://127.0.0.1:9200`을 사용할 수 있습니다. **`0.0.0.0/0`은 CIDR 대역 표기이며 바인딩 값이나 브라우저 접속 주소가 아닙니다.**
 
-기존 프로젝트의 `.env`가 있다면 새 기본값보다 우선합니다. `ES_BIND_IP=0.0.0.0`으로 수정하고 `./scripts/compose.sh up -d --force-recreate es01 cerebro`를 실행하세요. 포트 설정 적용에는 컨테이너 재생성이 필요하며, 이 명령은 기존 named volume을 보존합니다. 자세한 적용 방법과 방화벽 안내는 [원격 접속](docs/QUICKSTART.md#5-다른-pc에서-서버의-cerebro-보기)을 참고하세요.
+기존 프로젝트의 `.env`가 있다면 새 기본값보다 우선합니다. `ES_BIND_IP=0.0.0.0`으로 수정하고 `./lab.sh compose up -d --force-recreate es01 cerebro`를 실행하세요. 포트 설정 적용에는 컨테이너 재생성이 필요하며, 이 명령은 기존 named volume을 보존합니다. 자세한 적용 방법과 방화벽 안내는 [원격 접속](docs/QUICKSTART.md#5-다른-pc에서-서버의-cerebro-보기)을 참고하세요.
 
 `01-up.sh`는 클러스터만 기동하고 시드는 자동 실행하지 않습니다. `09-verify-seed.sh`는 사용자의 **실제 Elasticsearch**에서 문서 수, 5개 이상의 데이터 노드, 샤드 배치, 검색 예제 22개를 검사합니다. 모든 샤드가 안정적인 green 상태여야 하므로 장애 시나리오를 진행하기 전에 실행하세요.
 
@@ -38,16 +51,16 @@ sudo sysctl -w vm.max_map_count=262144
 
 ```bash
 # 기존 writer와 다른 장애 실험을 먼저 중지
-./scripts/13-fault-lab.sh list
-./scripts/13-fault-lab.sh run node-stop --node es03 --yes
+./lab.sh fault list
+./lab.sh fault run node-stop --node es03 --yes
 
 # 8개 기본 장애를 각각 주입·확인·원복
-./scripts/13-fault-lab.sh run all --yes
+./lab.sh fault run all --yes
 
 # 직접 관찰 후 원복
-./scripts/13-fault-lab.sh apply write-block --yes
-./scripts/13-fault-lab.sh diagnose
-./scripts/13-fault-lab.sh recover
+./lab.sh fault apply write-block --yes
+./lab.sh fault diagnose
+./lab.sh fault recover
 ```
 
 복구 시 원래 노드 목록과 green뿐 아니라 시드 문서 수·index UUID·문서 표본 해시와 canary 읽기/쓰기/검색을 검사합니다. 설정을 임의의 기본값으로 초기화하지 않고 변경 전 값을 복원합니다. 기본 보고서는 `reports/faults/`에 저장됩니다. `active.json`이 남아 있으면 원복을 완료하기 전 삭제하지 마세요.
@@ -96,29 +109,29 @@ sudo sysctl -w vm.max_map_count=262144
 
 ```bash
 # 기본: 약 100MiB 생성 + 적재
-./scripts/04-seed-data.sh
+./lab.sh seed
 
 # 데이터셋이 없는 새 클러스터에서 소량 시험
-./scripts/04-seed-data.sh --size-mb 5
+./lab.sh seed --size-mb 5
 
 # 이미 다른 설정으로 시드가 있으면, 명시적으로 3개 인덱스를 삭제·재생성
 # 해당 인덱스의 실습 수정·추가 데이터도 삭제됩니다.
-./scripts/04-seed-data.sh --size-mb 100 --recreate --yes
+./lab.sh seed --size-mb 100 --recreate --yes
 
 # 완전히 같은 설정으로 재실행: 고정 ID에 덮어쓰기, 문서 수 중복 증가 없음
-./scripts/04-seed-data.sh
+./lab.sh seed
 
 # ES 연결 없이 파일 생성만. 이때만 datasets/generated/에 원문 파일이 생깁니다.
-./scripts/04-seed-data.sh --generate-only --size-mb 100
+./lab.sh seed --generate-only --size-mb 100
 
 # 검색 요청 자체를 출력: Cerebro REST에 넣을 Method / Path / Body 확인
-./scripts/08-query-examples.sh 04-high-risk --show-only
+./lab.sh query 04-high-risk --show-only
 
 # 모든 읽기 전용 예제 실행
-./scripts/08-query-examples.sh all
+./lab.sh query all
 
 # PIT + search_after 3페이지
-./scripts/10-pit-pagination.sh --pages 3 --page-size 10
+./lab.sh pit --pages 3 --page-size 10
 
 # 데이터 삭제 없이 실습용 allocation / replica / refresh 설정 복구
 ./scripts/05-reset-cluster-settings.sh

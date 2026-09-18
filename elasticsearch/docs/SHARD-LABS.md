@@ -11,7 +11,7 @@
 ```bash
 ./scripts/03-status.sh
 ./scenarios/12-primary-vs-replica.sh
-./scripts/08-query-examples.sh 16-search-shards
+./lab.sh query 16-search-shards
 ```
 
 시드 인덱스 3개만의 기준은 primary 38개, replica copy 46개, 합계 84개입니다. replica 설정 1은 "샤드당 사본 한 개 추가"이므로 총 copy는 primary 수 × (1 + replica 설정)입니다. audit은 8 × (1 + 2) = 24개입니다.
@@ -81,7 +81,7 @@ curl -sS "$ES_URL/_cat/shards/lab-transactions-v1?v&s=shard,prirep"
 
 ```bash
 # 별도 터미널. .env의 ES_URL도 적용됩니다.
-RATE=100 ./scripts/11-live-load.sh
+RATE=100 ./lab.sh load
 ```
 
 Ctrl-C로 종료합니다. live load는 시드 외 문서를 추가하므로 그 뒤에는 시드 manifest와 문서 수가 달라져 `09-verify-seed.sh`가 실패할 수 있습니다. 검색 0건·Bulk 실패 등을 처리하면서 검증기를 통과하도록 임의로 expected count를 바꾸지 마세요. 아래 절차로 시드 기준 상태를 다시 만들 수 있습니다.
@@ -90,12 +90,12 @@ Ctrl-C로 종료합니다. live load는 시드 외 문서를 추가하므로 그
 
 ```bash
 # 정지한 컨테이너를 먼저 복구
-./scripts/compose.sh start es01 es02 es03 es04 es05
+./lab.sh compose start es01 es02 es03 es04 es05
 ./scripts/05-reset-cluster-settings.sh
 
 # 데이터까지 기본 시드로 되돌릴 필요가 있을 때만. 3개 인덱스 데이터 삭제.
-./scripts/04-seed-data.sh --recreate --yes
-./scripts/09-verify-seed.sh
+./lab.sh seed --recreate --yes
+./lab.sh verify
 ```
 
 리셋은 이 랩이 사용하는 allocation·disk watermark·replica·refresh 설정을 되돌립니다. 사용자가 별도로 추가한 모든 종류의 클러스터 설정을 무차별 초기화하는 명령은 아닙니다. 운영 클러스터에 사용하지 마세요.

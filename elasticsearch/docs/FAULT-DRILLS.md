@@ -13,16 +13,16 @@ chmod +x scripts/*.sh scripts/*.py scenarios/*.sh
 
 # 실제 클러스터를 시작하고 시드를 넣지 않았다면 먼저 실행
 ./scripts/01-up.sh
-./scripts/04-seed-data.sh
+./lab.sh seed
 
 # 기존 데이터·샤드·검색의 정상 기준 상태 확인
-./scripts/09-verify-seed.sh
+./lab.sh verify
 
 # 새 장애 기능 목록
-./scripts/13-fault-lab.sh list
+./lab.sh fault list
 
 # 최초 실습: es03 정상 종료 → 장애 판정 → 자동 재기동/원복
-./scripts/13-fault-lab.sh run node-stop --node es03 --yes
+./lab.sh fault run node-stop --node es03 --yes
 ```
 
 실행 전에 5개 이상의 데이터 노드, 동일 cluster UUID, 안정적인 전체 green, 세 시드 인덱스의 데이터 존재를 확인합니다. `cluster_uuid=_na_`, 노드 미합류, 기존 yellow/red, 동작 중인 다른 장애 기록이면 시작하지 않습니다. `live-load.sh`나 별도의 writer/수동 변경 작업을 중지하세요. 복구 중 seed 재생성으로 오류를 숨기지 마세요.
@@ -34,15 +34,15 @@ Podman을 rootless로 기동했다면 장애 스크립트도 **같은 일반 사
 ### 한 번에 주입 → 확인 → 원복
 
 ```bash
-./scripts/13-fault-lab.sh run node-crash --node es03 --yes
-./scripts/13-fault-lab.sh run master-failover --yes
-./scripts/13-fault-lab.sh run too-many-replicas --yes
+./lab.sh fault run node-crash --node es03 --yes
+./lab.sh fault run master-failover --yes
+./lab.sh fault run too-many-replicas --yes
 
 # 장애 판정 후 60초 유지해서 Cerebro에서 관찰한 다음 자동 복구
-./scripts/13-fault-lab.sh run node-stop --node es03 --hold 60 --yes
+./lab.sh fault run node-stop --node es03 --hold 60 --yes
 
 # 단계별 대기 제한을 300초로 조정
-./scripts/13-fault-lab.sh run node-stop --timeout 300 --yes
+./lab.sh fault run node-stop --timeout 300 --yes
 ```
 
 `node-stop`은 정상 종료 요청(10초 내 종료하지 못하면 Compose가 강제 종료할 수 있음), `node-crash`는 **SIGKILL에 의한 프로세스 강제 종료**입니다. SIGKILL은 전원 차단·디스크 손상과 동일하지 않습니다. `master-failover`는 es01을 하드코딩하지 않고 현재 elected master를 읽어 정지합니다. 실험 준비 중 master가 달라지면 잘못된 노드를 테스트하지 않고 중단·원복합니다.
@@ -53,20 +53,20 @@ Podman을 rootless로 기동했다면 장애 스크립트도 **같은 일반 사
 
 ```bash
 # 실제 장애를 만들고 조건을 확인한 뒤, 그 상태를 유지하고 종료
-./scripts/13-fault-lab.sh apply allocation-filter --yes
+./lab.sh fault apply allocation-filter --yes
 
 # 저장된 실험 정보만 출력
-./scripts/13-fault-lab.sh status
+./lab.sh fault status
 
 # 실제 ES의 상태·원인 읽기 (설정 변경 없음)
-./scripts/13-fault-lab.sh diagnose
+./lab.sh fault diagnose
 ./scenarios/04-allocation-explain.sh
 
 # 기대한 장애 상태가 여전히 재현되는지 검사
-./scripts/13-fault-lab.sh check
+./lab.sh fault check
 
 # 원래 설정 복원 → 정상 판정 → 이번 실험용 인덱스만 제거
-./scripts/13-fault-lab.sh recover
+./lab.sh fault recover
 ```
 
 **`fault-check-PASS`는 “의도한 장애가 재현됐다”는 뜻이며 정상 복구라는 뜻이 아닙니다.** 최종 `recovery-PASS`, 보고서의 `result`, `recovery.status`를 구분하세요. 장애 확인이 실패했지만 원복은 성공하면 `result=FAIL`, `recovery.status=PASS`가 됩니다. `recover` 명령의 종료 코드 0은 복구 성공을 의미하며, 앞서 실패한 장애 시험을 소급하여 PASS로 바꾸지 않습니다.
@@ -92,12 +92,12 @@ Podman을 rootless로 기동했다면 장애 스크립트도 **같은 일반 사
 `all`은 앞의 기본 장애 8개(node-stop부터 drain-node까지)를 순서대로 실행합니다. 매번 원복한 뒤 다음 장애로 넘어가며 첫 실패에서 중단합니다. `disk-watermark`, `zone-awareness`, `rebalance-disabled`는 포함하지 않으며 개별 명령으로 실행합니다.
 
 ```bash
-./scripts/13-fault-lab.sh run all --yes
+./lab.sh fault run all --yes
 
 # 전체 클러스터 설정을 변경하는 선택 실습
-./scripts/13-fault-lab.sh run disk-watermark --yes
-./scripts/13-fault-lab.sh run zone-awareness --yes
-./scripts/13-fault-lab.sh run rebalance-disabled --yes
+./lab.sh fault run disk-watermark --yes
+./lab.sh fault run zone-awareness --yes
+./lab.sh fault run rebalance-disabled --yes
 ```
 
 ## 4. green/yellow/red를 해석하는 방법
@@ -117,7 +117,7 @@ allocation-filter는 기존 시드에 ghost 필터만 설정하는 대신, 새 �
 Cerebro의 연결 목록에는 es01, es02, es04 경로를 추가했습니다. es01 연결 화면이 끊겼으면 홈으로 돌아가 `Lab via es02`를 **수동 선택**하세요. Cerebro 자동 failover 구현을 뜻하지 않습니다. 설정 파일을 갱신한 기존 컨테이너는 다음 명령으로 반영합니다.
 
 ```bash
-./scripts/compose.sh restart cerebro
+./lab.sh compose restart cerebro
 ```
 
 ## 6. 데이터와 설정 보존
@@ -140,13 +140,13 @@ Cerebro의 연결 목록에는 es01, es02, es04 경로를 추가했습니다. es
 
 ```bash
 # 현재 실험 ID, 어떤 노드를 내렸는지, 원래 설정 확인
-./scripts/13-fault-lab.sh status
+./lab.sh fault status
 
 # ES API가 살아 있으면 진단 JSON 수집
-./scripts/13-fault-lab.sh diagnose
+./lab.sh fault diagnose
 
 # 원인 조치 후 기록에 따라 다시 복구
-./scripts/13-fault-lab.sh recover
+./lab.sh fault recover
 ```
 
 `active.json`을 지우거나 `05-reset-cluster-settings.sh`부터 실행하지 마세요. 새 기본 reset/purge 도구는 기본 위치의 active journal이 있으면 중단합니다. 기존 버전에서 이미 적용한 장애에는 원래 값 snapshot이 없으므로 새 recover가 임의로 이전 상태를 추측하지 않습니다. 그 경우 기존 원복 절차로 정상 상태를 먼저 만들고 새 실습을 시작하세요.
@@ -156,8 +156,8 @@ Cerebro의 연결 목록에는 es01, es02, es04 경로를 추가했습니다. es
 `diagnose`는 API가 전혀 응답하지 않으면 수집을 완료할 수 없습니다. 이 경우 먼저 컨테이너 상태와 로그를 확인합니다.
 
 ```bash
-./scripts/compose.sh ps -a
-./scripts/compose.sh logs --tail=150 es01 es02 es03 es04 es05
+./lab.sh compose ps -a
+./lab.sh compose logs --tail=150 es01 es02 es03 es04 es05
 free -m
 sysctl vm.max_map_count
 ```

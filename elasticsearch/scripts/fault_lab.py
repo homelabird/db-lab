@@ -88,7 +88,7 @@ def disk_thresholds(stats):
 
 class ComposeRuntime:
     def call(self, *args, input_data=None, timeout=45):
-        cmd = [str(ROOT / 'scripts/compose.sh'), *args]
+        cmd = ['bash', str(ROOT / 'scripts/compose.sh'), *args]
         result = subprocess.run(cmd, cwd=ROOT, input=input_data if input_data is not None else b'', stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, timeout=timeout, check=False)
         if result.returncode:

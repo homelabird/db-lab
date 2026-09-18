@@ -17,7 +17,7 @@ cp .env.example .env
 chmod +x scripts/*.sh scripts/*.py scenarios/*.sh
 sudo sysctl -w vm.max_map_count=262144
 ./scripts/00-doctor.sh
-./scripts/compose.sh config
+./lab.sh compose config
 ./scripts/01-up.sh
 ```
 
@@ -26,8 +26,8 @@ sudo sysctl -w vm.max_map_count=262144
 `01-up.sh`는 단순히 `/`가 HTTP 200을 반환하는지만 보지 않습니다. 실제 cluster UUID가 생겼는지, 최소 5개 노드인지, 상태가 yellow 이상인지 확인합니다. `cluster_uuid: "_na_"`라면 서버 프로세스가 떠 있어도 클러스터 형성에 성공한 상태가 아닙니다.
 
 ```bash
-./scripts/compose.sh ps
-./scripts/compose.sh logs --tail=120 es01 es02 es03
+./lab.sh compose ps
+./lab.sh compose logs --tail=120 es01 es02 es03
 ./scripts/03-status.sh
 ```
 
@@ -36,14 +36,14 @@ sudo sysctl -w vm.max_map_count=262144
 ## 3. 데이터와 검색
 
 ```bash
-./scripts/04-seed-data.sh
-./scripts/09-verify-seed.sh
+./lab.sh seed
+./lab.sh verify
 ./scripts/07-dataset-size.sh
-./scripts/08-query-examples.sh list
-./scripts/08-query-examples.sh 01-latest
+./lab.sh query list
+./lab.sh query 01-latest
 ```
 
-전체 설정은 `.env.example`, 시드 인자는 `./scripts/04-seed-data.sh --help`에서 확인합니다. CLI 인자가 환경변수보다 우선하며, 스크립트는 이미 export된 환경변수를 `.env`로 덮어쓰지 않습니다. `.env`에는 `KEY=value`만 사용하고 inline 주석, 변수 치환, 쉘 명령을 넣지 마세요.
+전체 설정은 `.env.example`, 시드 인자는 `./lab.sh seed --help`에서 확인합니다. CLI 인자가 환경변수보다 우선하며, 스크립트는 이미 export된 환경변수를 `.env`로 덮어쓰지 않습니다. `.env`에는 `KEY=value`만 사용하고 inline 주석, 변수 치환, 쉘 명령을 넣지 마세요.
 
 ## 4. 기존 랩과 포트가 겹칠 때
 
@@ -98,11 +98,11 @@ fi
 
 # 이전에 export한 값이 .env를 덮어쓰지 않도록 현재 쉘에서 해제
 unset ES_BIND_IP
-./scripts/compose.sh config
+./lab.sh compose config
 
 # 단순 restart가 아니라 재생성해야 호스트 포트 바인딩에 반영됩니다.
 # es01이 잠시 재시작합니다. 기존 named volume과 seed 데이터는 보존합니다.
-./scripts/compose.sh up -d --force-recreate es01 cerebro
+./lab.sh compose up -d --force-recreate es01 cerebro
 ./scripts/03-status.sh
 ```
 

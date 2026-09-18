@@ -290,7 +290,7 @@ def main(argv=None):
     print(f'[DONE] {manifest["documents"]:,} docs / {manifest["source_bytes"] / 1048576:.3f} MiB source')
     print(f'[report] {report}')
     if client:
-        print('Run ./scripts/09-verify-seed.sh for counts, mappings, shard layout and all query examples.')
+        print('Run ./lab.sh verify for counts, mappings, shard layout and all query examples.')
     return 0
 
 

@@ -8,7 +8,7 @@ curl --fail-with-body -sS "$ES_URL/"
 curl --fail-with-body -sS "$ES_URL/_cluster/health?pretty"
 curl --fail-with-body -sS "$ES_URL/_cat/nodes?v"
 curl --fail-with-body -sS "$ES_URL/_cat/indices/lab-*?v"
-./scripts/08-query-examples.sh 01-latest
+./lab.sh query 01-latest
 ```
 
 연결 자체가 실패한 상황과 정상 검색이 0건을 반환한 상황은 다르게 진단해야 합니다.
@@ -18,8 +18,8 @@ curl --fail-with-body -sS "$ES_URL/_cat/indices/lab-*?v"
 아직 bootstrap이 완료되지 않았을 수 있습니다. 이 상태를 적재 가능한 클러스터라고 취급하지 않습니다.
 
 ```bash
-./scripts/compose.sh ps
-./scripts/compose.sh logs --tail=200 es01 es02 es03 es04 es05
+./lab.sh compose ps
+./lab.sh compose logs --tail=200 es01 es02 es03 es04 es05
 ```
 
 `master not discovered`, DNS/transport 연결 실패, bootstrap check, 메모리 부족, 일부 컨테이너 재시작 여부를 확인합니다. Compose의 node.name과 discovery.seed_hosts, initial master 이름이 서로 맞는지도 봅니다. 일부 노드만 오래된 별도 cluster UUID를 가진 볼륨으로 시작하면 자동으로 한 클러스터가 되는 것이 아닙니다.
@@ -38,7 +38,7 @@ curl --fail-with-body -sS "$ES_URL/_cat/indices/lab-*?v"
 ```bash
 cat /proc/sys/vm/max_map_count
 free -h
-./scripts/compose.sh logs --tail=100 es01
+./lab.sh compose logs --tail=100 es01
 ```
 
 이 7.17 mmap 기반 랩에서는 호스트의 vm.max_map_count를 262144 이상으로 준비합니다. Exit 137만으로 OOM을 확정하지 말고 런타임 inspect의 OOM 표시와 호스트 커널 로그를 함께 확인하세요. 5개의 JVM heap 합계만 메모리 요구량이라고 생각하면 부족할 수 있습니다.
@@ -51,13 +51,13 @@ free -h
 
 브라우저를 다른 PC에서 열었다면 그 PC의 localhost와 서버의 localhost는 다릅니다. 기본 바인딩은 `0.0.0.0`이므로 `http://<서버IP>:9000`에 직접 접속하세요. 브라우저 주소에 `0.0.0.0`이나 `0.0.0.0/0`을 쓰지 않습니다.
 
-접속이 안 되면 `.env`의 `ES_BIND_IP=0.0.0.0`, `./scripts/compose.sh config`의 두 공개 포트, 호스트 방화벽·클라우드 보안그룹·서버까지의 네트워크 경로를 확인하세요. 이전 `.env`가 `127.0.0.1`이면 새 기본값을 덮어씁니다. 설정을 변경한 후에는 `./scripts/compose.sh up -d --force-recreate es01 cerebro`로 재생성해야 합니다. 볼륨 삭제는 필요하지 않습니다. 로컬 바인딩을 유지하는 경우에는 `QUICKSTART.md`의 SSH 터널을 사용하세요.
+접속이 안 되면 `.env`의 `ES_BIND_IP=0.0.0.0`, `./lab.sh compose config`의 두 공개 포트, 호스트 방화벽·클라우드 보안그룹·서버까지의 네트워크 경로를 확인하세요. 이전 `.env`가 `127.0.0.1`이면 새 기본값을 덮어씁니다. 설정을 변경한 후에는 `./lab.sh compose up -d --force-recreate es01 cerebro`로 재생성해야 합니다. 볼륨 삭제는 필요하지 않습니다. 로컬 바인딩을 유지하는 경우에는 `QUICKSTART.md`의 SSH 터널을 사용하세요.
 
 ## 5. Cerebro는 열리는데 ES가 안 보임
 
 ```bash
-./scripts/compose.sh logs --tail=100 cerebro
-./scripts/compose.sh exec cerebro sh -c 'getent hosts es01 || true'
+./lab.sh compose logs --tail=100 cerebro
+./lab.sh compose exec cerebro sh -c 'getent hosts es01 || true'
 ```
 
 Cerebro 안에서는 호스트의 `127.0.0.1:9200`이 아니라 컨테이너 DNS 이름 `es01:9200`으로 접속합니다. 최소 이미지에는 getent 같은 진단 명령이 없을 수 있습니다. 그 경우 명령 부재를 DNS 실패로 혼동하지 말고 로그와 네트워크 inspect를 확인합니다.
@@ -69,7 +69,7 @@ SELinux 환경에서 Cerebro 설정 파일 bind mount는 `:ro,Z`를 사용합니
 `older/different dataset`은 보호 동작입니다. 기존 데이터를 자동 삭제하지 않습니다. 데이터가 필요하면 먼저 보존한 뒤 **3개 시드 인덱스를 삭제해도 되는 경우에만**:
 
 ```bash
-./scripts/04-seed-data.sh --size-mb 100 --recreate --yes
+./lab.sh seed --size-mb 100 --recreate --yes
 ```
 
 `--recreate`만 넣으면 거부하며 `--yes`가 필요합니다. `lab-*` 전체를 지우는 wildcard 삭제가 아니라 정확한 세 이름만 처리합니다.
@@ -79,7 +79,7 @@ SELinux 환경에서 Cerebro 설정 파일 bind mount는 `:ro,Z`를 사용합니
 ```bash
 cat reports/seed-manifest.json
 ./scripts/03-status.sh
-./scripts/04-seed-data.sh
+./lab.sh seed
 ```
 
 마지막 명령은 실패한 실행과 **같은 설정**으로 다시 수행해야 합니다. 같은 ID에 재적재하므로 문서 수를 중복 증가시키지 않습니다. 설정을 바꾸면 안전 검사에서 거부할 수 있습니다.
@@ -109,9 +109,9 @@ curl --fail-with-body -sS "$ES_URL/_cat/shards/lab-*?v&s=state,index,shard"
 우선 match_all로 원문이 있는지 확인한 뒤 필터를 한 개씩 추가하세요. 기본 시드는 2026년 8월 UTC입니다. `now-1d`가 항상 맞는 예제가 아닙니다. keyword의 대소문자와 필드 타입을 확인합니다. 이 랩의 `service`, `user_id`에는 `.keyword`를 붙이지 않습니다.
 
 ```bash
-./scripts/08-query-examples.sh 01-latest
-./scripts/08-query-examples.sh 21-mapping
-./scripts/08-query-examples.sh 18-validate
+./lab.sh query 01-latest
+./lab.sh query 21-mapping
+./lab.sh query 18-validate
 ```
 
 valid=true는 검색 조건이 유효하다는 뜻이지 결과가 반드시 존재한다는 뜻이 아닙니다.

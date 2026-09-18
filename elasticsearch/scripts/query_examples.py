@@ -19,7 +19,7 @@ def main():
         return 0
     selected=catalog if args.name == 'all' else [e for e in catalog if e['name']==args.name or e['name'].split('-')[0]==args.name]
     if not selected:
-        p.error('Unknown example. Run ./scripts/08-query-examples.sh list')
+        p.error('Unknown example. Run ./lab.sh query list')
     client=ESClient()
     for entry in selected:
         print(f'\n=== {entry["name"]}: {entry["title"]} ===\n{entry["method"]} {entry["path"]}')
