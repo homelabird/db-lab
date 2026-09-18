@@ -1,0 +1,38 @@
+elasticsearch:
+  enabled: true
+  image: docker.elastic.co/elasticsearch/elasticsearch:7.17.29
+  replicas: 3
+  heap: 640m
+  storage: 20Gi
+
+kafka:
+  enabled: true
+  image: docker.io/confluentinc/cp-kafka:7.9.0
+  replicas: 3
+  storage: 20Gi
+  external:
+    enabled: false
+
+zookeeper:
+  enabled: true
+  image: docker.io/confluentinc/cp-zookeeper:7.9.0
+  replicas: 3
+  storage: 5Gi
+
+mariadb:
+  enabled: true
+  image: bitnami/mariadb-galera:11.4.5
+  replicas: 3
+  storage: 20Gi
+  rootPassword: change-me
+  sstPassword: change-me
+
+redis:
+  enabled: true
+  image: redis:7.4.11-alpine
+  replicas: 3
+  storage: 5Gi
+  password: change-me
+
+service:
+  type: ClusterIP

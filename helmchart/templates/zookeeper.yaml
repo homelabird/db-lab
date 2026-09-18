@@ -1,0 +1,56 @@
+{{- if and .Values.kafka.enabled .Values.zookeeper.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "db-lab.fullname" . }}-zookeeper
+spec:
+  clusterIP: None
+  ports:
+    - name: client
+      port: 2181
+  selector:
+    component: zookeeper
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "db-lab.fullname" . }}-zookeeper
+spec:
+  serviceName: {{ include "db-lab.fullname" . }}-zookeeper
+  replicas: {{ .Values.zookeeper.replicas }}
+  selector:
+    matchLabels:
+      component: zookeeper
+  template:
+    metadata:
+      labels:
+        component: zookeeper
+    spec:
+      containers:
+        - name: zookeeper
+          image: {{ .Values.zookeeper.image | quote }}
+          command: ["/bin/bash", "-ec"]
+          args:
+            - export ZOOKEEPER_SERVER_ID="${HOSTNAME##*-}"; exec /etc/confluent/docker/run
+          ports:
+            - name: client
+              containerPort: 2181
+          env:
+            - name: ZOOKEEPER_CLIENT_PORT
+              value: "2181"
+            - name: ZOOKEEPER_TICK_TIME
+              value: "2000"
+            - name: ZOOKEEPER_SERVERS
+              value: {{ printf "%s-zookeeper-0:2888:3888;%s-zookeeper-1:2888:3888;%s-zookeeper-2:2888:3888" (include "db-lab.fullname" .) (include "db-lab.fullname" .) (include "db-lab.fullname" .) | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/zookeeper/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.zookeeper.storage }}
+{{- end }}

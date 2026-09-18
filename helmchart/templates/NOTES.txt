@@ -1,0 +1,13 @@
+db-lab has been rendered as one Helm release.
+
+Check workloads:
+  kubectl get statefulsets,pods,svc
+
+Internal endpoints:
+  Elasticsearch: {{ include "db-lab.fullname" . }}-elasticsearch:9200
+  Kafka:         {{ include "db-lab.fullname" . }}-kafka:9092
+  MariaDB:       {{ include "db-lab.fullname" . }}-mariadb:3306
+  Redis:         {{ include "db-lab.fullname" . }}-redis:6379
+
+This chart provides Kubernetes-native baseline workloads. The original
+Compose labs remain available for their lab-specific fault drills and clients.

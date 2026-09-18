@@ -1,0 +1,56 @@
+{{- if .Values.mariadb.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "db-lab.fullname" . }}-mariadb
+spec:
+  ports:
+    - name: mysql
+      port: 3306
+  selector:
+    component: mariadb
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "db-lab.fullname" . }}-mariadb
+spec:
+  serviceName: {{ include "db-lab.fullname" . }}-mariadb
+  replicas: {{ .Values.mariadb.replicas }}
+  selector:
+    matchLabels:
+      component: mariadb
+  template:
+    metadata:
+      labels:
+        component: mariadb
+    spec:
+      containers:
+        - name: mariadb
+          image: {{ .Values.mariadb.image | quote }}
+          ports:
+            - name: mysql
+              containerPort: 3306
+          env:
+            - name: MARIADB_ROOT_PASSWORD
+              value: {{ .Values.mariadb.rootPassword | quote }}
+            - name: MARIADB_GALERA_CLUSTER_NAME
+              value: {{ printf "%s-mariadb" (include "db-lab.fullname" .) | quote }}
+            - name: MARIADB_GALERA_CLUSTER_ADDRESS
+              value: {{ printf "gcomm://%s-mariadb" (include "db-lab.fullname" .) | quote }}
+            - name: MARIADB_GALERA_MARIABACKUP_PASSWORD
+              value: {{ .Values.mariadb.sstPassword | quote }}
+            - name: MARIADB_GALERA_MARIABACKUP_USER
+              value: mariabackup
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.mariadb.storage }}
+{{- end }}

@@ -1,0 +1,47 @@
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "db-lab.fullname" . }}-sentinel
+spec:
+  clusterIP: None
+  ports:
+    - name: sentinel
+      port: 26379
+  selector:
+    component: redis-sentinel
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "db-lab.fullname" . }}-sentinel
+spec:
+  serviceName: {{ include "db-lab.fullname" . }}-sentinel
+  replicas: 3
+  selector:
+    matchLabels:
+      component: redis-sentinel
+  template:
+    metadata:
+      labels:
+        component: redis-sentinel
+    spec:
+      containers:
+        - name: sentinel
+          image: {{ .Values.redis.image | quote }}
+          command: ["sh", "-ec"]
+          args:
+            - |
+              cat > /tmp/sentinel.conf <<EOF
+              port 26379
+              sentinel monitor mymaster {{ include "db-lab.fullname" . }}-redis-0.{{ include "db-lab.fullname" . }}-redis 6379 2
+              sentinel auth-pass mymaster {{ .Values.redis.password }}
+              sentinel down-after-milliseconds mymaster 5000
+              sentinel failover-timeout mymaster 30000
+              sentinel parallel-syncs mymaster 1
+              EOF
+              exec redis-server /tmp/sentinel.conf --sentinel
+          ports:
+            - name: sentinel
+              containerPort: 26379
+{{- end }}

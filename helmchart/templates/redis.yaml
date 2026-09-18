@@ -1,0 +1,47 @@
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "db-lab.fullname" . }}-redis
+spec:
+  clusterIP: None
+  ports:
+    - name: redis
+      port: 6379
+  selector:
+    component: redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "db-lab.fullname" . }}-redis
+spec:
+  serviceName: {{ include "db-lab.fullname" . }}-redis
+  replicas: {{ .Values.redis.replicas }}
+  selector:
+    matchLabels:
+      component: redis
+  template:
+    metadata:
+      labels:
+        component: redis
+    spec:
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image | quote }}
+          args: ["redis-server", "--requirepass", {{ .Values.redis.password | quote }}]
+          ports:
+            - name: redis
+              containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.redis.storage }}
+{{- end }}

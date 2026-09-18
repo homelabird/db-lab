@@ -1,0 +1,62 @@
+{{- if .Values.elasticsearch.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "db-lab.fullname" . }}-elasticsearch
+  labels: {{- include "db-lab.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  ports:
+    - name: http
+      port: 9200
+  selector:
+    component: elasticsearch
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "db-lab.fullname" . }}-elasticsearch
+  labels: {{- include "db-lab.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "db-lab.fullname" . }}-elasticsearch
+  replicas: {{ .Values.elasticsearch.replicas }}
+  selector:
+    matchLabels:
+      component: elasticsearch
+  template:
+    metadata:
+      labels:
+        component: elasticsearch
+        {{- include "db-lab.selector" . | nindent 8 }}
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: elasticsearch
+          image: {{ .Values.elasticsearch.image | quote }}
+          ports:
+            - name: http
+              containerPort: 9200
+          env:
+            - name: cluster.name
+              value: {{ printf "%s-elasticsearch" .Release.Name | quote }}
+            - name: discovery.seed_hosts
+              value: {{ printf "%s-elasticsearch" (include "db-lab.fullname" .) | quote }}
+            - name: cluster.initial_master_nodes
+              value: {{ printf "%s-elasticsearch-0,%s-elasticsearch-1,%s-elasticsearch-2" (include "db-lab.fullname" .) (include "db-lab.fullname" .) (include "db-lab.fullname" .) | quote }}
+            - name: xpack.security.enabled
+              value: "false"
+            - name: ES_JAVA_OPTS
+              value: {{ printf "-Xms%s -Xmx%s" .Values.elasticsearch.heap .Values.elasticsearch.heap | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.elasticsearch.storage }}
+{{- end }}
