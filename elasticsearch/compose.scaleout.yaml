@@ -1,0 +1,33 @@
+services:
+  es06:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.29
+    container_name: cerebro-seed-es06
+    environment:
+    - node.name=es06
+    - cluster.name=${LAB_CLUSTER_NAME:-cerebro-shard-lab}
+    - discovery.seed_hosts=es01,es02,es03,es04,es05
+    - node.attr.zone=zone-c
+    - xpack.security.enabled=false
+    - xpack.ml.enabled=false
+    - ES_JAVA_OPTS=-Xms${ES_HEAP:-512m} -Xmx${ES_HEAP:-512m}
+    - node.roles=master,data,ingest
+    - node.processors=2
+    - ingest.geoip.downloader.enabled=false
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+    - es06-data:/usr/share/elasticsearch/data
+    networks:
+    - es-lab
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl -fsS --max-time 5 http://localhost:9200/_cluster/health >/dev/null
+      interval: 10s
+      timeout: 6s
+      retries: 30
+      start_period: 40s
+volumes:
+  es06-data: null

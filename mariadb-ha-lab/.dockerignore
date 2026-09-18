@@ -1,0 +1,11 @@
+.env
+.env-*
+.state
+.git
+backups
+reports
+standalone-original
+docs
+tests
+**/__pycache__
+**/*.pyc

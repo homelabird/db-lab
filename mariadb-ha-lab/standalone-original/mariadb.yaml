@@ -1,0 +1,34 @@
+services:
+  mariadb:
+    image: docker.io/mariadb:11.8
+    container_name: mariadb-learning
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpassword
+      MARIADB_DATABASE: sakila
+      TZ: Asia/Seoul
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - ./initdb:/docker-entrypoint-initdb.d:ro,z
+      - ./config/advanced.cnf:/etc/mysql/conf.d/advanced.cnf:ro,z
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  cloudbeaver:
+    image: docker.io/dbeaver/cloudbeaver:latest
+    container_name: cloudbeaver-web
+    restart: unless-stopped
+    ports:
+      - "8080:8978"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+
+volumes:
+  mariadb_data:

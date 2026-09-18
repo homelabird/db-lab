@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+datasets/generated/
+reports/*.json
+reports/*.log
+*.partial
+
+# Active fault journals contain cluster-specific recovery state.
+reports/faults/

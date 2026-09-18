@@ -1,0 +1,122 @@
+x-node: &node
+  image: localhost/${LAB_PROJECT:-mariadb-ha}-node:lab
+  build:
+    context: .
+    dockerfile: images/node/Dockerfile
+    args:
+      MARIADB_IMAGE: ${MARIADB_IMAGE:-docker.io/library/mariadb:11.8}
+  restart: "no"
+  stop_grace_period: 120s
+  environment: &node-env
+    MARIADB_ROOT_PASSWORD: ${ROOT_PASSWORD:?Run lab.sh init}
+    MARIADB_ROOT_HOST: localhost
+    LAB_PASSWORD: ${LAB_PASSWORD:?Run lab.sh init}
+    READONLY_PASSWORD: ${READONLY_PASSWORD:?Run lab.sh init}
+    SST_PASSWORD: ${SST_PASSWORD:?Run lab.sh init}
+    BUFFER_POOL_SIZE: ${BUFFER_POOL_SIZE:-256M}
+    GCACHE_SIZE: ${GCACHE_SIZE:-128M}
+    LAB_MODE: galera
+    TZ: Asia/Seoul
+  networks: [labnet]
+  healthcheck:
+    test: [CMD, python3, /opt/lab/health.py, --check]
+    interval: 5s
+    timeout: 5s
+    retries: 12
+    start_period: 120s
+
+services:
+  galera1:
+    <<: *node
+    container_name: ${LAB_PROJECT:-mariadb-ha}-galera1
+    hostname: galera1
+    environment:
+      <<: *node-env
+      NODE_NAME: galera1
+      SERVER_ID: "101"
+    ports: ["${BIND_ADDRESS:-127.0.0.1}:${NODE1_PORT:-13301}:3306"]
+    volumes: [galera1_data:/var/lib/mysql, galera1_control:/var/lib/labctl]
+  galera2:
+    <<: *node
+    container_name: ${LAB_PROJECT:-mariadb-ha}-galera2
+    hostname: galera2
+    environment:
+      <<: *node-env
+      NODE_NAME: galera2
+      SERVER_ID: "102"
+    ports: ["${BIND_ADDRESS:-127.0.0.1}:${NODE2_PORT:-13302}:3306"]
+    volumes: [galera2_data:/var/lib/mysql, galera2_control:/var/lib/labctl]
+  galera3:
+    <<: *node
+    container_name: ${LAB_PROJECT:-mariadb-ha}-galera3
+    hostname: galera3
+    environment:
+      <<: *node-env
+      NODE_NAME: galera3
+      SERVER_ID: "103"
+    ports: ["${BIND_ADDRESS:-127.0.0.1}:${NODE3_PORT:-13303}:3306"]
+    volumes: [galera3_data:/var/lib/mysql, galera3_control:/var/lib/labctl]
+  proxy:
+    image: localhost/${LAB_PROJECT:-mariadb-ha}-proxy:lab
+    build:
+      context: .
+      dockerfile: images/proxy/Dockerfile
+      args:
+        HAPROXY_IMAGE: ${HAPROXY_IMAGE:-docker.io/library/haproxy:3.0-alpine}
+    container_name: ${LAB_PROJECT:-mariadb-ha}-proxy
+    networks: [labnet]
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${WRITER_PORT:-13306}:3306"
+      - "${BIND_ADDRESS:-127.0.0.1}:${READER_PORT:-13307}:3307"
+      - "${BIND_ADDRESS:-127.0.0.1}:${HAPROXY_STATS_PORT:-18084}:8404"
+  dashboard:
+    image: localhost/${LAB_PROJECT:-mariadb-ha}-node:lab
+    container_name: ${LAB_PROJECT:-mariadb-ha}-dashboard
+    entrypoint: [python3, /opt/lab/dashboard.py]
+    user: "65534:65534"
+    networks: [labnet]
+    ports: ["${BIND_ADDRESS:-127.0.0.1}:${DASHBOARD_PORT:-18081}:8080"]
+    # No DB credentials and NO container runtime socket mounted.
+  tools:
+    image: localhost/${LAB_PROJECT:-mariadb-ha}-node:lab
+    profiles: [tools]
+    entrypoint: [python3, /opt/lab/workload.py]
+    environment:
+      LAB_PASSWORD: ${LAB_PASSWORD:?Run lab.sh init}
+      READONLY_PASSWORD: ${READONLY_PASSWORD:?Run lab.sh init}
+    networks: [labnet]
+  cloudbeaver:
+    image: ${CLOUDBEAVER_IMAGE:-docker.io/dbeaver/cloudbeaver:latest}
+    container_name: ${LAB_PROJECT:-mariadb-ha}-cloudbeaver
+    profiles: [ui]
+    networks: [labnet]
+    ports: ["${BIND_ADDRESS:-127.0.0.1}:${CLOUDBEAVER_PORT:-18080}:8978"]
+    volumes: [cloudbeaver_workspace:/opt/cloudbeaver/workspace]
+  restore:
+    <<: *node
+    container_name: ${LAB_PROJECT:-mariadb-ha}-restore
+    hostname: restore
+    profiles: [restore]
+    environment:
+      <<: *node-env
+      LAB_MODE: standalone
+      NODE_NAME: restore
+      SERVER_ID: "109"
+    # Restore node has a SEPARATE network and volumes. No Galera peer discovery.
+    networks: [restore_net]
+    ports: ["${BIND_ADDRESS:-127.0.0.1}:${RESTORE_PORT:-13309}:3306"]
+    volumes: [restore_data:/var/lib/mysql, restore_control:/var/lib/labctl]
+
+networks:
+  labnet:
+  restore_net:
+volumes:
+  galera1_data:
+  galera2_data:
+  galera3_data:
+  galera1_control:
+  galera2_control:
+  galera3_control:
+  cloudbeaver_workspace:
+  restore_data:
+  restore_control:

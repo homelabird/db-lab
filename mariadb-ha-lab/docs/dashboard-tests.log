@@ -1,0 +1,2 @@
+PASS: desktop/mobile layout, 3 node cards, degraded-state refresh, raw JSON, no JS errors.
+Scope: synthetic API fixture only. No actual MariaDB/container/replication was exercised.

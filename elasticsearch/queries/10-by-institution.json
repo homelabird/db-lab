@@ -1,0 +1,28 @@
+{
+  "size": 0,
+  "query": {
+    "term": {
+      "currency": "KRW"
+    }
+  },
+  "aggs": {
+    "by_institution": {
+      "terms": {
+        "field": "institution",
+        "size": 10
+      },
+      "aggs": {
+        "total_amount": {
+          "sum": {
+            "field": "amount"
+          }
+        },
+        "avg_risk": {
+          "avg": {
+            "field": "risk_score"
+          }
+        }
+      }
+    }
+  }
+}

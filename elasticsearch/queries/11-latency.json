@@ -1,0 +1,28 @@
+{
+  "size": 0,
+  "aggs": {
+    "by_service": {
+      "terms": {
+        "field": "service",
+        "size": 10
+      },
+      "aggs": {
+        "avg_latency": {
+          "avg": {
+            "field": "latency_ms"
+          }
+        },
+        "latency_percentiles": {
+          "percentiles": {
+            "field": "latency_ms",
+            "percents": [
+              50,
+              95,
+              99
+            ]
+          }
+        }
+      }
+    }
+  }
+}

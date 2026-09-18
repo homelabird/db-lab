@@ -1,0 +1,83 @@
+{
+  "dynamic": "strict",
+  "properties": {
+    "@timestamp": {
+      "type": "date"
+    },
+    "document_id": {
+      "type": "keyword"
+    },
+    "event_seq": {
+      "type": "long"
+    },
+    "user_id": {
+      "type": "keyword"
+    },
+    "trace_id": {
+      "type": "keyword"
+    },
+    "src_ip": {
+      "type": "ip"
+    },
+    "tags": {
+      "type": "keyword"
+    },
+    "scenario": {
+      "type": "keyword"
+    },
+    "message": {
+      "type": "text",
+      "analyzer": "standard",
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 256
+        }
+      }
+    },
+    "payload": {
+      "type": "keyword",
+      "index": false,
+      "doc_values": false
+    },
+    "error_code": {
+      "type": "keyword"
+    },
+    "transaction_id": {
+      "type": "keyword"
+    },
+    "device_id": {
+      "type": "keyword"
+    },
+    "institution": {
+      "type": "keyword"
+    },
+    "channel": {
+      "type": "keyword"
+    },
+    "currency": {
+      "type": "keyword"
+    },
+    "country": {
+      "type": "keyword"
+    },
+    "merchant_category": {
+      "type": "keyword"
+    },
+    "decision": {
+      "type": "keyword"
+    },
+    "rule_id": {
+      "type": "keyword"
+    },
+    "risk_score": {
+      "type": "integer"
+    },
+    "amount": {
+      "type": "double"
+    },
+    "is_fraud": {
+      "type": "boolean"
+    }
+  }
+}

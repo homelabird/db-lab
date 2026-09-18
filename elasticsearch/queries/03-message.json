@@ -1,0 +1,17 @@
+{
+  "size": 10,
+  "track_total_hits": true,
+  "_source": {
+    "excludes": [
+      "payload"
+    ]
+  },
+  "query": {
+    "match": {
+      "message": {
+        "query": "payment timeout",
+        "operator": "and"
+      }
+    }
+  }
+}

@@ -1,0 +1,154 @@
+[
+  {
+    "name": "01-latest",
+    "title": "거래 최근 10건과 응답 구조",
+    "method": "POST",
+    "path": "/lab-transactions-v1/_search",
+    "file": "01-latest.json"
+  },
+  {
+    "name": "02-user",
+    "title": "사용자 정확 일치: keyword + term",
+    "method": "POST",
+    "path": "/lab-transactions-v1/_search",
+    "file": "02-user.json"
+  },
+  {
+    "name": "03-message",
+    "title": "웹 로그 전문 검색: match",
+    "method": "POST",
+    "path": "/lab-web-logs-v1/_search",
+    "file": "03-message.json"
+  },
+  {
+    "name": "04-high-risk",
+    "title": "복합 조건: APP, 고위험, 해외",
+    "method": "POST",
+    "path": "/lab-transactions-v1/_search",
+    "file": "04-high-risk.json"
+  },
+  {
+    "name": "05-failed-login",
+    "title": "감사로그 로그인 실패",
+    "method": "POST",
+    "path": "/lab-audit-v1/_search",
+    "file": "05-failed-login.json"
+  },
+  {
+    "name": "06-time-range",
+    "title": "고정 날짜 범위로 세 인덱스 조회",
+    "method": "POST",
+    "path": "/lab-transactions-v1,lab-web-logs-v1,lab-audit-v1/_search",
+    "file": "06-time-range.json"
+  },
+  {
+    "name": "07-fraud",
+    "title": "사기 모의 거래와 KRW 필터",
+    "method": "POST",
+    "path": "/lab-transactions-v1/_search",
+    "file": "07-fraud.json"
+  },
+  {
+    "name": "08-http-5xx",
+    "title": "HTTP 5xx 오류 필터",
+    "method": "POST",
+    "path": "/lab-web-logs-v1/_search",
+    "file": "08-http-5xx.json"
+  },
+  {
+    "name": "09-count-risk",
+    "title": "문서를 가져오지 않고 건수 조회",
+    "method": "POST",
+    "path": "/lab-transactions-v1/_count",
+    "file": "09-count-risk.json"
+  },
+  {
+    "name": "10-by-institution",
+    "title": "기관별 KRW 거래 합계·평균 위험도",
+    "method": "POST",
+    "path": "/lab-transactions-v1/_search",
+    "file": "10-by-institution.json"
+  },
+  {
+    "name": "11-latency",
+    "title": "서비스별 평균·P95·P99 응답 시간",
+    "method": "POST",
+    "path": "/lab-web-logs-v1/_search",
+    "file": "11-latency.json"
+  },
+  {
+    "name": "12-daily",
+    "title": "한국 시간 기준 일별 요청 수",
+    "method": "POST",
+    "path": "/lab-web-logs-v1/_search",
+    "file": "12-daily.json"
+  },
+  {
+    "name": "13-audit-actions",
+    "title": "감사 행위별 성공·실패 집계",
+    "method": "POST",
+    "path": "/lab-audit-v1/_search",
+    "file": "13-audit-actions.json"
+  },
+  {
+    "name": "14-phrase",
+    "title": "문구 순서를 고려한 match_phrase",
+    "method": "POST",
+    "path": "/lab-web-logs-v1/_search",
+    "file": "14-phrase.json"
+  },
+  {
+    "name": "15-error-exists",
+    "title": "error_code가 색인된 로그",
+    "method": "POST",
+    "path": "/lab-web-logs-v1/_search",
+    "file": "15-error-exists.json"
+  },
+  {
+    "name": "16-search-shards",
+    "title": "검색에 참여할 수 있는 샤드 그룹",
+    "method": "GET",
+    "path": "/lab-transactions-v1/_search_shards"
+  },
+  {
+    "name": "17-analyze",
+    "title": "standard 분석기가 만드는 토큰",
+    "method": "POST",
+    "path": "/lab-web-logs-v1/_analyze",
+    "file": "17-analyze.json"
+  },
+  {
+    "name": "18-validate",
+    "title": "검색 DSL 유효성 검사",
+    "method": "POST",
+    "path": "/lab-transactions-v1/_validate/query?explain=true",
+    "file": "18-validate.json"
+  },
+  {
+    "name": "19-user-timeline",
+    "title": "여러 인덱스에 걸친 사용자 이벤트",
+    "method": "POST",
+    "path": "/lab-transactions-v1,lab-web-logs-v1,lab-audit-v1/_search",
+    "file": "19-user-timeline.json"
+  },
+  {
+    "name": "20-should",
+    "title": "OR 조건: minimum_should_match=1",
+    "method": "POST",
+    "path": "/lab-transactions-v1/_search",
+    "file": "20-should.json"
+  },
+  {
+    "name": "21-mapping",
+    "title": "실제 필드 타입과 시드 메타데이터",
+    "method": "GET",
+    "path": "/lab-transactions-v1/_mapping"
+  },
+  {
+    "name": "22-privileged",
+    "title": "권한 있는 계정의 변경 작업",
+    "method": "POST",
+    "path": "/lab-audit-v1/_search",
+    "file": "22-privileged.json"
+  }
+]

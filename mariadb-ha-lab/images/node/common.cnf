@@ -1,0 +1,27 @@
+[mariadb]
+# Learning baseline. Runtime-specific Galera settings are supplied by entrypoint.
+bind_address=0.0.0.0
+character_set_server=utf8mb4
+collation_server=utf8mb4_unicode_ci
+default_storage_engine=InnoDB
+binlog_format=ROW
+log_bin=/var/lib/mysql/mysql-bin
+log_slave_updates=ON
+binlog_expire_logs_seconds=259200
+sync_binlog=1
+innodb_flush_log_at_trx_commit=1
+innodb_autoinc_lock_mode=2
+innodb_buffer_pool_size=256M
+max_connections=120
+max_allowed_packet=64M
+performance_schema=ON
+slow_query_log=ON
+slow_query_log_file=/var/lib/mysql/slow.log
+long_query_time=0.2
+log_output=FILE
+innodb_print_all_deadlocks=ON
+log_bin_trust_function_creators=ON
+# OFF at base level: bootstrap initialization/recovery must not join a cluster.
+wsrep_on=OFF
+[client]
+default_character_set=utf8mb4

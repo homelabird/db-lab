@@ -1,0 +1,1200 @@
+--- a/.dockerignore
++++ b/.dockerignore
+@@ -1,7 +1,11 @@
+ .env
++.env-*
+ .state
++.git
+ backups
+ reports
+ standalone-original
+-.git
++docs
++tests
+ **/__pycache__
++**/*.pyc
+--- a/images/node/Dockerfile
++++ b/images/node/Dockerfile
+@@ -16,7 +16,11 @@
+ COPY scripts/ /opt/lab/
+ COPY datasets/ /opt/lab/datasets/
+ RUN chmod 755 /usr/local/bin/lab-entrypoint.sh /docker-entrypoint-initdb.d/10-lab-users.sh \
+- && find /opt/lab -type f -exec chmod 644 {} +
++ && find /opt/lab -type f -exec chmod 644 {} + \
++ && bash -n /usr/local/bin/lab-entrypoint.sh \
++ && bash -n /docker-entrypoint-initdb.d/10-lab-users.sh \
++ && python3 -m compileall -q /opt/lab \
++ && python3 -c 'import sys; sys.path.insert(0,"/opt/lab"); import health, state, seed, workload, scenario_worker'
+ EXPOSE 3306 4567 4568 4444 9200
+ ENTRYPOINT ["/usr/local/bin/lab-entrypoint.sh"]
+ CMD ["mariadbd"]
+--- a/images/node/entrypoint.sh
++++ b/images/node/entrypoint.sh
+@@ -2,9 +2,19 @@
+ set -Eeuo pipefail
+ [[ ${1:-mariadbd} == mariadbd ]] || exec "$@"
+ mode=${LAB_MODE:-galera}
++case "$mode" in
++  galera|standalone) ;;
++  *) echo '[lab] LAB_MODE must be galera or standalone.' >&2; exit 64 ;;
++esac
++# Lifecycle flags are managed by the lab, not arbitrary caller overrides.
++if (( $# > 1 )); then
++  echo '[lab] Additional mariadbd arguments are not supported; use documented .env settings.' >&2
++  exit 64
++fi
+ node=${NODE_NAME:-galera1}
+ [[ $node =~ ^[a-zA-Z0-9_-]+$ ]] || exit 64
+-[[ ${SST_PASSWORD:-} =~ ^[A-Za-z0-9_-]{12,128}$ ]] || exit 64
++[[ ${SST_PASSWORD:-} =~ ^[A-Za-z0-9_-]{12,128}$ ]] || { echo '[lab] Invalid SST_PASSWORD.' >&2; exit 64; }
++[[ ${MARIADB_ROOT_PASSWORD:-} =~ ^[A-Za-z0-9_-]{12,128}$ ]] || { echo '[lab] Invalid MARIADB_ROOT_PASSWORD.' >&2; exit 64; }
+ mkdir -p /var/lib/mysql /var/lib/labctl /run/mysqld
+ chown mysql:mysql /var/lib/mysql /run/mysqld
+ chmod 1777 /run/mysqld
+@@ -21,7 +31,13 @@
+   /usr/local/bin/docker-entrypoint.sh mariadbd --wsrep-on=OFF --skip-networking \
+     --pid-file=/run/mysqld/lab-init.pid &
+   init_pid=$!
+-  trap 'kill -TERM "$init_pid" 2>/dev/null || true; wait "$init_pid" || true' EXIT INT TERM
++  cleanup_init() {
++    kill -TERM "$init_pid" 2>/dev/null || true
++    wait "$init_pid" 2>/dev/null || true
++  }
++  trap cleanup_init EXIT
++  trap 'exit 130' INT
++  trap 'exit 143' TERM
+   initialized=no
+   for ((i=0; i<300; i++)); do
+     kill -0 "$init_pid" 2>/dev/null || { wait "$init_pid"; exit 1; }
+--- a/lab.sh
++++ b/lab.sh
+@@ -1,4 +1,5 @@
+ #!/usr/bin/env bash
+-set -euo pipefail
++set -Eeuo pipefail
+ cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
++command -v python3 >/dev/null 2>&1 || { echo 'ERROR: Python 3.8+ is required on the host.' >&2; exit 127; }
+ exec python3 scripts/lab.py "$@"
+--- a/scripts/health.py
++++ b/scripts/health.py
+@@ -14,8 +14,10 @@
+ def is_ready(status, mode='galera'):
+     if not status.get('sql_alive'):
+         return False
++    if mode == 'standalone':
++        return True
+     if mode != 'galera':
+-        return True
++        return False
+     return all((status.get('wsrep_cluster_status') == 'Primary',
+                 status.get('wsrep_local_state') == '4',
+                 status.get('wsrep_ready') == 'ON',
+--- a/scripts/lab.py
++++ b/scripts/lab.py
+@@ -16,6 +16,9 @@
+ import subprocess
+ import sys
+ import time
++import tempfile
++import urllib.request
++import urllib.error
+ import uuid
+ 
+ from seed import SIZES, expected_counts, generate
+@@ -36,12 +39,16 @@
+         key, sep, value = line.partition('=')
+         if not sep or not re.fullmatch(r'[A-Z][A-Z0-9_]*', key):
+             raise LabError('Invalid .env line: use simple KEY=value syntax, no shell expansion.')
++        if key in result:
++            raise LabError(f'Duplicate .env key: {key}')
+         result[key] = value.strip()
+     if not re.fullmatch(r'[a-z][a-z0-9-]{1,39}', result.get('LAB_PROJECT', '')):
+         raise LabError('LAB_PROJECT: 2..40 lowercase letters/digits/hyphens.')
+     for key in PASSWORDS:
+         if not re.fullmatch(r'[A-Za-z0-9_-]{12,128}', result.get(key, '')) or result[key].startswith('GENERATE_'):
+             raise LabError(f'{key}: run ./lab.sh init, or set 12..128 ASCII letters/digits/_/-.')
++    missing = [key for key in (*PORTS, 'BIND_ADDRESS') if key not in result]
++    if missing: raise LabError('Missing .env settings: ' + ', '.join(missing))
+     values = [int(result[key]) for key in PORTS]
+     if len(values) != len(set(values)) or any(not 1024 <= p <= 65535 for p in values):
+         raise LabError('Host ports must be unique and between 1024 and 65535.')
+@@ -60,15 +67,36 @@
+     return digest.hexdigest()
+ 
+ def initialize():
++    """Fill only new/placeholder secrets, never rotate credentials on an existing lab."""
+     path = ROOT / '.env'
+-    if path.exists():
+-        print('.env already exists; left unchanged.'); return
+-    text = (ROOT / '.env.example').read_text()
++    existed = path.exists()
++    text = path.read_text() if existed else (ROOT / '.env.example').read_text()
++    generated = []
+     for key in PASSWORDS:
+-        text = text.replace(key + '=GENERATE_WITH_LAB_INIT', key + '=' + secrets.token_hex(18))
+-    with path.open('x') as f: f.write(text)
+-    path.chmod(0o600)
+-    print('Created .env (mode 600), with random, separate lab passwords.')
++        matches = list(re.finditer(r'^' + key + r'=(.*)$', text, re.M))
++        if len(matches) > 1: raise LabError('Duplicate .env key: ' + key)
++        value = matches[0].group(1).strip() if matches else ''
++        if not value or value.startswith('GENERATE_'):
++            if (ROOT / '.state/identity.json').exists():
++                raise LabError('Existing lab identity found: restore the original .env passwords; init will not rotate them.')
++            line = key + '=' + secrets.token_hex(18)
++            text = text[:matches[0].start()] + line + text[matches[0].end():] if matches else text.rstrip() + '\n' + line + '\n'
++            generated.append(key)
++    # Validate before replacing anything. mkstemp is private from creation, not after writing.
++    fd, name = tempfile.mkstemp(prefix='.env-init-', dir=ROOT)
++    candidate = Path(name)
++    try:
++        with os.fdopen(fd, 'w') as stream: stream.write(text)
++        load_env(candidate)
++        if not existed or generated:
++            os.replace(candidate, path)
++        else:
++            path.chmod(0o600)
++    finally:
++        candidate.unlink(missing_ok=True)
++    print('Created/repaired .env (mode 600); existing valid passwords preserved.' if generated
++          else '.env is valid; existing values unchanged (mode 600).')
++
+ 
+ def select_safe_node(states):
+     """Never infer that node 1 is authoritative. Called only after ALL nodes are stopped."""
+@@ -104,6 +132,8 @@
+         if not (ROOT / '.env').exists(): raise LabError('First run ./lab.sh init.')
+         self.settings = load_env(ROOT / '.env')
+         self.env = dict(os.environ, **self.settings)
++        # Explicitly selected optional services must work across Compose providers.
++        self.env['COMPOSE_PROFILES'] = 'tools,restore,ui'
+         self.project = self.settings['LAB_PROJECT']
+         requested = self.settings.get('CONTAINER_ENGINE', 'auto')
+         if requested not in ('auto', 'podman', 'docker'): raise LabError('Invalid CONTAINER_ENGINE.')
+@@ -133,13 +163,33 @@
+         return result
+ 
+     def comp(self, *args, **kwargs):
+-        return self.run(self.compose_base + ['-p', self.project, '-f', str(ROOT / 'compose.yaml')] + list(args), **kwargs)
++        args = list(args)
++        if args and args[0] == 'run':
++            # podman-compose can inherit the service container_name for `run`.
++            # Never collide with the stopped DB whose volume we are inspecting.
++            if '--name' not in args and not any(a.startswith('--name=') for a in args):
++                args[1:1] = ['--name', self.project + '-task-' + secrets.token_hex(8)]
++            if '-T' not in args and '--no-TTY' not in args:
++                args.insert(1, '-T')
++        return self.run(self.compose_base + ['-p', self.project, '-f', str(ROOT / 'compose.yaml')] + args, **kwargs)
++
++    def start_service(self, service):
++        status = self.state(service)
++        if status == 'paused': raise LabError(service + ' is paused; resume it before starting.')
++        if status != 'running':
++            # Replace only this stopped container, never the named data/control volumes.
++            self.comp('up', '-d', '--no-deps', '--force-recreate', service)
++
+ 
+     def name(self, node): return self.project + '-' + node
+ 
+     def state(self, node):
+         p = self.run([self.engine, 'inspect', self.name(node)], capture=True, check=False, timeout=10)
+-        if p.returncode: return 'absent'
++        if p.returncode:
++            error = (p.stderr or p.stdout or '').lower()
++            if any(msg in error for msg in ('no such container', 'no such object', 'no container with name', 'does not exist')):
++                return 'absent'
++            raise LabError('Container inspect failed (not an absent node). Check engine/permissions: ' + self.name(node))
+         state = json.loads(p.stdout)[0]['State']
+         if state.get('Paused') or state.get('Status') == 'paused': return 'paused'
+         return 'running' if state.get('Running') else 'stopped'
+@@ -195,10 +245,56 @@
+             time.sleep(2)
+         raise LabError(f'Timeout waiting for {node}. Run ./lab.sh logs {node}. No forced recovery was attempted.')
+ 
++    def build_fingerprint(self, service):
++        inputs = ('images/node', 'scripts', 'datasets') if service == 'galera1' else ('images/proxy',)
++        digest = hashlib.sha256()
++        image_key = 'MARIADB_IMAGE' if service == 'galera1' else 'HAPROXY_IMAGE'
++        digest.update(self.settings.get(image_key, '').encode())
++        for directory in inputs:
++            for path in sorted((ROOT / directory).rglob('*')):
++                if path.is_file() and '__pycache__' not in path.parts and path.suffix != '.pyc':
++                    digest.update(str(path.relative_to(ROOT)).encode() + b'\0' + path.read_bytes() + b'\0')
++        return digest.hexdigest()
++
+     def build(self, force=False):
++        stamp = ROOT / '.state/builds.json'
++        stamp.parent.mkdir(exist_ok=True)
++        try: previous = json.loads(stamp.read_text())
++        except (OSError, ValueError): previous = {}
+         for service, image in (('galera1', self.node_image), ('proxy', self.proxy_image)):
++            fingerprint = self.build_fingerprint(service)
+             p = self.run([self.engine, 'image', 'inspect', image], check=False, capture=True)
+-            if force or p.returncode: self.comp('build', service)
++            image_id = json.loads(p.stdout)[0]['Id'] if p.returncode == 0 else None
++            stale = previous.get(service) != {'source':fingerprint, 'image_id':image_id}
++            if force or p.returncode or stale:
++                if not force and service == 'galera1' and any(self.state(n) in ('running', 'paused') for n in NODES):
++                    raise LabError('Node image/source changed or has no build record. Run ./lab.sh down, then ./lab.sh build and ./lab.sh up; volumes are retained.')
++                self.comp('build', service)
++                built = self.run([self.engine, 'image', 'inspect', image], capture=True)
++                previous[service] = {'source':fingerprint, 'image_id':json.loads(built.stdout)[0]['Id']}
++                temporary = stamp.with_suffix('.tmp')
++                temporary.write_text(json.dumps(previous, indent=2))
++                os.replace(temporary, stamp)
++
++    def wait_frontends(self):
++        # A running process is not proof of a working SQL route or HTTP listener.
++        self.comp('run', '--rm', '--no-deps', 'tools', 'check', timeout=360)
++        host = self.settings['BIND_ADDRESS']
++        if host == '0.0.0.0': host = '127.0.0.1'
++        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
++        for service, port, path in (('dashboard', 'DASHBOARD_PORT', '/api/cluster'),
++                                    ('proxy', 'HAPROXY_STATS_PORT', '/stats')):
++            deadline = time.monotonic() + min(60, int(self.settings['WAIT_SECONDS']))
++            while time.monotonic() < deadline:
++                if self.state(service) != 'running':
++                    raise LabError(service + ' is not running after Compose up; inspect its logs.')
++                try:
++                    with opener.open('http://' + host + ':' + self.settings[port] + path, timeout=3) as response:
++                        if response.status == 200: break
++                except (OSError, urllib.error.URLError): pass
++                time.sleep(1)
++            else: raise LabError(service + ' HTTP endpoint did not become ready.')
++
+ 
+     def doctor(self):
+         self.run([self.engine, 'info'], capture=True, timeout=30)
+@@ -231,17 +327,18 @@
+             selected, authorization = select_safe_node(states)
+             print('Bootstrap decision:', selected, authorization)
+             self.offline(selected, authorization)
+-            self.comp('up', '-d', '--no-deps', selected)
++            self.start_service(selected)
+             self.wait(selected, 1)
+         for node in NODES:
+             state = self.state(node)
+             if state == 'paused': raise LabError(f'{node} paused. Use ./lab.sh resume {node}.')
+             if state != 'running':
+-                self.comp('up', '-d', '--no-deps', node)
++                self.start_service(node)
+                 self.wait(node)
+         for node in NODES: self.wait(node, 3)
+         self.sql(self.healthy_node(), (ROOT / 'datasets/ops-schema.sql').read_text(), timeout=120)
+-        self.comp('up', '-d', '--no-deps', 'proxy', 'dashboard')
++        self.comp('up', '-d', '--no-deps', '--force-recreate', 'proxy', 'dashboard')
++        self.wait_frontends()
+         self.status()
+         print('Ready. Use ./lab.sh seed --size standard, then ./lab.sh verify.')
+ 
+@@ -270,6 +367,7 @@
+         selected = select_recovered_node(states)
+         report = {'recovered_at':dt.datetime.now(dt.timezone.utc).isoformat(),
+                   'positions':states, 'candidate':selected, 'bootstrap_executed':execute}
++        (ROOT / 'reports').mkdir(exist_ok=True)
+         (ROOT / 'reports/recovery.json').write_text(json.dumps(report, indent=2))
+         print(json.dumps(report, indent=2))
+         if not execute:
+@@ -278,7 +376,7 @@
+         self.require_all_stopped()
+         state = states[selected]
+         self.offline(selected, 'authorize-recovered', '--uuid', state['uuid'], '--seqno', str(state['seqno']))
+-        self.comp('up', '-d', '--no-deps', selected)
++        self.start_service(selected)
+         self.wait(selected, 1)
+         self.up()
+ 
+@@ -289,8 +387,9 @@
+         existing = self.sql(node, "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='commerce_lab';").stdout.strip()
+         if existing != '0' and not replace:
+             raise LabError('commerce_lab already exists. To replace ONLY this synthetic schema, use --replace --confirm-replace.')
++        # Mark incomplete BEFORE destructive DDL, so a failed replacement cannot look complete.
++        self.sql(node, f"REPLACE INTO lab_ops.dataset_manifest VALUES(1,'{size}','loading',NOW(6));")
+         self.sql(node, (ROOT/'datasets/commerce-schema.sql').read_text(), timeout=180)
+-        self.sql(node, f"REPLACE INTO lab_ops.dataset_manifest VALUES(1,'{size}','loading',NOW(6));")
+         process = subprocess.Popen(self.sql_command(node, extra=['--batch']), cwd=ROOT, env=self.env,
+                                    stdin=subprocess.PIPE, text=True)
+         try:
+@@ -350,13 +449,14 @@
+             if other != node and not self.health(other).get('ready'):
+                 raise LabError('A surviving node became unready; wipe cancelled.')
+         self.offline(node, 'wipe')
+-        self.comp('up', '-d', '--no-deps', node)
++        self.start_service(node)
+         self.wait(node, 3)
+         print('Node rebuilt. Inspect logs for SST and donor selection; no production volume was touched.')
+ 
+     def backup(self):
+         node = self.healthy_node()
+         stamp = dt.datetime.now().strftime('%Y%m%d-%H%M%S') + '-' + secrets.token_hex(3)
++        (ROOT / 'backups').mkdir(exist_ok=True)
+         path = ROOT / 'backups' / ('backup-' + stamp + '.sql.gz')
+         exists = self.sql(node, "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='commerce_lab';").stdout.strip()
+         schemas = ['lab_ops'] + (['commerce_lab'] if exists == '1' else [])
+@@ -392,7 +492,7 @@
+         self.build()
+         if self.state('restore') == 'running': self.run([self.engine, 'stop', '-t', '120', self.name('restore')])
+         self.offline('restore', 'wipe')
+-        self.comp('up', '-d', '--no-deps', 'restore')
++        self.start_service('restore')
+         self.wait('restore')
+         p = subprocess.Popen(self.sql_command('restore', extra=['--batch']), cwd=ROOT, env=self.env,
+                              stdin=subprocess.PIPE)
+@@ -457,7 +557,7 @@
+         if no_runtime(args): return
+     lab = Lab()
+     lock = None
+-    if args.command in ('up','down','recover','rebuild','seed','restore','reset','quorum-demo','stop','start','kill','pause','resume') or (args.command == 'scenario' and args.scenario != 'inspect'):
++    if args.command in ('build','up','down','recover','rebuild','seed','restore','reset','backup','load','conflict','quorum-demo','stop','start','kill','pause','resume') or (args.command == 'scenario' and args.scenario != 'inspect'):
+         lock = (ROOT/'.state/operation.lock').open('w')
+         try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+         except BlockingIOError: raise LabError('Another lifecycle/seed/restore operation is active in this lab directory.')
+@@ -484,7 +584,7 @@
+     elif command in ('stop','kill','pause','resume','start'):
+         if command == 'start':
+             lab.healthy_node()  # existing Primary component required, never bootstrap one random node
+-            lab.comp('up','-d','--no-deps',args.node); lab.wait(args.node)
++            lab.start_service(args.node); lab.wait(args.node)
+         else:
+             verb = {'resume':'unpause'}.get(command, command)
+             flags = ['-t','120'] if command == 'stop' else []
+@@ -513,7 +613,7 @@
+     elif command == 'reset':
+         if not args.confirm_delete_lab_data: raise LabError('Requires --confirm-delete-lab-data. Deletes this project volumes including restore/UI, not backups or standalone-original.')
+         lab.down()
+-        lab.comp('--profile','ui','--profile','restore','--profile','tools','down','-v','--remove-orphans')
++        lab.comp('down','-v','--remove-orphans')
+         print('This lab project volumes deleted. Original standalone project and backup files retained.')
+ 
+ if __name__ == '__main__':
+--- a/scripts/scenario_worker.py
++++ b/scripts/scenario_worker.py
+@@ -377,6 +377,7 @@
+         if action not in ('cleanup', 'inspect', 'fix-slow', 'fix-fragmentation', 'reconcile', 'table-stats'):
+             ensure_schema(conn, req['owner'])
+         else:
++            query(conn, 'SET SESSION wsrep_sync_wait=1')
+             ensure_schema(conn, req['owner'], create=False)
+         if action == 'prepare':
+             prepare_probe(conn)
+--- a/scripts/scenarios.py
++++ b/scripts/scenarios.py
+@@ -312,6 +312,7 @@
+             deadline = time.monotonic() + args.hold
+             first_success = None
+             quorum_observed = False
++            quorum_write_rejection_observed = False
+             while time.monotonic() < deadline:
+                 p = self.fault_probe(observer,run_id,len(probes),'during')
+                 probes.append(p)
+@@ -323,6 +324,7 @@
+                     d = statuses[observer]
+                     if d.get('wsrep_cluster_status') == 'non-Primary' and not d.get('ready'):
+                         quorum_observed = True
++                        if not p['acknowledged']: quorum_write_rejection_observed = True
+                 time.sleep(min(1,max(0,deadline-time.monotonic())))
+         finally:
+             # Even Ctrl+C, a failed probe, or a failed pause triggers attempted restoration.
+@@ -352,14 +354,21 @@
+                   'all_nodes_same_probe_ids':expected_consistent,
+                   'acknowledged_requests_present':all(ack <= s for s in observed_sets.values()),
+                   'recovered_health':self.preflight()}
+-        if kind == 'quorum': result['non_primary_observed'] = quorum_observed
++        if kind == 'quorum':
++            result['non_primary_observed'] = quorum_observed
++            result['write_rejection_observed'] = quorum_write_rejection_observed
++        result['surviving_backend_ack_observed'] = any(
++            p['phase'] == 'during' and p['acknowledged'] and p.get('backend') not in affected
++            for p in probes)
+         self.save_result(kind,result)
+         if not expected_consistent or not result['acknowledged_requests_present'] or not probes[-1]['acknowledged']:
+             raise ScenarioError('복구 후 데이터/쓰기 접속 검증 실패. 보고서를 확인하세요.')
+         if kind == 'quorum' and not quorum_observed:
+             raise ScenarioError('지정 시간 안에 non-Primary가 관찰되지 않았습니다. 재현 성공으로 처리하지 않습니다.')
+-        if kind != 'quorum' and not any(p['phase']=='during' and p['acknowledged'] for p in probes):
+-            raise ScenarioError('장애 유지 시간 내 성공한 신규 쓰기가 없습니다. hold/실제 상태를 확인하세요.')
++        if kind == 'quorum' and not quorum_write_rejection_observed:
++            raise ScenarioError('non-Primary 상태에서 writer 요청 거부가 관찰되지 않았습니다. 성공으로 처리하지 않습니다.')
++        if kind != 'quorum' and not result['surviving_backend_ack_observed']:
++            raise ScenarioError('장애 유지 시간 내 생존 노드가 응답한 신규 쓰기가 없습니다. hold/실제 상태를 확인하세요.')
+         self.log('[검증] 복구 후 3노드의 요청 ID 일치 및 응답받은 쓰기 보존 확인')
+ 
+     def execute(self, args):
+--- a/scripts/state.py
++++ b/scripts/state.py
+@@ -44,6 +44,10 @@
+     if a.operation == 'recover':
+         if not state['initialized'] or not state['init_complete']:
+             raise ValueError('Uninitialized or partially initialized data volume; refusing recovery.')
++        runtime = Path('/run/mysqld')
++        runtime.mkdir(parents=True, exist_ok=True)
++        shutil.chown(runtime, user='mysql', group='mysql')
++        runtime.chmod(0o755)
+         log = Path('/tmp/lab-wsrep-recover.log')
+         if log.exists(): log.unlink()
+         result = subprocess.run(['gosu', 'mysql', 'mariadbd', '--wsrep-recover',
+@@ -74,7 +78,10 @@
+                 and state['seqno'] >= 0):
+             raise ValueError('Not safe to bootstrap.')
+     if a.operation == 'authorize-recovered':
+-        if not a.uuid or a.seqno is None or a.seqno < 0:
++        if (not state['initialized'] or not state['init_complete'] or not a.uuid
++                or not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', a.uuid)
++                or a.uuid == '00000000-0000-0000-0000-000000000000'
++                or a.seqno is None or a.seqno < 0):
+             raise ValueError('A verified recovered position is required.')
+         path = DATA / 'grastate.dat'
+         if not path.exists(): raise ValueError('Missing grastate.dat.')
+--- a/scripts/workload.py
++++ b/scripts/workload.py
+@@ -29,11 +29,15 @@
+ def checked_connect(host='proxy', port=3306, readonly=False):
+     last = None
+     for _ in range(12):
++        conn = None
+         try:
+             conn = connect(host, port, readonly)
+             with conn.cursor() as cur: cur.execute('SELECT 1')
+             return conn
+         except pymysql.MySQLError as exc:
++            if conn is not None:
++                try: conn.close()
++                except pymysql.MySQLError: pass
+             last = exc; time.sleep(1)
+     raise last
+ 
+@@ -159,8 +163,10 @@
+ 
+ 
+ def conflict():
+-    a, b = checked_connect('galera1'), checked_connect('galera2')
++    a = b = None
+     try:
++        a = checked_connect('galera1')
++        b = checked_connect('galera2')
+         query(a,'SET SESSION wsrep_sync_wait=1')
+         before = query(a,'SELECT value FROM counter WHERE id=1')[0][0]
+         query(a,'SET SESSION wsrep_sync_wait=0')
+@@ -168,20 +174,29 @@
+         print('Both nodes update the SAME primary key inside open local transactions.')
+         query(a,'UPDATE counter SET value=value+1 WHERE id=1')
+         query(b,'UPDATE counter SET value=value+1 WHERE id=1')
+-        results = []
++        results, acknowledged, rejected = [], 0, []
+         for name, conn in (('galera1',a),('galera2',b)):
+-            try: conn.commit(); results.append(name + ': COMMIT acknowledged')
++            try:
++                conn.commit(); acknowledged += 1
++                results.append(name + ': COMMIT acknowledged')
+             except pymysql.MySQLError as exc:
++                rejected.append(exc.args[0] if exc.args else None)
+                 conn.rollback(); results.append(name + ': rejected ' + str(exc.args))
+         for result in results: print(result)
+         query(a,'SET SESSION wsrep_sync_wait=1')
+         after = query(a,'SELECT value FROM counter WHERE id=1')[0][0]
+         print('Counter delta:',after-before)
++        if acknowledged != 1 or rejected != [1213] or after - before != 1:
++            raise RuntimeError('Conflict NOT reproduced correctly: expected one COMMIT, one deadlock/certification rejection (1213), and counter delta 1.')
+         print('Inspect wsrep_local_cert_failures AND wsrep_local_bf_aborts: either can account for the rejection.')
+     finally:
+         for conn in (a,b):
+-            try: conn.rollback(); conn.close()
++            if conn is None: continue
++            try: conn.rollback()
+             except pymysql.MySQLError: pass
++            finally:
++                try: conn.close()
++                except pymysql.MySQLError: pass
+ 
+ 
+ def main():
+--- a/tests/acceptance.sh
++++ b/tests/acceptance.sh
+@@ -1,38 +1,5 @@
+ #!/usr/bin/env bash
+-# Real integration test. NOT run automatically or during host-only tests.
+-# Use only this disposable lab; existing synthetic commerce_lab is REPLACED.
++# Backward-compatible core acceptance entrypoint. Requires explicit disruptive-test approval.
+ set -Eeuo pipefail
+ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+-if [[ ${RUN_DISRUPTIVE_TESTS:-} != 1 ]]; then
+-  printf '%s\n' 'This starts/stops/rebuilds this lab and REPLACES commerce_lab + restore data.' \
+-    'Run only on a disposable copy: RUN_DISRUPTIVE_TESTS=1 bash tests/acceptance.sh'
+-  exit 64
+-fi
+-mkdir -p reports
+-exec > >(tee reports/acceptance.log) 2>&1
+-trap 'echo "FAILED at line $LINENO; cluster deliberately left for investigation: ./lab.sh status"' ERR
+-./lab.sh init
+-./lab.sh doctor
+-./lab.sh up
+-./lab.sh seed --size tiny --replace --confirm-replace
+-./lab.sh verify
+-./lab.sh routes
+-./lab.sh load --seconds 10 --workers 2
+-./lab.sh conflict
+-./lab.sh kill galera1
+-sleep 10
+-./lab.sh routes
+-./lab.sh start galera1
+-./lab.sh up
+-./lab.sh verify
+-./lab.sh rebuild galera3 --confirm-rebuild
+-./lab.sh verify
+-./lab.sh down
+-./lab.sh up
+-./lab.sh verify
+-./lab.sh backup
+-./lab.sh restore --confirm-restore
+-./lab.sh verify
+-printf '%s\n' 'PASS: core real-runtime acceptance sequence.' \
+-  'Quorum loss, all-node crash recovery, IST selection and flow control remain WORKBOOK exercises.' \
+-  'Cluster is still running. Use ./lab.sh down when finished.'
++exec bash tests/run-real.sh --suite core "$@"
+--- a/tests/check_host.py
++++ b/tests/check_host.py
+@@ -0,0 +1,65 @@
++#!/usr/bin/env python3
++"""Reproducible host-only checks; report missing optional tools rather than claiming they ran."""
++import argparse
++import datetime as dt
++import json
++import os
++from pathlib import Path
++import platform
++import shutil
++import subprocess
++import sys
++import unittest
++
++ROOT=Path(__file__).resolve().parent.parent
++
++def main():
++    parser=argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--require-shellcheck',action='store_true')
++    args=parser.parse_args()
++    os.chdir(ROOT)
++    out=ROOT/'reports/validation';out.mkdir(parents=True,exist_ok=True)
++    report={'scope':'HOST_ONLY: includes explicit database/runtime test doubles, not a real DB',
++            'real_database_started':False,'utc_time':dt.datetime.now(dt.timezone.utc).isoformat(),
++            'python':platform.python_version(),'platform':platform.platform(), 'checks':{}}
++    failures=[]
++    shell=sorted(ROOT.rglob('*.sh'))
++    for path in shell:
++        p=subprocess.run(['bash','-n',str(path)],text=True,capture_output=True)
++        if p.returncode:failures.append(str(path.relative_to(ROOT))+': '+p.stderr)
++    report['checks']['bash_syntax']={'count':len(shell),'status':'FAIL' if failures else 'PASS',
++                                    'files':[str(p.relative_to(ROOT)) for p in shell]}
++    pyfiles=sorted(p for p in ROOT.rglob('*.py') if '__pycache__' not in p.parts)
++    bad=[]
++    for path in pyfiles:
++        try:compile(path.read_bytes(),str(path),'exec')
++        except SyntaxError as exc:bad.append(str(exc))
++    failures.extend(bad)
++    report['checks']['python_syntax']={'count':len(pyfiles),'status':'FAIL' if bad else 'PASS'}
++    shellcheck=shutil.which('shellcheck')
++    if shellcheck:
++        p=subprocess.run([shellcheck,'-S','warning',*[str(p) for p in shell]],capture_output=True,text=True)
++        (out/'shellcheck.log').write_text(p.stdout+p.stderr)
++        report['checks']['shellcheck']={'status':'PASS' if p.returncode==0 else 'FAIL'}
++        if p.returncode:failures.append('ShellCheck reported errors/warnings; see shellcheck.log')
++    else:
++        report['checks']['shellcheck']={'status':'NOT_RUN','reason':'shellcheck executable is not installed'}
++        if args.require_shellcheck:failures.append('Required ShellCheck is unavailable')
++    # Discovery includes actual Bash/subprocess execution, with explicitly stubbed DB commands.
++    sys.path.insert(0,str(ROOT/'tests'))
++    with (out/'host-tests.log').open('w') as log:
++        suite=unittest.defaultTestLoader.discover(str(ROOT/'tests'))
++        result=unittest.TextTestRunner(stream=log,verbosity=2).run(suite)
++    report['checks']['tests']={'status':'PASS' if result.wasSuccessful() else 'FAIL',
++        'run':result.testsRun,'passed':result.testsRun-len(result.failures)-len(result.errors)-len(result.skipped),
++        'failures':len(result.failures),'errors':len(result.errors),'skipped':len(result.skipped),
++        'skip_details':[{'test':str(t),'reason':reason} for t,reason in result.skipped]}
++    if not result.wasSuccessful():failures.append('Regression/unit tests failed; see host-tests.log')
++    report['status']='FAIL' if failures else 'PASS'
++    report['errors']=failures
++    (out/'host-validation.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
++    print(json.dumps(report,indent=2,ensure_ascii=False))
++    print('These are host-only checks. Actual DB validation: RUN_DISRUPTIVE_TESTS=1 bash tests/run-real.sh')
++    return 1 if failures else 0
++
++if __name__=='__main__':sys.exit(main())
+--- a/tests/real_acceptance.py
++++ b/tests/real_acceptance.py
+@@ -0,0 +1,153 @@
++#!/usr/bin/env python3
++"""Real container + SQL acceptance. WARNING: replaces synthetic data; interrupts/rebuilds lab nodes.
++No mocks, no simulated SQL, no success on missing prerequisites. Exit 2 means BLOCKED.
++This is run synchronously. It leaves containers/volumes in place for inspection.
++"""
++import argparse
++import datetime as dt
++import json
++import os
++from pathlib import Path
++import shutil
++import subprocess
++import sys
++import time
++
++ROOT=Path(__file__).resolve().parent.parent
++
++
++def main():
++    parser=argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--suite',choices=['core','all'],default='all')
++    parser.add_argument('--quorum',action='store_true')
++    parser.add_argument('--crash-recovery',action='store_true')
++    parser.add_argument('--step-timeout',type=int,default=1800)
++    args=parser.parse_args()
++    if args.step_timeout<30:parser.error('--step-timeout must be >= 30 seconds')
++    stamp=dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S')+'-'+str(os.getpid())
++    directory=ROOT/'reports/real-acceptance'/stamp;directory.mkdir(parents=True,exist_ok=False)
++    report={'scope':'REAL_CONTAINER_AND_SQL_NO_MOCKS','started_at':dt.datetime.now(dt.timezone.utc).isoformat(),
++            'status':'RUNNING','suite':args.suite,'steps':[], 'real_database_tests_executed':False,
++            'optional':{'quorum':'REQUESTED' if args.quorum else 'NOT_RUN',
++                        'full_cluster_crash_recovery':'REQUESTED' if args.crash_recovery else 'NOT_RUN'}}
++    def save(status=None):
++        if status:report['status']=status
++        text=json.dumps(report,indent=2,ensure_ascii=False)+'\n'
++        (directory/'result.json').write_text(text)
++        (directory.parent/'latest.json').write_text(text)
++    def blocked(reason):
++        report['reason']=reason;save('BLOCKED')
++        print('BLOCKED: '+reason,file=sys.stderr)
++        print('Report: '+str(directory/'result.json'),file=sys.stderr)
++        return 2
++    if os.environ.get('RUN_DISRUPTIVE_TESTS')!='1':
++        return blocked('Explicit approval required: RUN_DISRUPTIVE_TESTS=1. Only use a disposable lab: commerce_lab and restore data are replaced.')
++    report['runtime_paths']={name:shutil.which(name) for name in ('podman','podman-compose','docker','mariadbd','shellcheck')}
++    if not (shutil.which('podman') or shutil.which('docker')):
++        return blocked('Neither Podman nor Docker is installed. No containers or SQL tests were started; this is NOT a passing test.')
++    secrets=[]
++    def redact(text):
++        for value in secrets:text=text.replace(value,'<redacted>')
++        return text
++    def step(label,command):
++        number=len(report['steps'])+1
++        print('[%02d] %s'%(number,label),flush=True)
++        record={'name':label,'command':command,'status':'RUNNING'}
++        report['steps'].append(record);save()
++        logpath=directory/('%02d.log'%number)
++        begin=time.monotonic()
++        try:
++            # File-backed capture avoids unbounded RAM during a build/seed.
++            with logpath.open('w+') as output:
++                process=subprocess.Popen(command,cwd=ROOT,env=os.environ,stdout=output,stderr=subprocess.STDOUT,
++                                         start_new_session=True,text=True)
++                try:code=process.wait(timeout=args.step_timeout)
++                except BaseException:
++                    # Terminate only this test command's process group, never a global runtime.
++                    import signal
++                    try:os.killpg(process.pid,signal.SIGTERM)
++                    except ProcessLookupError:pass
++                    try:process.wait(timeout=10)
++                    except subprocess.TimeoutExpired:
++                        try:os.killpg(process.pid,signal.SIGKILL)
++                        except ProcessLookupError:pass
++                        process.wait()
++                    raise
++                output.seek(0);text=redact(output.read())
++            logpath.write_text(text);logpath.chmod(0o600)
++            record.update(exit_code=code,duration_seconds=round(time.monotonic()-begin,3),
++                          log=logpath.name,status='PASS' if code==0 else 'FAIL')
++            print(text[-6000:],end='' if text.endswith('\n') else '\n',flush=True)
++            save()
++            if code:raise RuntimeError(label+' failed with exit code '+str(code))
++        except BaseException as exc:
++            record.update(status='FAIL',error=redact(str(exc)),duration_seconds=round(time.monotonic()-begin,3))
++            save();raise
++    def cli(*command):return ['bash','lab.sh',*command]
++    try:
++        step('Initialize/validate configuration',cli('init'))
++        sys.path.insert(0,str(ROOT/'scripts'))
++        import lab
++        config=lab.load_env(ROOT/'.env');secrets[:]=[config[key] for key in lab.PASSWORDS]
++        instance=lab.Lab()
++        report['engine']=instance.engine;report['compose_provider']=instance.compose_base
++        # Runtime/Compose access must be real, not merely a binary path check.
++        step('Runtime information',[instance.engine,'info'])
++        step('Compose provider version',instance.compose_base+['version'])
++        step('Configuration/provider/port diagnosis',cli('doctor'))
++        step('Stop existing lab containers safely; keep volumes',cli('down'))
++        step('Build actual images',cli('build'))
++        report['database_start_attempted']=True;save()
++        step('Three-node bootstrap and proxy/HTTP readiness',cli('up'))
++        report['real_database_tests_executed']=True
++        step('Synthetic dataset tiny replacement',cli('seed','--size','tiny','--replace','--confirm-replace'))
++        step('Membership, SQL replication, data counts, readonly permission',cli('verify'))
++        step('Writer and reader routes',cli('routes'))
++        step('Concurrent idempotent transactions',cli('load','--seconds','10','--workers','2'))
++        step('Cross-node certification conflict with assertions',cli('conflict'))
++        step('Writer node crash and acknowledged-write preservation',cli('scenario','node-failure','--node','galera1','--hold','25'))
++        if args.suite=='all':
++            for label,command in (
++                ('Create and measure slow query',('slow','--rows','5000','--leave-broken')),
++                ('Fix and remeasure slow query',('fix','slow')),
++                ('Create and measure fragmentation',('fragmentation','--rows','5000','--payload-bytes','1024','--leave-broken')),
++                ('Rebuild fragmented table and verify rows',('fix','fragmentation')),
++                ('Real InnoDB lock wait',('lock','--hold','6')),
++                ('Paused writer node recovery',('node-hang','--node','galera1','--hold','30'))):
++                step(label,cli('scenario',*command))
++        step('SST rebuild of one lab node',cli('rebuild','galera3','--confirm-rebuild'))
++        step('Verify rebuilt node',cli('verify'))
++        step('Sequential shutdown retaining volumes',cli('down'))
++        step('Restart with existing named containers/volumes',cli('up'))
++        step('Verify restarted cluster',cli('verify'))
++        step('Logical backup with checksum',cli('backup'))
++        step('Restore into isolated standalone node',cli('restore','--confirm-restore'))
++        step('Verify source after isolated restore',cli('verify'))
++        if args.quorum:
++            step('Quorum loss and writer rejection',cli('scenario','quorum','--hold','45','--confirm-quorum'))
++            step('Verify quorum recovery',cli('verify'))
++            report['optional']['quorum']='PASS'
++        if args.crash_recovery:
++            step('Kill all three lab DB processes',[instance.engine,'kill','--signal','KILL',*[instance.name(n) for n in lab.NODES]])
++            step('Recover all offline positions without bootstrapping',cli('recover'))
++            step('Bootstrap highest verified recovered position',cli('recover','--execute','--confirm-recovery'))
++            step('Verify full cluster crash recovery',cli('verify'))
++            report['optional']['full_cluster_crash_recovery']='PASS'
++        report['finished_at']=dt.datetime.now(dt.timezone.utc).isoformat();save('PASS')
++        print('PASS: all REQUESTED real-runtime steps succeeded. Omitted optional tests remain NOT_RUN.')
++        print('Report: '+str(directory/'result.json'))
++        print('Lab left running. Stop without deleting data: bash lab.sh down')
++        return 0
++    except BaseException as exc:
++        report['error']=redact(str(exc));save('FAIL')
++        # Best-effort scoped diagnostics. Never reset/prune/wipe on test failure.
++        for name,command in [('status',cli('status')),*[(n,cli('logs',n,'--tail','120')) for n in ('galera1','galera2','galera3')]]:
++            try:
++                result=subprocess.run(command,cwd=ROOT,capture_output=True,text=True,timeout=35)
++                path=directory/('failure-'+name+'.log');path.write_text(redact(result.stdout+result.stderr));path.chmod(0o600)
++            except (OSError,subprocess.TimeoutExpired):pass
++        print('FAIL: '+report['error'],file=sys.stderr)
++        print('No volumes deleted by cleanup. Evidence: '+str(directory),file=sys.stderr)
++        return 130 if isinstance(exc,KeyboardInterrupt) else 1
++
++if __name__=='__main__':sys.exit(main())
+--- a/tests/run-real.sh
++++ b/tests/run-real.sh
+@@ -0,0 +1,6 @@
++#!/usr/bin/env bash
++# Real database integration: never substitute mocked DB/container responses here.
++set -Eeuo pipefail
++cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
++command -v python3 >/dev/null 2>&1 || { echo 'ERROR: Python 3.8+ required.' >&2; exit 127; }
++exec python3 tests/real_acceptance.py "$@"
+--- a/tests/scenario_acceptance.sh
++++ b/tests/scenario_acceptance.sh
+@@ -8,17 +8,17 @@
+ fi
+ mkdir -p reports
+ exec > >(tee "reports/scenario-acceptance-$(date +%Y%m%d-%H%M%S).log") 2>&1
+-./lab.sh status
+-./lab.sh scenario slow --rows 5000 --leave-broken
+-./lab.sh scenario fix slow
+-./lab.sh scenario fragmentation --rows 5000 --payload-bytes 1024 --leave-broken
+-./lab.sh scenario fix fragmentation
+-./lab.sh scenario lock --hold 6
+-./lab.sh scenario node-failure --node galera1 --hold 25
+-./lab.sh scenario node-hang --node galera1 --hold 30
++bash lab.sh status
++bash lab.sh scenario slow --rows 5000 --leave-broken
++bash lab.sh scenario fix slow
++bash lab.sh scenario fragmentation --rows 5000 --payload-bytes 1024 --leave-broken
++bash lab.sh scenario fix fragmentation
++bash lab.sh scenario lock --hold 6
++bash lab.sh scenario node-failure --node galera1 --hold 25
++bash lab.sh scenario node-hang --node galera1 --hold 30
+ if [[ ${RUN_QUORUM_TEST:-0} == 1 ]]; then
+-  ./lab.sh scenario quorum --hold 45 --confirm-quorum
++  bash lab.sh scenario quorum --hold 45 --confirm-quorum
+ fi
+-./lab.sh scenario report
+-./lab.sh status
++bash lab.sh scenario report
++bash lab.sh verify
+ echo 'PASS: requested scenario commands returned success. See reports/scenarios/ for measured evidence.'
+--- a/tests/test_regressions.py
++++ b/tests/test_regressions.py
+@@ -0,0 +1,336 @@
++"""Regression tests. Bash/subprocess tests execute real processes with EXPLICIT DB/runtime doubles.
++These tests do NOT start MariaDB, Docker, Podman, or a Galera cluster.
++LAB_TEST_PROJECT_ROOT allows the exact same regression to run against an older project copy.
++"""
++import contextlib
++import importlib.util
++import io
++import json
++import os
++from pathlib import Path
++import shutil
++import signal
++import subprocess
++import sys
++import tempfile
++import time
++import types
++import unittest
++from unittest.mock import MagicMock, patch
++
++ROOT = Path(os.environ.get('LAB_TEST_PROJECT_ROOT', Path(__file__).resolve().parent.parent))
++sys.path.insert(0, str(ROOT / 'scripts'))
++import lab
++import health
++stub = types.ModuleType('pymysql')
++stub.MySQLError = type('ExplicitFakeMySQLError', (Exception,), {})
++with patch.dict(sys.modules, {'pymysql':stub}):
++    spec = importlib.util.spec_from_file_location('workload_regression', ROOT/'scripts/workload.py')
++    workload = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(workload)
++
++
++def done(code=0, stdout='', stderr=''):
++    return subprocess.CompletedProcess([], code, stdout, stderr)
++
++
++class RegressionEnvironmentTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory(prefix='mariadb env regression ')
++        self.root = Path(self.tmp.name)
++        self.example = (ROOT/'.env.example').read_text()
++        (self.root/'.env.example').write_text(self.example)
++        self.valid = self.example.replace('GENERATE_WITH_LAB_INIT', 'testPassword123456')
++        self.root_patch = patch.object(lab,'ROOT',self.root); self.root_patch.start()
++        self.out = contextlib.redirect_stdout(io.StringIO()); self.out.__enter__()
++    def tearDown(self):
++        self.out.__exit__(None,None,None);self.root_patch.stop();self.tmp.cleanup()
++    def test_copied_example_is_repaired(self):
++        (self.root/'.env').write_text(self.example)
++        lab.initialize()
++        self.assertNotIn('GENERATE_WITH_LAB_INIT',(self.root/'.env').read_text())
++        lab.load_env(self.root/'.env')
++    def test_init_does_not_rotate_valid_passwords(self):
++        (self.root/'.env').write_text(self.valid)
++        lab.initialize()
++        self.assertEqual((self.root/'.env').read_text(),self.valid)
++    def test_init_fills_missing_password_only(self):
++        text=self.valid.replace('SST_PASSWORD=testPassword123456\n','')
++        (self.root/'.env').write_text(text)
++        lab.initialize(); cfg=lab.load_env(self.root/'.env')
++        self.assertEqual(cfg['ROOT_PASSWORD'],'testPassword123456')
++        self.assertNotEqual(cfg['SST_PASSWORD'],'testPassword123456')
++    def test_init_refuses_rotating_existing_identity(self):
++        (self.root/'.env').write_text(self.example)
++        (self.root/'.state').mkdir();(self.root/'.state/identity.json').write_text('{}')
++        with self.assertRaises(lab.LabError):lab.initialize()
++    def test_duplicate_configuration_fails(self):
++        (self.root/'.env').write_text(self.valid+'\nNODE1_PORT=15000\n')
++        with self.assertRaises(lab.LabError):lab.load_env(self.root/'.env')
++    def test_missing_port_is_friendly_error(self):
++        (self.root/'.env').write_text(self.valid.replace('NODE1_PORT=13301\n',''))
++        with self.assertRaises(lab.LabError):lab.load_env(self.root/'.env')
++    def test_init_validates_before_replacing_file(self):
++        text=self.example.replace('WRITER_PORT=13306','WRITER_PORT=13301')
++        (self.root/'.env').write_text(text)
++        with self.assertRaises(lab.LabError):lab.initialize()
++        self.assertEqual((self.root/'.env').read_text(),text)
++    def test_existing_env_is_private(self):
++        (self.root/'.env').write_text(self.valid);(self.root/'.env').chmod(0o644)
++        lab.initialize();self.assertEqual((self.root/'.env').stat().st_mode & 0o777,0o600)
++
++
++class RegressionControllerTests(unittest.TestCase):
++    def setUp(self):
++        self.obj=object.__new__(lab.Lab)
++        self.obj.project='mariadb-ha';self.obj.engine='podman';self.obj.compose_base=['podman-compose']
++    def test_compose_run_unique_name(self):
++        with patch.object(self.obj,'run',return_value=done()) as run:
++            self.obj.comp('run','--rm','--no-deps','galera1','/opt/lab/state.py','inspect')
++            a=run.call_args.args[0]
++            self.obj.comp('run','--rm','--no-deps','galera1','/opt/lab/state.py','inspect')
++            b=run.call_args.args[0]
++        self.assertIn('--name',a)
++        self.assertNotEqual(a[a.index('--name')+1],b[b.index('--name')+1])
++    def test_compose_run_no_tty(self):
++        with patch.object(self.obj,'run',return_value=done()) as run:
++            self.obj.comp('run','--rm','tools','check')
++        self.assertIn('-T',run.call_args.args[0])
++    def test_compose_respects_explicit_oneoff_name(self):
++        with patch.object(self.obj,'run',return_value=done()) as run:
++            self.obj.comp('run','--rm','--name','specified-test-name','tools','check')
++        args=run.call_args.args[0]
++        self.assertEqual(args.count('--name'),1)
++        self.assertEqual(args[args.index('--name')+1],'specified-test-name')
++    def test_no_oneoff_flags_on_up(self):
++        with patch.object(self.obj,'run',return_value=done()) as run:self.obj.comp('up','-d','galera1')
++        self.assertNotIn('--name',run.call_args.args[0]);self.assertNotIn('-T',run.call_args.args[0])
++    def test_engine_failure_is_not_absent(self):
++        with patch.object(self.obj,'run',return_value=done(125,stderr='Cannot connect to Podman socket: permission denied')):
++            with self.assertRaises(lab.LabError):self.obj.state('galera1')
++    def test_real_missing_object_is_absent(self):
++        with patch.object(self.obj,'run',return_value=done(1,stderr='Error: no such object: mariadb-ha-galera1')):
++            self.assertEqual(self.obj.state('galera1'),'absent')
++    def test_stopped_container_recreated_without_deleting_volume(self):
++        with patch.object(self.obj,'state',return_value='stopped'),patch.object(self.obj,'comp') as comp:
++            self.obj.start_service('galera1')
++        args=comp.call_args.args
++        self.assertIn('--force-recreate',args);self.assertNotIn('-v',args)
++    def test_running_node_never_recreated(self):
++        with patch.object(self.obj,'state',return_value='running'),patch.object(self.obj,'comp') as comp:
++            self.obj.start_service('galera1')
++        comp.assert_not_called()
++    def test_paused_node_start_refused(self):
++        with patch.object(self.obj,'state',return_value='paused'),patch.object(self.obj,'comp') as comp:
++            with self.assertRaises(lab.LabError):self.obj.start_service('galera1')
++        comp.assert_not_called()
++    def test_seed_marker_precedes_schema_replace(self):
++        commands=[]
++        def sql(node,query,**kwargs):
++            commands.append(query)
++            if 'information_schema.SCHEMATA' in query:return done(stdout='1')
++            if 'DROP DATABASE' in query:raise lab.LabError('injected DDL failure')
++            return done()
++        with patch.object(self.obj,'healthy_node',return_value='galera1'),patch.object(self.obj,'health',return_value={'ready':True}),patch.object(self.obj,'sql',side_effect=sql):
++            with self.assertRaises(lab.LabError):self.obj.seed('tiny',replace=True)
++        marker=next(i for i,q in enumerate(commands) if "'loading'" in q)
++        ddl=next(i for i,q in enumerate(commands) if 'DROP DATABASE' in q)
++        self.assertLess(marker,ddl)
++    def test_unknown_mode_is_not_ready(self):
++        self.assertFalse(health.is_ready({'sql_alive':True},'galerra'))
++    def test_standalone_ready_allowed(self):
++        self.assertTrue(health.is_ready({'sql_alive':True},'standalone'))
++    def test_offline_runs_real_subprocess_with_explicit_runtime_double(self):
++        # Only the provider is simulated. Lab.offline -> Lab.comp -> subprocess.run is real.
++        with tempfile.TemporaryDirectory(prefix='compose process test ') as directory:
++            fake=Path(directory)/'explicit_fake_compose.py'
++            fake.write_text('''import json,sys
++args=sys.argv[1:]
++# Model the upstream container_name collision and TTY corruption conditions.
++if '--name' not in args:
++ print('EXPLICIT TEST DOUBLE: container name mariadb-ha-galera1 already in use',file=sys.stderr);sys.exit(125)
++if '-T' not in args:
++ print('EXPLICIT TEST DOUBLE: TTY must be disabled',file=sys.stderr);sys.exit(126)
++print('provider setup log before JSON')
++print(json.dumps(dict(initialized=True,init_complete=True,uuid='test',seqno=5,safe_to_bootstrap=1)))
++''')
++            self.obj.compose_base=[sys.executable,str(fake)];self.obj.env=dict(os.environ)
++            self.obj.settings={key:'testPassword123456' for key in lab.PASSWORDS}
++            with patch.object(self.obj,'state',return_value='stopped'):
++                result=self.obj.offline('galera1')
++            self.assertEqual(result['seqno'],5)
++
++
++class RegressionBuildTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
++        for dirname in ('images/node','images/proxy','scripts','datasets','.state'):(self.root/dirname).mkdir(parents=True,exist_ok=True)
++        (self.root/'scripts/sample.py').write_text('first revision')
++        self.root_patch=patch.object(lab,'ROOT',self.root);self.root_patch.start()
++        self.obj=object.__new__(lab.Lab);self.obj.settings={};self.obj.engine='podman'
++        self.obj.node_image='node';self.obj.proxy_image='proxy'
++    def tearDown(self):self.root_patch.stop();self.tmp.cleanup()
++    def test_changed_source_rebuilds_existing_tag(self):
++        with patch.object(self.obj,'run',return_value=done(stdout='[{"Id":"sha256:test"}]')),patch.object(self.obj,'state',return_value='stopped'),patch.object(self.obj,'comp') as comp:
++            self.obj.build();comp.reset_mock()
++            self.obj.build();comp.assert_not_called()
++            (self.root/'scripts/sample.py').write_text('fixed revision')
++            self.obj.build();comp.assert_called_once_with('build','galera1')
++    def test_stale_running_nodes_require_safe_shutdown(self):
++        with patch.object(self.obj,'run',return_value=done(stdout='[{"Id":"sha256:test"}]')),patch.object(self.obj,'state',return_value='running'),patch.object(self.obj,'comp') as comp:
++            with self.assertRaises(lab.LabError):self.obj.build()
++        comp.assert_not_called()
++    def test_explicit_build_allowed_without_automatic_restart(self):
++        with patch.object(self.obj,'run',return_value=done(stdout='[{"Id":"sha256:test"}]')),patch.object(self.obj,'state',return_value='running'),patch.object(self.obj,'comp') as comp:
++            self.obj.build(force=True)
++        self.assertEqual([c.args[0] for c in comp.call_args_list],['build','build'])
++    def test_pycache_does_not_force_rebuild(self):
++        before=self.obj.build_fingerprint('galera1')
++        (self.root/'scripts/__pycache__').mkdir();(self.root/'scripts/__pycache__/test.pyc').write_bytes(b'abc')
++        self.assertEqual(before,self.obj.build_fingerprint('galera1'))
++
++
++class RegressionWorkloadTests(unittest.TestCase):
++    def test_failed_sql_probe_closes_connection(self):
++        a,b=MagicMock(),MagicMock()
++        a.cursor.return_value.__enter__.return_value.execute.side_effect=stub.MySQLError(2013,'fake failure')
++        with patch.object(workload,'connect',side_effect=[a,b]),patch.object(workload.time,'sleep'):
++            self.assertIs(workload.checked_connect(),b)
++        a.close.assert_called_once()
++    def run_conflict(self, reject, delta):
++        a,b=MagicMock(),MagicMock()
++        if reject:b.commit.side_effect=stub.MySQLError(reject,'explicit test error')
++        def query(conn,sql,*args):
++            if sql.startswith('SELECT value'):
++                query.count+=1;return [(10 if query.count==1 else 10+delta,)]
++            return []
++        query.count=0
++        with patch.object(workload,'checked_connect',side_effect=[a,b]),patch.object(workload,'query',side_effect=query),contextlib.redirect_stdout(io.StringIO()):
++            workload.conflict()
++        a.close.assert_called_once();b.close.assert_called_once()
++    def test_conflict_rejects_both_committed(self):
++        with self.assertRaises(RuntimeError):self.run_conflict(None,2)
++    def test_conflict_rejects_wrong_sql_error(self):
++        with self.assertRaises(RuntimeError):self.run_conflict(1045,1)
++    def test_conflict_rejects_wrong_counter_delta(self):
++        with self.assertRaises(RuntimeError):self.run_conflict(1213,0)
++    def test_conflict_accepts_exact_evidence(self):self.run_conflict(1213,1)
++    def test_second_connection_failure_closes_first(self):
++        a=MagicMock()
++        with patch.object(workload,'checked_connect',side_effect=[a,stub.MySQLError(2003,'offline')]),self.assertRaises(stub.MySQLError):workload.conflict()
++        a.close.assert_called_once()
++
++
++class RegressionBashProcessTests(unittest.TestCase):
++    """Execute the Bash entrypoint. Absolute paths are sandbox-mapped; database commands are stubs."""
++    def setUp(self):
++        self.tmp=tempfile.TemporaryDirectory(prefix='bash entrypoint regression ')
++        # Bash contains unquoted fixed production paths, so use an internal no-space symlink.
++        self.link=Path('/tmp')/('maria-shell-'+os.urandom(8).hex());self.link.symlink_to(self.tmp.name)
++        self.root=self.link
++        for part in ('bin','var/lib/mysql','var/lib/labctl','run/mysqld','opt/lab','usr/local/bin'):(self.root/part).mkdir(parents=True,exist_ok=True)
++        def executable(path,text):
++            path.write_text(text);path.chmod(0o755)
++        executable(self.root/'bin/chown','#!/bin/sh\nexit 0\n')
++        executable(self.root/'bin/mariadb','#!/bin/sh\n[ "${LAB_TEST_INIT_MODE:-success}" = success ]\n')
++        executable(self.root/'bin/mariadb-admin','#!/usr/bin/env bash\nkill -TERM "$(cat "$LAB_TEST_ROOT/run/mysqld/lab-init.pid")"\n')
++        executable(self.root/'usr/local/bin/docker-entrypoint.sh','''#!/usr/bin/env bash
++set -eu
++if [[ ${LAB_TEST_INIT_MODE:-success} == fail ]];then exit 23;fi
++mkdir -p "$LAB_TEST_ROOT/var/lib/mysql/mysql"
++trap 'exit 0' TERM INT
++echo $$ > "$LAB_TEST_ROOT/run/mysqld/lab-init.pid"
++while :;do sleep 0.05;done
++''')
++        executable(self.root/'usr/local/bin/gosu','''#!/usr/bin/env python3
++import json,os,sys
++open(os.environ['LAB_TEST_ROOT']+'/gosu-args.json','w').write(json.dumps(sys.argv[1:]))
++''')
++        (self.root/'opt/lab/health.py').write_text('# explicit health-server test double\n')
++        text=(ROOT/'images/node/entrypoint.sh').read_text()
++        for absolute in ('/var/lib/mysql','/var/lib/labctl','/run/mysqld','/opt/lab','/usr/local/bin'):
++            text=text.replace(absolute,str(self.root)+absolute)
++        self.script=self.root/'entrypoint-under-test.sh';self.script.write_text(text)
++        self.env=dict(os.environ,PATH=str(self.root/'bin')+':'+os.environ['PATH'],LAB_TEST_ROOT=str(self.root),
++                      LAB_MODE='galera',SST_PASSWORD='testPassword123456',MARIADB_ROOT_PASSWORD='testPassword123456')
++    def tearDown(self):self.link.unlink(missing_ok=True);self.tmp.cleanup()
++    def run_script(self,*args,**env):
++        # Leave headroom for loaded CI hosts; kill only our process group on any exit.
++        process=subprocess.Popen(['bash',str(self.script),*args],env=dict(self.env,**env),
++                                 text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
++        try:
++            out,err=process.communicate(timeout=20)
++            return subprocess.CompletedProcess(process.args,process.returncode,out,err)
++        finally:
++            try:os.killpg(process.pid,signal.SIGKILL)
++            except ProcessLookupError:pass
++            if process.poll() is None:process.wait()
++    def initialized(self):
++        (self.root/'var/lib/mysql/mysql').mkdir();(self.root/'var/lib/labctl/init-complete').touch()
++    def test_unknown_mode_exits_64(self):
++        self.initialized();result=self.run_script('mariadbd',LAB_MODE='galerra')
++        self.assertEqual(result.returncode,64,result.stderr)
++        self.assertFalse((self.root/'gosu-args.json').exists())
++    def test_additional_daemon_args_are_not_silently_ignored(self):
++        self.initialized();result=self.run_script('mariadbd','--port=3309')
++        self.assertEqual(result.returncode,64,result.stderr)
++    def test_non_daemon_command_passes_through(self):
++        result=self.run_script('printf','test-command')
++        self.assertEqual(result.returncode,0);self.assertEqual(result.stdout,'test-command')
++    def test_partial_init_refused(self):
++        (self.root/'var/lib/mysql/mysql').mkdir();result=self.run_script('mariadbd')
++        self.assertNotEqual(result.returncode,0);self.assertIn('partial init',result.stderr)
++    def test_successful_stub_init_creates_marker_and_consumes_token(self):
++        (self.root/'var/lib/labctl/bootstrap-once').write_text('authorize-new\n')
++        result=self.run_script('mariadbd')
++        self.assertEqual(result.returncode,0,result.stderr)
++        self.assertTrue((self.root/'var/lib/labctl/init-complete').exists())
++        self.assertFalse((self.root/'var/lib/labctl/bootstrap-once').exists())
++        args=json.loads((self.root/'gosu-args.json').read_text());self.assertIn('--wsrep-new-cluster',args)
++    def test_failed_stub_init_never_sets_marker(self):
++        result=self.run_script('mariadbd',LAB_TEST_INIT_MODE='fail')
++        self.assertNotEqual(result.returncode,0);self.assertFalse((self.root/'var/lib/labctl/init-complete').exists())
++        self.assertFalse((self.root/'gosu-args.json').exists())
++    def test_signal_during_init_exits_143_and_no_final_daemon(self):
++        process=subprocess.Popen(['bash',str(self.script),'mariadbd'],env=dict(self.env,LAB_TEST_INIT_MODE='hang'),
++                                 stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=True)
++        try:
++            deadline=time.monotonic()+5
++            while not (self.root/'run/mysqld/lab-init.pid').exists() and time.monotonic()<deadline:time.sleep(0.02)
++            self.assertTrue((self.root/'run/mysqld/lab-init.pid').exists())
++            process.send_signal(signal.SIGTERM);out,err=process.communicate(timeout=10)
++            self.assertEqual(process.returncode,143,(out,err))
++            self.assertFalse((self.root/'var/lib/labctl/init-complete').exists())
++            self.assertFalse((self.root/'gosu-args.json').exists())
++        finally:
++            try:os.killpg(process.pid,signal.SIGKILL)
++            except ProcessLookupError:pass
++            if process.poll() is None:process.wait()
++    def test_standalone_rejects_bootstrap_token(self):
++        self.initialized();(self.root/'var/lib/labctl/bootstrap-once').write_text('test')
++        result=self.run_script('mariadbd',LAB_MODE='standalone')
++        self.assertNotEqual(result.returncode,0);self.assertFalse((self.root/'gosu-args.json').exists())
++
++class AcceptanceGuardProcessTests(unittest.TestCase):
++    def invoke(self, approved):
++        with tempfile.TemporaryDirectory() as directory:
++            root=Path(directory);(root/'tests').mkdir()
++            script=root/'tests/real_acceptance.py'
++            script.write_bytes((ROOT/'tests/real_acceptance.py').read_bytes())
++            env=dict(os.environ,PATH=directory,RUN_DISRUPTIVE_TESTS='1' if approved else '0')
++            result=subprocess.run([sys.executable,str(script)],env=env,capture_output=True,text=True,timeout=5)
++            report=json.loads((root/'reports/real-acceptance/latest.json').read_text())
++            self.assertEqual(result.returncode,2,result.stderr)
++            self.assertEqual(report['status'],'BLOCKED')
++            self.assertFalse(report['real_database_tests_executed'])
++            self.assertEqual(report['steps'],[])
++            self.assertFalse((root/'.env').exists())
++            return report
++    def test_runtime_missing_is_blocked_not_pass(self):
++        report=self.invoke(True)
++        self.assertIn('Neither Podman nor Docker',report['reason'])
++    def test_disruptive_approval_missing_does_not_execute(self):
++        report=self.invoke(False)
++        self.assertIn('Explicit approval required',report['reason'])
++
++if __name__=='__main__':unittest.main(verbosity=2)
+--- a/tests/test_scenarios.py
++++ b/tests/test_scenarios.py
+@@ -278,6 +278,32 @@
+             self.runner.execute(args)
+         self.assertEqual(self.runner.report['status'],'passed')
+         self.assertTrue(self.runner.report['results']['quorum']['non_primary_observed'])
++    def test_failed_backend_ack_is_not_failover_success(self):
++        args=lab.parser().parse_args(['scenario','node-failure','--hold','5'])
++        original=self.runner.fault_probe
++        def bad_probe(host,token,number,phase):
++            result=original(host,token,number,phase)
++            if phase=='during' and result['acknowledged']:result['backend']='galera1'
++            return result
++        clock=[0.0]
++        def monotonic():clock[0]+=0.2;return clock[0]
++        with patch.object(self.runner,'fault_probe',side_effect=bad_probe),patch.object(sc.time,'monotonic',side_effect=monotonic),patch.object(sc.time,'sleep'):
++            with self.assertRaises(sc.ScenarioError):self.runner.execute(args)
++        self.assertFalse(self.runner.report['results']['node-failure']['surviving_backend_ack_observed'])
++    def test_non_primary_without_writer_rejection_fails(self):
++        args=lab.parser().parse_args(['scenario','quorum','--hold','30','--confirm-quorum'])
++        original=self.runner.fault_probe
++        def bad_probe(host,token,number,phase):
++            result=original(host,token,number,phase)
++            if phase=='during' and not result['acknowledged']:
++                result.update(acknowledged=True,backend='galera1')
++                self.lab.receipts.append({'request_id':result['request_id'],'handled_by':'galera1'})
++            return result
++        clock=[0.0]
++        def monotonic():clock[0]+=3;return clock[0]
++        with patch.object(self.runner,'fault_probe',side_effect=bad_probe),patch.object(sc.time,'monotonic',side_effect=monotonic),patch.object(sc.time,'sleep'):
++            with self.assertRaises(sc.ScenarioError):self.runner.execute(args)
++        self.assertFalse(self.runner.report['results']['quorum']['write_rejection_observed'])
+     def test_failure_report_and_recovery(self):
+         args=lab.parser().parse_args(['scenario','slow']);self.lab.fail_action='slow'
+         with self.assertRaises(subprocess.TimeoutExpired): self.runner.execute(args)
+--- a/tests/validate.sh
++++ b/tests/validate.sh
+@@ -0,0 +1,6 @@
++#!/usr/bin/env bash
++# Host-only validation. This never starts a database or alters container volumes.
++set -Eeuo pipefail
++cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
++command -v python3 >/dev/null 2>&1 || { echo 'ERROR: Python 3.8+ required.' >&2; exit 127; }
++exec python3 tests/check_host.py "$@"

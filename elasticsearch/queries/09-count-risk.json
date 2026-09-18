@@ -1,0 +1,9 @@
+{
+  "query": {
+    "range": {
+      "risk_score": {
+        "gte": 800
+      }
+    }
+  }
+}

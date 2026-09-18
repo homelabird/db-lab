@@ -1,0 +1,19 @@
+{
+  "size": 0,
+  "aggs": {
+    "actions": {
+      "terms": {
+        "field": "action",
+        "size": 10
+      },
+      "aggs": {
+        "results": {
+          "terms": {
+            "field": "result",
+            "size": 5
+          }
+        }
+      }
+    }
+  }
+}

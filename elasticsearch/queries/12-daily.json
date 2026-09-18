@@ -1,0 +1,13 @@
+{
+  "size": 0,
+  "aggs": {
+    "daily_requests": {
+      "date_histogram": {
+        "field": "@timestamp",
+        "calendar_interval": "day",
+        "time_zone": "Asia/Seoul",
+        "min_doc_count": 0
+      }
+    }
+  }
+}

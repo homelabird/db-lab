@@ -1,0 +1,65 @@
+{
+  "dynamic": "strict",
+  "properties": {
+    "@timestamp": {
+      "type": "date"
+    },
+    "document_id": {
+      "type": "keyword"
+    },
+    "event_seq": {
+      "type": "long"
+    },
+    "user_id": {
+      "type": "keyword"
+    },
+    "trace_id": {
+      "type": "keyword"
+    },
+    "src_ip": {
+      "type": "ip"
+    },
+    "tags": {
+      "type": "keyword"
+    },
+    "scenario": {
+      "type": "keyword"
+    },
+    "message": {
+      "type": "text",
+      "analyzer": "standard",
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 256
+        }
+      }
+    },
+    "payload": {
+      "type": "keyword",
+      "index": false,
+      "doc_values": false
+    },
+    "error_code": {
+      "type": "keyword"
+    },
+    "event_id": {
+      "type": "keyword"
+    },
+    "actor": {
+      "type": "keyword"
+    },
+    "action": {
+      "type": "keyword"
+    },
+    "result": {
+      "type": "keyword"
+    },
+    "target": {
+      "type": "keyword"
+    },
+    "privileged": {
+      "type": "boolean"
+    }
+  }
+}
