@@ -339,7 +339,7 @@ POST /lab-transactions-v1,lab-web-logs-v1,lab-audit-v1/_search
 
 ```bash
 ./lab.sh query 16-search-shards
-./scenarios/12-primary-vs-replica.sh
+./lab.sh scenario 12
 ```
 
 거래 인덱스에는 12개 primary shard 그룹이 있습니다. 특별한 routing이나 가지치기가 없는 일반 검색은 이 샤드 그룹들을 대상으로 하고 각 그룹의 primary 또는 replica copy 중 선택된 copy가 요청을 처리할 수 있습니다. 응답의 `_shards` 수를 "노드 5개" 또는 "primary와 replica를 모두 더한 copy 수"로 읽지 마세요.

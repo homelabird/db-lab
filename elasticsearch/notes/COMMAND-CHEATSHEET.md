@@ -11,7 +11,7 @@
 ./lab.sh pit
 ./lab.sh status
 ./lab.sh size
-./scenarios/01-manual-shard-move.sh
+./lab.sh scenario 01
 ./scripts/05-reset-cluster-settings.sh
 ./scripts/02-down.sh
 ```

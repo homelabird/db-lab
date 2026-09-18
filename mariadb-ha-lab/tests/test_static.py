@@ -228,6 +228,13 @@ class SafetyContractTests(unittest.TestCase):
         result=subprocess.run([sys.executable,str(ROOT/'scripts/lab.py'),'--help'],capture_output=True,text=True)
         self.assertEqual(result.returncode,0)
         for name in ('recover','rebuild','quorum-demo','verify','restore'): self.assertIn(name,result.stdout)
+    def test_real_acceptance_isolates_disposable_volumes(self):
+        text=(ROOT/'tests/real_acceptance.py').read_text()
+        self.assertIn("cli('reset','--confirm-delete-lab-data')",text)
+    def test_startup_probes_galera_transport(self):
+        text=(ROOT/'scripts/lab.py').read_text()
+        self.assertIn('check_galera_transport',text)
+        self.assertIn('4567',text)
     def test_shell_syntax(self):
         for path in [ROOT/'lab.sh',*ROOT.glob('images/node/*.sh')]:
             with self.subTest(path=path.name):

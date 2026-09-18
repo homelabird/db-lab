@@ -12,12 +12,13 @@ class NetworkDefaultsTests(unittest.TestCase):
         self.assertRegex(text, r'(?m)^ES_BIND_IP=0\.0\.0\.0$')
         self.assertNotRegex(text, r'(?m)^ES_BIND_IP=.*?/')
 
-    def test_both_compose_port_defaults_publish_all_ipv4(self):
+    def test_ui_compose_port_defaults_publish_all_ipv4(self):
         text = (ROOT / 'compose.yaml').read_text()
         values = re.findall(r'\$\{ES_BIND_IP:-([^}]+)\}', text)
-        self.assertEqual(values, ['0.0.0.0', '0.0.0.0'])
+        self.assertEqual(values, ['0.0.0.0', '0.0.0.0', '0.0.0.0'])
         self.assertIn('${ES_BIND_IP:-0.0.0.0}:${ES_PORT:-9200}:9200', text)
         self.assertIn('${ES_BIND_IP:-0.0.0.0}:${CEREBRO_PORT:-9000}:9000', text)
+        self.assertIn('${ES_BIND_IP:-0.0.0.0}:${KIBANA_PORT:-5601}:5601', text)
 
     def test_local_client_url_is_not_a_listen_address(self):
         env = (ROOT / '.env.example').read_text()
@@ -31,6 +32,12 @@ class NetworkDefaultsTests(unittest.TestCase):
         conf = (ROOT / 'cerebro/application.conf').read_text()
         self.assertIn('server.http.address = "0.0.0.0"', conf)
         self.assertIn('host = "http://es01:9200"', conf)
+
+    def test_kibana_matches_elasticsearch_and_uses_container_dns(self):
+        text = (ROOT / 'compose.yaml').read_text()
+        self.assertIn('docker.elastic.co/kibana/kibana:7.17.29', text)
+        self.assertIn('ELASTICSEARCH_HOSTS=["http://es01:9200","http://es02:9200","http://es03:9200","http://es04:9200","http://es05:9200"]', text)
+        self.assertIn('XPACK_SECURITY_ENABLED=false', text)
 
 
 if __name__ == '__main__':

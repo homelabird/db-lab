@@ -98,7 +98,7 @@ cat reports/seed-manifest.json
 
 ```bash
 curl --fail-with-body -sS "$ES_URL/_cat/shards/lab-*?v&s=state,index,shard"
-./scenarios/04-allocation-explain.sh
+./lab.sh scenario 04
 ./scripts/05-reset-cluster-settings.sh
 ```
 

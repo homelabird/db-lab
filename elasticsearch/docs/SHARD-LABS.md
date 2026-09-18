@@ -10,7 +10,7 @@
 
 ```bash
 ./lab.sh status
-./scenarios/12-primary-vs-replica.sh
+./lab.sh scenario 12
 ./lab.sh query 16-search-shards
 ```
 
@@ -19,13 +19,13 @@
 ## 수동 이동
 
 ```bash
-./scenarios/01-manual-shard-move.sh
+./lab.sh scenario 01
 ```
 
 기본 대상은 거래 인덱스의 shard 0 primary입니다. 현재 그 샤드의 어떤 copy도 갖고 있지 않은 data node를 찾고 `dry_run`으로 이동 가능 여부를 먼저 검사합니다. 기존 copy가 있는 노드를 무작정 목적지로 고르지 않습니다.
 
 ```bash
-INDEX=lab-web-logs-v1 SHARD=3 ./scenarios/01-manual-shard-move.sh
+INDEX=lab-web-logs-v1 SHARD=3 ./lab.sh scenario 01
 ```
 
 Cerebro와 다음 API를 같이 봅니다. 데이터가 작거나 디스크가 빠르면 이동 상태가 금방 지나갈 수 있습니다.
@@ -40,12 +40,12 @@ curl -sS "$ES_URL/_cat/shards/lab-transactions-v1?v&s=shard,prirep"
 
 ```bash
 # 살아 있는 es03에서 샤드를 다른 노드로 이동시키도록 제외
-./scenarios/02-drain-node.sh es03 --yes
-./scenarios/02-drain-node.sh --restore
+./lab.sh scenario 02 es03 --yes
+./lab.sh scenario 02 --restore
 
 # 실제 컨테이너 정지. 기본 es03을 사용해 호스트 API 진입점 es01을 유지
-./scenarios/06-node-failure-and-recovery.sh --yes
-./scenarios/06-node-failure-and-recovery.sh --recover
+./lab.sh scenario 06 --yes
+./lab.sh scenario 06 --recover
 ```
 
 시드 인덱스의 node-left delayed timeout은 45초입니다. 노드 이탈 직후의 replica 승격·지연 할당·복구를 구분해 관찰합니다. node stop 후 클러스터가 안정화되면 replica 재배치로 다시 green이 될 수도 있으므로 yellow가 영구 유지될 것이라고 가정하지 마세요.
@@ -53,9 +53,9 @@ curl -sS "$ES_URL/_cat/shards/lab-transactions-v1?v&s=shard,prirep"
 ## 과도한 replica로 미할당 만들기
 
 ```bash
-./scenarios/03-too-many-replicas.sh --yes
-./scenarios/04-allocation-explain.sh
-./scenarios/03-too-many-replicas.sh --restore
+./lab.sh scenario 03 --yes
+./lab.sh scenario 04
+./lab.sh scenario 03 --restore
 ```
 
 스크립트는 현재 data node 수와 같은 수의 replica를 요청합니다. 5노드라면 replica=5, 즉 primary 포함 6 copy가 필요하므로 일부가 할당될 수 없습니다. 6번째 노드를 띄웠을 때도 같은 학습 조건을 만들도록 현재 노드 수를 읽습니다.
@@ -73,7 +73,7 @@ curl -sS "$ES_URL/_cat/shards/lab-transactions-v1?v&s=shard,prirep"
 | `13-scale-out-node.sh` | es06 합류 후 6노드 재분산 | `--remove` |
 | `14-relocation-under-write-load.sh` | 쓰기 중 이동 관찰 안내 | writer 종료 |
 
-위 파일들은 모두 `./scenarios/파일명`으로 실행합니다. 디스크 시뮬레이션은 실제 데이터로 디스크를 가득 채우는 방식이 아닙니다. low/high/flood_stage를 같은 free-space byte 단위로 설정합니다. 적용 전 다른 사용량 조건을 확인하고 끝나면 반드시 되돌리세요.
+위 실습은 모두 `./lab.sh scenario <번호|이름>`으로 실행합니다. 디스크 시뮬레이션은 실제 데이터로 디스크를 가득 채우는 방식이 아닙니다. low/high/flood_stage를 같은 free-space byte 단위로 설정합니다. 적용 전 다른 사용량 조건을 확인하고 끝나면 반드시 되돌리세요.
 
 6번째 노드는 컨테이너를 제거해도 볼륨을 남깁니다. `02-down.sh --purge --yes`는 선택 노드용 볼륨까지 포함해 랩 전체를 폐기합니다. scale-out remove는 drain 없이 제거하는 단순 실습이며 무중단 유지보수 절차와 다릅니다.
 

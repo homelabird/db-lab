@@ -245,6 +245,21 @@ class Lab:
             time.sleep(2)
         raise LabError(f'Timeout waiting for {node}. Run ./lab.sh logs {node}. No forced recovery was attempted.')
 
+    def check_galera_transport(self, target='galera1'):
+        """Probe the actual container network before waiting for a Galera join."""
+        probe = (
+            'import socket,sys; '
+            's=socket.socket(); s.settimeout(3); '
+            's.connect((%r,4567)); s.close()'
+        ) % target
+        result = self.comp('run', '--rm', '--no-deps', '--entrypoint', 'python3', 'tools',
+                           '-c', probe, capture=True, check=False, timeout=30)
+        if result.returncode:
+            raise LabError(
+                f'Container network cannot reach {target}:4567 from the Compose network. '
+                'Check Docker bridge/iptables or rootless networking, '
+                'then recreate the lab network with ./lab.sh reset --confirm-delete-lab-data.')
+
     def build_fingerprint(self, service):
         inputs = ('images/node', 'scripts', 'datasets') if service == 'galera1' else ('images/proxy',)
         digest = hashlib.sha256()
@@ -329,6 +344,8 @@ class Lab:
             self.offline(selected, authorization)
             self.start_service(selected)
             self.wait(selected, 1)
+        if self.health('galera1').get('ready'):
+            self.check_galera_transport()
         for node in NODES:
             state = self.state(node)
             if state == 'paused': raise LabError(f'{node} paused. Use ./lab.sh resume {node}.')
@@ -494,15 +511,19 @@ class Lab:
         self.offline('restore', 'wipe')
         self.start_service('restore')
         self.wait('restore')
-        p = subprocess.Popen(self.sql_command('restore', extra=['--batch']), cwd=ROOT, env=self.env,
-                             stdin=subprocess.PIPE)
-        try:
-            with gzip.open(path, 'rb') as f: shutil.copyfileobj(f, p.stdin, length=1024*1024)
-            p.stdin.close()
-            if p.wait(): raise LabError('Restore failed; original Galera nodes are unchanged.')
-        except BaseException:
-            if p.poll() is None: p.terminate(); p.wait()
-            raise
+        # Feed the complete dump through docker exec's stdin in one managed
+        # subprocess. Keeping the pipe open while waiting can make the client
+        # lose its socket mid-statement when the exec stream closes early.
+        with gzip.open(path, 'rb') as f:
+            dump = f.read()
+        result = subprocess.run(self.sql_command('restore', extra=['--batch']),
+                                cwd=ROOT, env=self.env, input=dump,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                check=False, timeout=600)
+        if result.returncode:
+            detail = (result.stderr or result.stdout or b'').decode(errors='replace').strip()
+            raise LabError('Restore failed; original Galera nodes are unchanged.'
+                           + ('\n' + detail if detail else ''))
         isolated = self.sql('restore', 'SELECT @@wsrep_on;').stdout.strip()
         if isolated != '0': raise LabError('Restored instance unexpectedly has wsrep enabled.')
         balance = self.sql('restore', 'SELECT SUM(balance),COUNT(*) FROM lab_ops.account;').stdout.strip()

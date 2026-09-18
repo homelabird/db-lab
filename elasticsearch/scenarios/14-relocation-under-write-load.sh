@@ -10,7 +10,7 @@ Terminal A - continuous indexing (~100 docs/s):
   RATE=100 ./lab.sh load
 
 Terminal B - while writes continue:
-  ./scenarios/01-manual-shard-move.sh
+  ./lab.sh scenario 01
   watch -n1 'curl -s localhost:9200/_cat/recovery?v&active_only=true'
 
 Things to observe:

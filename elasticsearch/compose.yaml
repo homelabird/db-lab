@@ -10,7 +10,7 @@ services:
     - node.attr.zone=zone-a
     - xpack.security.enabled=false
     - xpack.ml.enabled=false
-    - ES_JAVA_OPTS=-Xms${ES_HEAP:-512m} -Xmx${ES_HEAP:-512m}
+    - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
     - node.roles=master,data,ingest
     - node.processors=2
     - ingest.geoip.downloader.enabled=false
@@ -43,7 +43,7 @@ services:
     - node.attr.zone=zone-b
     - xpack.security.enabled=false
     - xpack.ml.enabled=false
-    - ES_JAVA_OPTS=-Xms${ES_HEAP:-512m} -Xmx${ES_HEAP:-512m}
+    - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
     - node.roles=master,data,ingest
     - node.processors=2
     - ingest.geoip.downloader.enabled=false
@@ -74,7 +74,7 @@ services:
     - node.attr.zone=zone-c
     - xpack.security.enabled=false
     - xpack.ml.enabled=false
-    - ES_JAVA_OPTS=-Xms${ES_HEAP:-512m} -Xmx${ES_HEAP:-512m}
+    - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
     - node.roles=master,data,ingest
     - node.processors=2
     - ingest.geoip.downloader.enabled=false
@@ -105,7 +105,7 @@ services:
     - node.attr.zone=zone-a
     - xpack.security.enabled=false
     - xpack.ml.enabled=false
-    - ES_JAVA_OPTS=-Xms${ES_HEAP:-512m} -Xmx${ES_HEAP:-512m}
+    - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
     - node.roles=master,data,ingest
     - node.processors=2
     - ingest.geoip.downloader.enabled=false
@@ -136,7 +136,7 @@ services:
     - node.attr.zone=zone-b
     - xpack.security.enabled=false
     - xpack.ml.enabled=false
-    - ES_JAVA_OPTS=-Xms${ES_HEAP:-512m} -Xmx${ES_HEAP:-512m}
+    - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
     - node.roles=master,data,ingest
     - node.processors=2
     - ingest.geoip.downloader.enabled=false
@@ -173,6 +173,25 @@ services:
     - es-lab
     environment:
     - JAVA_TOOL_OPTIONS=-Xms128m -Xmx256m
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.29
+    container_name: cerebro-seed-kibana
+    depends_on:
+    - es01
+    - es02
+    - es03
+    - es04
+    - es05
+    ports:
+    - ${ES_BIND_IP:-0.0.0.0}:${KIBANA_PORT:-5601}:5601
+    networks:
+    - es-lab
+    environment:
+    - SERVER_NAME=kibana
+    - SERVER_HOST=0.0.0.0
+    - ELASTICSEARCH_HOSTS=["http://es01:9200","http://es02:9200","http://es03:9200","http://es04:9200","http://es05:9200"]
+    - XPACK_SECURITY_ENABLED=false
+    - TELEMETRY_ENABLED=false
 networks:
   es-lab:
     driver: bridge

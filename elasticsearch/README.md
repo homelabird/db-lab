@@ -37,20 +37,22 @@ Compose 네트워크의 실제 대역에 대해 필요한 허용 규칙을 중�
 ./lab.sh status
 ./lab.sh logs es01 --tail 100
 ./lab.sh scenario list
+./lab.sh scenario 01
+./lab.sh scenario manual-shard-move
 ./lab.sh scenario 06-node-failure-and-recovery --test --yes
 ./lab.sh fault list
 ./lab.sh down
 ```
 
-기본 호스트 바인딩은 **`0.0.0.0`(모든 IPv4 인터페이스)** 입니다. Elasticsearch는 `0.0.0.0:9200`, Cerebro는 `0.0.0.0:9000`으로 포트를 공개합니다.
+기본 호스트 바인딩은 **`0.0.0.0`(모든 IPv4 인터페이스)** 입니다. Elasticsearch는 `0.0.0.0:9200`, Cerebro는 `0.0.0.0:9000`, Kibana는 `0.0.0.0:5601`으로 포트를 공개합니다. Cerebro와 Kibana는 같은 Elasticsearch 클러스터를 동시에 사용합니다.
 
-다른 PC에서는 Cerebro `http://<서버IP>:9000`, Elasticsearch `http://<서버IP>:9200`에 접속하세요. 서버 자체에서는 기존처럼 `http://127.0.0.1:9000`, `http://127.0.0.1:9200`을 사용할 수 있습니다. **`0.0.0.0/0`은 CIDR 대역 표기이며 바인딩 값이나 브라우저 접속 주소가 아닙니다.**
+다른 PC에서는 Cerebro `http://<서버IP>:9000`, Kibana `http://<서버IP>:5601`, Elasticsearch `http://<서버IP>:9200`에 접속하세요. 서버 자체에서는 `http://127.0.0.1:9000`, `http://127.0.0.1:5601`, `http://127.0.0.1:9200`을 사용할 수 있습니다. **`0.0.0.0/0`은 CIDR 대역 표기이며 바인딩 값이나 브라우저 접속 주소가 아닙니다.**
 
-기존 프로젝트의 `.env`가 있다면 새 기본값보다 우선합니다. `ES_BIND_IP=0.0.0.0`으로 수정하고 `./lab.sh compose up -d --force-recreate es01 cerebro`를 실행하세요. 포트 설정 적용에는 컨테이너 재생성이 필요하며, 이 명령은 기존 named volume을 보존합니다. 자세한 적용 방법과 방화벽 안내는 [원격 접속](docs/QUICKSTART.md#5-다른-pc에서-서버의-cerebro-보기)을 참고하세요.
+기존 프로젝트의 `.env`가 있다면 새 기본값보다 우선합니다. `KIBANA_PORT=5601`을 추가하고 `./lab.sh compose up -d kibana`를 실행하세요. 이미 존재하는 `.env`의 바인딩 설정까지 바꾸는 경우에는 `./lab.sh compose up -d --force-recreate es01 cerebro kibana`를 사용합니다. 포트 설정 적용에는 컨테이너 재생성이 필요하며 named volume은 보존됩니다.
 
 `./lab.sh up`은 클러스터만 기동하고 시드는 자동 실행하지 않습니다. `./lab.sh verify`는 사용자의 **실제 Elasticsearch**에서 문서 수, 5개 이상의 데이터 노드, 샤드 배치, 검색 예제 22개를 검사합니다. 모든 샤드가 안정적인 green 상태여야 하므로 장애 시나리오를 진행하기 전에 실행하세요.
 
-이전 랩이 실행 중이면 포트 9200/9000이 겹칠 수 있습니다. 이전 랩을 종료하거나 `.env`의 `ES_PORT`, `CEREBRO_PORT`, `ES_URL`을 함께 변경하세요. 새 프로젝트명은 `cerebro-seed-lab`, 컨테이너 이름 접두사는 `cerebro-seed-`이며, 기존 볼륨을 자동 이관하거나 삭제하지 않습니다.
+이전 랩이 실행 중이면 포트 9200/9000/5601이 겹칠 수 있습니다. 이전 랩을 종료하거나 `.env`의 `ES_PORT`, `CEREBRO_PORT`, `KIBANA_PORT`, `ES_URL`을 함께 변경하세요. 새 프로젝트명은 `cerebro-seed-lab`, 컨테이너 이름 접두사는 `cerebro-seed-`이며, 기존 볼륨을 자동 이관하거나 삭제하지 않습니다.
 
 ## 장애 대응 검증 (추가)
 
@@ -72,7 +74,7 @@ Compose 네트워크의 실제 대역에 대해 필요한 허용 규칙을 중�
 
 복구 시 원래 노드 목록과 green뿐 아니라 시드 문서 수·index UUID·문서 표본 해시와 canary 읽기/쓰기/검색을 검사합니다. 설정을 임의의 기본값으로 초기화하지 않고 변경 전 값을 복원합니다. 기본 보고서는 `reports/faults/`에 저장됩니다. `active.json`이 남아 있으면 원복을 완료하기 전 삭제하지 마세요.
 
-기존 번호별 `02/03/05/06/07/08/10/11`은 동일한 검증기를 사용합니다. 예: `./scenarios/06-node-failure-and-recovery.sh --test --yes`. 새 wrapper의 장애 주입에는 명시적인 `--yes`가 필요합니다.
+기존 번호별 `02/03/05/06/07/08/10/11`은 동일한 검증기를 사용합니다. 예: `./lab.sh scenario 06 --test --yes`. 장애 주입에는 명시적인 `--yes`가 필요합니다.
 
 ## 구성과 기본 데이터량
 

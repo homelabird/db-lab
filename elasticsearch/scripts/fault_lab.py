@@ -82,8 +82,9 @@ def disk_thresholds(stats):
     require(free and min(free) > 64 * 1024 * 1024, 'Real disk space is already critically low; do not inject a fault')
     # All byte values mean FREE space: low >= high >= flood_stage. No disk filler.
     high = max(free) + 1024 ** 3
+    # Elasticsearch 7.17 rejects values below 10s for this setting.
     return {DISK_KEYS[0]: f'{high + 1024 ** 3}b', DISK_KEYS[1]: f'{high}b',
-            DISK_KEYS[2]: '1b', DISK_KEYS[3]: True, DISK_KEYS[4]: '1s'}
+            DISK_KEYS[2]: '1b', DISK_KEYS[3]: True, DISK_KEYS[4]: '10s'}
 
 
 class ComposeRuntime:
@@ -222,7 +223,11 @@ class Drill:
             time.sleep(min(self.interval, max(0, deadline - time.monotonic())))
 
     def nodes(self):
-        result = check_response(self.client.request('GET', '/_nodes'))
+        # During node-stop/node-crash, _nodes legitimately returns HTTP 200
+        # with _nodes.failed=1 while the target is disappearing.
+        result = self.client.request('GET', '/_nodes')
+        require(isinstance(result, dict) and isinstance(result.get('nodes'), dict),
+                'Invalid nodes response')
         return {n['name']: n for n in result['nodes'].values()}
 
     def health(self, index=''):
@@ -314,7 +319,19 @@ class Drill:
         old_primaries = [{'index': s['index'], 'shard': s['shard']} for s in shards
                          if s.get('node') == node and s['prirep'] == 'p' and s['state'] == 'STARTED']
         if scenario in NODE_SCENARIOS:
-            require(old_primaries, 'Target owns no STARTED seed primary; choose another node to test promotion')
+            if not old_primaries:
+                # Shard movement scenarios can leave the historical default
+                # (es03) without a seed primary. Keep the default command
+                # usable by selecting a deterministic eligible owner.
+                candidates = sorted({
+                    s.get('node') for s in shards
+                    if s.get('node') in nodes and s['prirep'] == 'p' and s['state'] == 'STARTED'
+                })
+                require(candidates, 'No node owns a STARTED seed primary; wait for green convergence')
+                node = candidates[0]
+                old_primaries = [{'index': s['index'], 'shard': s['shard']} for s in shards
+                                 if s.get('node') == node and s['prirep'] == 'p' and s['state'] == 'STARTED']
+                print(f'[target-selected] {node}', flush=True)
         if scenario == 'drain-node':
             require(any(s.get('node') == node for s in shards), 'Target already empty; no drain to test')
         keys = []

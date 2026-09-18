@@ -96,6 +96,10 @@ def main():
         step('Compose provider version',instance.compose_base+['version'])
         step('Configuration/provider/port diagnosis',cli('doctor'))
         step('Stop existing lab containers safely; keep volumes',cli('down'))
+        # This suite is explicitly disposable: remove stale/partial joiner state so
+        # a previous failed bootstrap cannot make the next run fail closed.
+        step('Reset disposable lab volumes for an isolated run',
+             cli('reset','--confirm-delete-lab-data'))
         step('Build actual images',cli('build'))
         report['database_start_attempted']=True;save()
         step('Three-node bootstrap and proxy/HTTP readiness',cli('up'))

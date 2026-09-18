@@ -4,6 +4,8 @@
 
 `./lab.sh doctor`는 `podman info`, Compose version/config를 확인합니다. Fedora/RHEL 호스트라면 배포판에 맞는 Podman 및 podman-compose를 설치하고 Python 3가 있는지 확인하세요. Docker를 이미 쓰는 환경은 Docker Compose를 선택합니다. 한 번 만든 rootless 컨테이너를 갑자기 `sudo podman`으로 관리하려 하지 마세요. rootful과 rootless의 컨테이너/볼륨 저장소는 별개입니다.
 
+`up`이 `Container network cannot reach galera1:4567`로 중단되면 Galera가 시작된 것이 아니라 Compose 네트워크에서 컨테이너 간 TCP가 차단된 상태입니다. Docker bridge/iptables 또는 rootless 네트워크 설정에서 컨테이너 간 통신을 허용하고, 폐기 가능한 랩이면 `./lab.sh reset --confirm-delete-lab-data` 후 `./lab.sh up`을 다시 실행하세요. 이 검사는 긴 Galera join timeout 전에 실제 Compose 네트워크에서 수행되므로, 해당 오류를 데이터·클러스터 복구 문제로 오인하지 마세요.
+
 Compose 구현이 너무 오래되어 profiles, build args, named networks를 처리하지 못하면 구현을 업데이트해야 합니다. 도구의 provider마다 지원 차이가 있으므로 실제 `doctor` 결과를 기준으로 판단하세요.
 
 ## 포트 충돌

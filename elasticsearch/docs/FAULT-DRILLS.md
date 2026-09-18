@@ -60,7 +60,7 @@ Podman을 rootless로 기동했다면 장애 스크립트도 **같은 일반 사
 
 # 실제 ES의 상태·원인 읽기 (설정 변경 없음)
 ./lab.sh fault diagnose
-./scenarios/04-allocation-explain.sh
+./lab.sh scenario 04
 
 # 기대한 장애 상태가 여전히 재현되는지 검사
 ./lab.sh fault check
@@ -168,14 +168,14 @@ sysctl vm.max_map_count
 
 ```bash
 # 기존 이름: 실제 es03 장애를 유지해서 관찰
-NODE=es03 ./scenarios/06-node-failure-and-recovery.sh --yes
-./scenarios/06-node-failure-and-recovery.sh --recover
+NODE=es03 ./lab.sh scenario 06 --yes
+./lab.sh scenario 06 --recover
 
 # 자동 주입·검증·원복
-./scenarios/06-node-failure-and-recovery.sh --test --yes
-./scenarios/06-node-failure-and-recovery.sh --crash --test --yes
-./scenarios/03-too-many-replicas.sh --test --yes
-./scenarios/11-disk-watermark-simulation.sh --test --yes
+./lab.sh scenario 06 --test --yes
+./lab.sh scenario 06 --crash --test --yes
+./lab.sh scenario 03 --test --yes
+./lab.sh scenario 11 --test --yes
 ```
 
 `02/03/05/06/07/08/10/11`은 같은 관리형 검증기를 사용합니다. `04`는 기본적으로 현재 UNASSIGNED shard를 선택하며 미할당이 없으면 이를 명시합니다. `01/09/12/13/14`는 이동·replica 취소·표시·scale-out·쓰기 중 이동 관련 별도 실습입니다. 모든 파일에 대해 실제 ES 실행을 완료했다는 뜻은 아닙니다. 정확한 확인 범위는 [검증 결과](FAULT-VALIDATION.md)를 읽으세요.

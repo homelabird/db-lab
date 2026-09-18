@@ -60,7 +60,12 @@ elif [[ ! -f /var/lib/labctl/init-complete ]]; then
   echo '[lab] Use lab.sh rebuild NODE --confirm-rebuild (healthy cluster) or reset a disposable lab.' >&2
   exit 1
 fi
-args=(mariadbd "--server-id=${SERVER_ID:-1}" "--innodb-buffer-pool-size=${BUFFER_POOL_SIZE:-256M}")
+cat > /etc/mysql/conf.d/81-lab-runtime.cnf <<EOF
+[mariadb]
+innodb_buffer_pool_size=${BUFFER_POOL_SIZE:-256M}
+EOF
+chmod 644 /etc/mysql/conf.d/81-lab-runtime.cnf
+args=(mariadbd "--server-id=${SERVER_ID:-1}")
 if [[ $mode == galera ]]; then
   # Resolve this container's CURRENT address. No static host subnet or host networking required.
   address=$(python3 -c 'import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.connect(("192.0.2.1",9)); print(s.getsockname()[0]); s.close()')

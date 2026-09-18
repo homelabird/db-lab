@@ -37,7 +37,10 @@ Operations:
   help               Show this help
 
 Scenario names are the script names without .sh, for example:
+  scenario list
+  scenario 01
   scenario 01-manual-shard-move
+  scenario manual-shard-move
   scenario node-failure-and-recovery --test --yes
   scenario scale-out-node --remove
 
@@ -81,15 +84,39 @@ scenario_script() {
     echo "[error] scenario requires a name; use: ./lab.sh scenario <name>" >&2
     exit 2
   }
-  if [[ "$requested" == "list" ]]; then
+  if [[ "$requested" == "list" || "$requested" == "help" || "$requested" == "--help" ]]; then
+    if [[ "$requested" != "list" ]]; then
+      cat <<'EOF'
+Usage:
+  ./lab.sh scenario list
+  ./lab.sh scenario <number|name> [options]
+
+Examples:
+  ./lab.sh scenario 01
+  ./lab.sh scenario manual-shard-move
+  ./lab.sh scenario 06 --test --yes
+  ./lab.sh scenario scale-out-node --remove
+
+Scenario modes:
+  01, 04, 09, 12, 14  Read/observe or manual workflows
+  02, 03, 05, 06, 07, 08, 10, 11  Fault drills; use --test --yes
+  13                   Add es06, or remove it with --remove
+
+The numbered shell files remain compatibility entrypoints. Prefer this
+command for stable argument handling and run `scenario list` for names.
+EOF
+    fi
     find "$ROOT/scenarios" -maxdepth 1 -type f -name '*.sh' -printf '%f\n' | sort
     return
+  fi
+  if [[ "$requested" =~ ^[0-9]{1,2}$ ]]; then
+    requested="$(printf '%02d' "$((10#$requested))")"
   fi
   candidate="$ROOT/scenarios/$requested"
   [[ "$candidate" == *.sh ]] || candidate+=".sh"
   if [[ ! -f "$candidate" ]]; then
     candidate="$(find "$ROOT/scenarios" -maxdepth 1 -type f \
-      -name "*-${requested}.sh" -print -quit)"
+      \( -name "${requested}-*.sh" -o -name "*-${requested}.sh" \) -print -quit)"
   fi
   [[ -n "$candidate" && -f "$candidate" ]] || {
     echo "[error] Unknown scenario: $requested" >&2
