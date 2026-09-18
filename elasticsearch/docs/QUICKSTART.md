@@ -16,9 +16,9 @@ Docker Compose가 이미 있는 환경도 지원합니다. `.env`의 `COMPOSE_PR
 cp .env.example .env
 chmod +x scripts/*.sh scripts/*.py scenarios/*.sh
 sudo sysctl -w vm.max_map_count=262144
-./scripts/00-doctor.sh
+./lab.sh doctor
 ./lab.sh compose config
-./scripts/01-up.sh
+./lab.sh up
 ```
 
 `vm.max_map_count`는 **호스트/VM 커널**에서 설정해야 합니다. 재부팅 후에도 유지하려면 호스트의 sysctl 설정으로 관리합니다. 이 랩은 mmap을 사용하며, `sysctl` 문제를 해결하기 위해 보안 기능을 끄거나 컨테이너를 무조건 privileged로 실행하지 않습니다.
@@ -28,7 +28,7 @@ sudo sysctl -w vm.max_map_count=262144
 ```bash
 ./lab.sh compose ps
 ./lab.sh compose logs --tail=120 es01 es02 es03
-./scripts/03-status.sh
+./lab.sh status
 ```
 
 첫 실행에는 컨테이너 이미지를 다운로드할 수 있는 네트워크가 필요합니다. 시드 데이터 생성 자체는 외부 다운로드가 없습니다.
@@ -38,12 +38,16 @@ sudo sysctl -w vm.max_map_count=262144
 ```bash
 ./lab.sh seed
 ./lab.sh verify
-./scripts/07-dataset-size.sh
+./lab.sh size
 ./lab.sh query list
 ./lab.sh query 01-latest
 ```
 
-전체 설정은 `.env.example`, 시드 인자는 `./lab.sh seed --help`에서 확인합니다. CLI 인자가 환경변수보다 우선하며, 스크립트는 이미 export된 환경변수를 `.env`로 덮어쓰지 않습니다. `.env`에는 `KEY=value`만 사용하고 inline 주석, 변수 치환, 쉘 명령을 넣지 마세요.
+전체 설정은 `.env.example`, 시드 인자는 `./lab.sh seed --help`에서 확인합니다. `seed`는
+세 인덱스에 총 약 100MiB의 결정적 합성 데이터를 생성하고 완료 후
+`reports/seed-manifest.json`을 기록합니다. 적재 완료 후에도 `./lab.sh verify`까지
+실행해야 매핑·샤드·검색 예제 검증이 끝납니다. CLI 인자가 환경변수보다 우선하며,
+`.env`에는 `KEY=value`만 사용하고 inline 주석, 변수 치환, 쉘 명령을 넣지 마세요.
 
 ## 4. 기존 랩과 포트가 겹칠 때
 
@@ -103,7 +107,7 @@ unset ES_BIND_IP
 # 단순 restart가 아니라 재생성해야 호스트 포트 바인딩에 반영됩니다.
 # es01이 잠시 재시작합니다. 기존 named volume과 seed 데이터는 보존합니다.
 ./lab.sh compose up -d --force-recreate es01 cerebro
-./scripts/03-status.sh
+./lab.sh status
 ```
 
 ZIP은 기존과 동일한 프로젝트 폴더 이름을 유지합니다. 기존 볼륨을 이어 쓰려면 원래 프로젝트 디렉터리에 변경 파일을 반영하고 `COMPOSE_PROJECT_NAME`을 유지하세요. 기존 `.env`를 무조건 새 예제로 덮어쓰지 마세요. 시드를 다시 채울 필요는 없으며 `down -v`나 `--purge`는 실행하지 않습니다.
@@ -125,7 +129,7 @@ ssh -N -L 9000:127.0.0.1:9000 -L 9200:127.0.0.1:9200 server@서버주소
 ./scripts/02-down.sh
 
 # 다시 기동. 유지된 데이터에 seed를 다시 넣을 필요는 없음
-./scripts/01-up.sh
+./lab.sh up
 ```
 
 완전 폐기할 때만:

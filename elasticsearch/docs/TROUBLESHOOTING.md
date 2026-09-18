@@ -28,7 +28,7 @@ curl --fail-with-body -sS "$ES_URL/_cat/indices/lab-*?v"
 
 ```bash
 ./scripts/02-down.sh --purge --yes
-./scripts/01-up.sh
+./lab.sh up
 ```
 
 실제 운영 데이터 복구법으로 볼륨 삭제를 사용하지 마세요.
@@ -78,7 +78,7 @@ SELinux 환경에서 Cerebro 설정 파일 bind mount는 `:ro,Z`를 사용합니
 
 ```bash
 cat reports/seed-manifest.json
-./scripts/03-status.sh
+./lab.sh status
 ./lab.sh seed
 ```
 

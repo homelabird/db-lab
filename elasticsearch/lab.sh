@@ -21,7 +21,7 @@ Lifecycle:
   compose <args...>  Run the configured Compose provider
 
 Data and queries:
-  seed [options]     Generate and load the lab data
+  seed [options]     Generate and load the lab data (see: ./lab.sh seed --help)
   verify             Verify seeded data and cluster layout
   size               Show dataset storage sizes
   purge --yes        Delete only the three lab seed indices
@@ -40,6 +40,21 @@ Scenario names are the script names without .sh, for example:
   scenario 01-manual-shard-move
   scenario node-failure-and-recovery --test --yes
   scenario scale-out-node --remove
+
+Typical seed workflow:
+  ./lab.sh up
+  ./lab.sh seed --size-mb 5       # quick smoke test
+  ./lab.sh seed                   # default 100 MiB synthetic dataset
+  ./lab.sh verify                 # counts, mappings, shards, and queries
+  ./lab.sh size                   # current Lucene store size
+
+seed creates three deterministic indices:
+  lab-transactions-v1  50% of source target, 12 primaries, 1 replica
+  lab-web-logs-v1      32% of source target, 18 primaries, 1 replica
+  lab-audit-v1         18% of source target,  8 primaries, 2 replicas
+
+The reported "source" size is compact JSON _source bytes, not disk usage.
+The final manifest is written to reports/seed-manifest.json.
 EOF
 }
 

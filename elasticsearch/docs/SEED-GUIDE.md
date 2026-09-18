@@ -45,7 +45,7 @@
 Bulk action 메타데이터와 재시도 전송량은 위 기준에 포함되지 않습니다. Lucene은 저장·색인·압축 구조가 다르므로 `pri.store.size`가 원문과 같지 않습니다. Replica를 포함하는 `store.size`는 더 다른 값이며, translog 등을 포함한 전체 디스크 사용량과도 같지 않습니다.
 
 ```bash
-./scripts/07-dataset-size.sh
+./lab.sh size
 ```
 
 `reports/seed-manifest.json`에는 생성 설정, 인덱스별 문서 수, 원문 바이트 수, Bulk 바이트 수, 완료 상태, 적재한 클러스터 UUID 등이 기록됩니다. 적재 완료 직후의 store 값은 이후 세그먼트 병합·복제 상태에 따라 달라질 수 있으므로 현재 값은 위 명령으로 확인합니다.
@@ -56,9 +56,49 @@ Bulk action 메타데이터와 재시도 전송량은 위 기준에 포함되지
 ./lab.sh seed
 ```
 
-동작 순서: 최소 5개 노드와 클러스터 확인 → 기존 인덱스 시드 signature 검사 → 없는 인덱스 생성 → 임시 refresh 비활성화 → 제한된 크기로 Bulk 적재 → refresh 설정 복원 → 명시적 refresh → 문서 수 대조 → manifest 기록.
+처음 실행하기 전에 다음 순서를 지키세요.
+
+```bash
+./lab.sh doctor
+./lab.sh up
+./lab.sh status
+./lab.sh seed
+./lab.sh verify
+./lab.sh size
+```
+
+`seed`는 최소 5개 노드와 cluster UUID를 확인하고, 세 인덱스의 signature를 검사한 뒤
+없는 인덱스를 생성합니다. 적재 중에는 refresh를 잠시 끄고 최대 500건/4MiB 단위로
+Bulk 요청을 보냅니다. 각 Bulk item을 검사하고 429/502/503/504만 재시도한 다음,
+refresh 복원·문서 수 확인·manifest 기록까지 수행합니다.
+
+다음 출력은 정상적인 100MiB 기본 적재 결과입니다.
+
+```text
+[connect] http://127.0.0.1:9200; wait for >= 5 nodes
+[lab-transactions-v1] complete: 66,796 docs, source=50.001 MiB
+[lab-web-logs-v1] complete: 47,956 docs, source=32.001 MiB
+[lab-audit-v1] complete: 27,888 docs, source=18.001 MiB
+[DONE] 142,640 docs / 100.001 MiB source
+[report] .../reports/seed-manifest.json
+```
+
+`generated=...`는 진행률, `complete`는 인덱스 단위 완료, `[DONE]`는 세 인덱스
+적재 완료입니다. `[DONE]` 이후에도 `./lab.sh verify`를 실행해야 매핑·샤드·검색
+예제까지 검증됩니다.
 
 기본 실행은 100MiB짜리 로컬 파일을 만들지 않습니다. 요청 배치만 메모리에 유지합니다. 기본 배치는 최대 500건, 최대 4MiB이며 먼저 도달하는 기준으로 분할합니다.
+
+전체 옵션은 다음 명령으로 확인합니다.
+
+```bash
+./lab.sh seed --help
+```
+
+주요 옵션: `--size-mb`는 세 인덱스 합계 `_source` 목표 MiB, `--seed`는 재현 가능한
+난수 seed, `--start-date`/`--days`는 시간 범위, `--payload-bytes`는 비색인 payload,
+`--batch-size`/`--max-batch-mb`는 Bulk 크기, `--generate-only`는 ES 없이 파일만
+생성, `--recreate --yes`는 세 seed 인덱스를 삭제 후 재생성합니다.
 
 ## 5. 크기·날짜·부하 조절
 

@@ -3,14 +3,14 @@
 프로젝트 루트에서 실행합니다. 설정은 `.env.example`을 참고하세요.
 
 ```bash
-./scripts/01-up.sh
+./lab.sh up
 ./lab.sh seed
 ./lab.sh verify
 ./lab.sh query list
 ./lab.sh query 04-high-risk
 ./lab.sh pit
-./scripts/03-status.sh
-./scripts/07-dataset-size.sh
+./lab.sh status
+./lab.sh size
 ./scenarios/01-manual-shard-move.sh
 ./scripts/05-reset-cluster-settings.sh
 ./scripts/02-down.sh

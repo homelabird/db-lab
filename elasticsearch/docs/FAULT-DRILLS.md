@@ -12,7 +12,7 @@
 chmod +x scripts/*.sh scripts/*.py scenarios/*.sh
 
 # 실제 클러스터를 시작하고 시드를 넣지 않았다면 먼저 실행
-./scripts/01-up.sh
+./lab.sh up
 ./lab.sh seed
 
 # 기존 데이터·샤드·검색의 정상 기준 상태 확인

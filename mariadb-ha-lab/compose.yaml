@@ -109,6 +109,9 @@ services:
 
 networks:
   labnet:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
   restore_net:
 volumes:
   galera1_data:

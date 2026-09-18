@@ -219,21 +219,36 @@ def seed_index(client, config, index, args, output=None):
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--size-mb', type=float, default=float(os.getenv('SEED_SIZE_MB', '100')), help='Raw JSON _source size in MiB; default 100, not Lucene store size')
-    p.add_argument('--seed', type=int, default=int(os.getenv('SEED', '42')))
-    p.add_argument('--start-date', default=os.getenv('SEED_START_DATE', DEFAULT_START))
-    p.add_argument('--days', type=int, default=31)
-    p.add_argument('--payload-bytes', type=int, default=256)
-    p.add_argument('--batch-size', type=int, default=int(os.getenv('BULK_SIZE', '500')))
-    p.add_argument('--max-batch-mb', type=float, default=4)
-    p.add_argument('--retries', type=int, default=4)
-    p.add_argument('--timeout', type=float, default=120)
-    p.add_argument('--min-nodes', type=int, default=5)
-    p.add_argument('--wait-seconds', type=float, default=300)
-    p.add_argument('--recreate', action='store_true', help='Delete and recreate only the 3 known seed indices')
-    p.add_argument('--yes', action='store_true', help='Explicitly acknowledge --recreate data deletion')
-    p.add_argument('--generate-only', action='store_true', help='Write Bulk NDJSON locally without connecting to Elasticsearch')
-    p.add_argument('--output-dir', type=Path, default=ROOT / 'datasets/generated')
-    p.add_argument('--report', type=Path, default=ROOT / 'reports/seed-manifest.json')
+    p.add_argument('--seed', type=int, default=int(os.getenv('SEED', '42')),
+                  help='Deterministic random seed; same settings produce the same IDs and records')
+    p.add_argument('--start-date', default=os.getenv('SEED_START_DATE', DEFAULT_START),
+                  help='UTC start timestamp, including Z or an offset (default: 2026-08-01T00:00:00Z)')
+    p.add_argument('--days', type=int, default=31,
+                   help='Number of calendar days used for synthetic @timestamp values (default: 31)')
+    p.add_argument('--payload-bytes', type=int, default=256,
+                   help='Extra non-indexed synthetic _source payload per document (default: 256)')
+    p.add_argument('--batch-size', type=int, default=int(os.getenv('BULK_SIZE', '500')),
+                   help='Maximum documents per Bulk request (default: 500)')
+    p.add_argument('--max-batch-mb', type=float, default=4,
+                   help='Maximum Bulk request size in MiB (default: 4)')
+    p.add_argument('--retries', type=int, default=4,
+                   help='Retries for transient Bulk responses 429/502/503/504 (default: 4)')
+    p.add_argument('--timeout', type=float, default=120,
+                   help='Elasticsearch HTTP request timeout in seconds (default: 120)')
+    p.add_argument('--min-nodes', type=int, default=5,
+                   help='Minimum data nodes required before loading (default: 5)')
+    p.add_argument('--wait-seconds', type=float, default=300,
+                   help='Maximum cluster wait time in seconds (default: 300)')
+    p.add_argument('--recreate', action='store_true',
+                   help='Delete and recreate only the 3 known seed indices')
+    p.add_argument('--yes', action='store_true',
+                   help='Explicitly acknowledge the data deletion requested by --recreate')
+    p.add_argument('--generate-only', action='store_true',
+                   help='Write Bulk NDJSON locally without connecting to Elasticsearch')
+    p.add_argument('--output-dir', type=Path, default=ROOT / 'datasets/generated',
+                   help='Directory for --generate-only files')
+    p.add_argument('--report', type=Path, default=ROOT / 'reports/seed-manifest.json',
+                   help='Manifest JSON output path (default: reports/seed-manifest.json)')
     return p
 
 

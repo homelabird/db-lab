@@ -3,7 +3,7 @@
 이 문서는 이 프로젝트의 실제 시드 필드와 `queries/*.json`을 사용합니다. 서버와 데이터를 먼저 준비한 뒤 **프로젝트 루트에서** 명령을 실행하세요.
 
 ```bash
-./scripts/01-up.sh
+./lab.sh up
 ./lab.sh seed
 ./lab.sh verify
 ```
@@ -434,7 +434,7 @@ curl --fail-with-body -sS -X DELETE "$ES_URL/lab-query-scratch"
 
 `refresh=wait_for`는 변경이 검색에 보이는 시점까지 기다리도록 합니다. 대량 적재의 매 문서마다 refresh를 강제하는 방식과 구분하세요. refresh는 검색 가시성을 위한 개념이며 디스크 영속성과 완전히 같은 말이 아닙니다.
 
-scratch가 존재하는 동안 클러스터 전체 샤드 수는 시드의 84개보다 많습니다. `09-verify-seed.sh`는 시드 인덱스 3개만 대상으로 84개를 검사합니다.
+scratch가 존재하는 동안 클러스터 전체 샤드 수는 시드의 84개보다 많습니다. `lab.sh verify`는 시드 인덱스 3개만 대상으로 84개를 검사합니다.
 
 공식 근거: [Index API](https://www.elastic.co/guide/en/elasticsearch/reference/7.17/docs-index_.html), [Update API](https://www.elastic.co/guide/en/elasticsearch/reference/7.17/docs-update.html), [refresh parameter](https://www.elastic.co/guide/en/elasticsearch/reference/7.17/docs-refresh.html).
 

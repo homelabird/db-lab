@@ -52,6 +52,7 @@ def main():
         if log.exists(): log.unlink()
         result = subprocess.run(['gosu', 'mysql', 'mariadbd', '--wsrep-recover',
                 '--wsrep-on=ON', '--wsrep-provider=/opt/lab/libgalera_smm.so',
+                '--wsrep-cluster-address=gcomm://',
                 '--skip-networking', '--log-error=' + str(log)],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=300)
         text = result.stdout + ('\n' + log.read_text(errors='replace') if log.exists() else '')

@@ -38,7 +38,7 @@ EOF
 fi
 python3 ./scripts/lablib.py wait --nodes 5 --yellow --seconds "${WAIT_SECONDS:-300}"
 guard_lab
-bash ./scripts/03-status.sh
+bash ./lab.sh status
 printf '\nHost port binding: %s (Elasticsearch %s, Cerebro %s)\n' "${ES_BIND_IP:-0.0.0.0}" "${ES_PORT:-9200}" "${CEREBRO_PORT:-9000}"
 printf 'Local script Elasticsearch URL: %s\n' "$ES_URL"
 if [[ "${ES_BIND_IP:-0.0.0.0}" == "0.0.0.0" ]]; then

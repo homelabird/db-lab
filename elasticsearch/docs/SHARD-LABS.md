@@ -1,6 +1,6 @@
 # 5노드 샤드 운영 실습
 
-검색 실습과 `09-verify-seed.sh`를 마친 뒤 진행합니다. 한 번에 하나의 장애 조건만 적용하고 원복하세요. 장애 중에는 검색 예제가 실패하거나 느려지는 것이 정상적인 관찰 대상일 수 있습니다.
+검색 실습과 `lab.sh verify`를 마친 뒤 진행합니다. 한 번에 하나의 장애 조건만 적용하고 원복하세요. 장애 중에는 검색 예제가 실패하거나 느려지는 것이 정상적인 관찰 대상일 수 있습니다.
 
 새 관리형 장애 도구: [장애 주입·대응·복구](FAULT-DRILLS.md). 기존 번호별 장애 wrapper도 `--yes`로 주입하고 원래 설정을 기록합니다. 아래 표의 `05`는 새 canary에 ghost 필터를 사용하고 `07`은 canary replica 추가까지 수행합니다. `11`은 고정 용량이 아니라 실제 여유 공간으로 threshold를 계산합니다.
 
@@ -9,7 +9,7 @@
 ## 기본 배치
 
 ```bash
-./scripts/03-status.sh
+./lab.sh status
 ./scenarios/12-primary-vs-replica.sh
 ./lab.sh query 16-search-shards
 ```
@@ -84,7 +84,7 @@ curl -sS "$ES_URL/_cat/shards/lab-transactions-v1?v&s=shard,prirep"
 RATE=100 ./lab.sh load
 ```
 
-Ctrl-C로 종료합니다. live load는 시드 외 문서를 추가하므로 그 뒤에는 시드 manifest와 문서 수가 달라져 `09-verify-seed.sh`가 실패할 수 있습니다. 검색 0건·Bulk 실패 등을 처리하면서 검증기를 통과하도록 임의로 expected count를 바꾸지 마세요. 아래 절차로 시드 기준 상태를 다시 만들 수 있습니다.
+Ctrl-C로 종료합니다. live load는 시드 외 문서를 추가하므로 그 뒤에는 시드 manifest와 문서 수가 달라져 `lab.sh verify`가 실패할 수 있습니다. 검색 0건·Bulk 실패 등을 처리하면서 검증기를 통과하도록 임의로 expected count를 바꾸지 마세요. 아래 절차로 시드 기준 상태를 다시 만들 수 있습니다.
 
 ## 전체 원복
 

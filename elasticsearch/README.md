@@ -1,6 +1,6 @@
 # Elasticsearch 5노드 + Cerebro — 시드·검색·샤드 실습 랩
 
-**실제 데이터를 ZIP에 포함하지 않습니다.** `04-seed-data.sh`를 실행하면 로컬에서 모의 데이터를 만들고 Elasticsearch에 스트리밍 Bulk 적재합니다. 외부 데이터셋 다운로드, 개인정보, 실제 금융 거래는 사용하지 않습니다.
+**실제 데이터를 ZIP에 포함하지 않습니다.** `./lab.sh seed`를 실행하면 로컬에서 모의 데이터를 만들고 Elasticsearch에 스트리밍 Bulk 적재합니다. 외부 데이터셋 다운로드, 개인정보, 실제 금융 거래는 사용하지 않습니다.
 
 ## 바로 실행
 
@@ -48,7 +48,7 @@ Compose 네트워크의 실제 대역에 대해 필요한 허용 규칙을 중�
 
 기존 프로젝트의 `.env`가 있다면 새 기본값보다 우선합니다. `ES_BIND_IP=0.0.0.0`으로 수정하고 `./lab.sh compose up -d --force-recreate es01 cerebro`를 실행하세요. 포트 설정 적용에는 컨테이너 재생성이 필요하며, 이 명령은 기존 named volume을 보존합니다. 자세한 적용 방법과 방화벽 안내는 [원격 접속](docs/QUICKSTART.md#5-다른-pc에서-서버의-cerebro-보기)을 참고하세요.
 
-`01-up.sh`는 클러스터만 기동하고 시드는 자동 실행하지 않습니다. `09-verify-seed.sh`는 사용자의 **실제 Elasticsearch**에서 문서 수, 5개 이상의 데이터 노드, 샤드 배치, 검색 예제 22개를 검사합니다. 모든 샤드가 안정적인 green 상태여야 하므로 장애 시나리오를 진행하기 전에 실행하세요.
+`./lab.sh up`은 클러스터만 기동하고 시드는 자동 실행하지 않습니다. `./lab.sh verify`는 사용자의 **실제 Elasticsearch**에서 문서 수, 5개 이상의 데이터 노드, 샤드 배치, 검색 예제 22개를 검사합니다. 모든 샤드가 안정적인 green 상태여야 하므로 장애 시나리오를 진행하기 전에 실행하세요.
 
 이전 랩이 실행 중이면 포트 9200/9000이 겹칠 수 있습니다. 이전 랩을 종료하거나 `.env`의 `ES_PORT`, `CEREBRO_PORT`, `ES_URL`을 함께 변경하세요. 새 프로젝트명은 `cerebro-seed-lab`, 컨테이너 이름 접두사는 `cerebro-seed-`이며, 기존 볼륨을 자동 이관하거나 삭제하지 않습니다.
 
@@ -96,7 +96,7 @@ Compose 네트워크의 실제 대역에 대해 필요한 허용 규칙을 중�
 
 \* 제공 환경에서 기본 설정으로 생성한 결과입니다. 정확한 실행 결과는 `reports/seed-manifest.json`으로 확인하세요. 용량·기간·payload·seed 변경 시 문서 수는 달라집니다.
 
-**100MiB는 `pri.store.size` 목표가 아닙니다.** 원문 JSON, Bulk 전송량, Primary Lucene 저장량, Replica 포함 저장량, translog까지 포함한 파일시스템 사용량은 서로 다릅니다. Primary/Replica 저장량은 `./scripts/07-dataset-size.sh`로 측정합니다. 많은 작은 샤드는 배치와 이동을 관찰하기 위한 의도적인 교육용 설정이며 운영 권장 샤드 크기를 뜻하지 않습니다.
+**100MiB는 `pri.store.size` 목표가 아닙니다.** 원문 JSON, Bulk 전송량, Primary Lucene 저장량, Replica 포함 저장량, translog까지 포함한 파일시스템 사용량은 서로 다릅니다. Primary/Replica 저장량은 `./lab.sh size`로 측정합니다. 많은 작은 샤드는 배치와 이동을 관찰하기 위한 의도적인 교육용 설정이며 운영 권장 샤드 크기를 뜻하지 않습니다.
 
 ## 문서 읽는 순서
 

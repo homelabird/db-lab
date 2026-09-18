@@ -244,7 +244,7 @@ class Drill:
         result = {}
         for index in INDICES:
             count = check_response(self.client.request('GET', f'/{index}/_count'))['count']
-            require(count > 0, f'{index}: no seed data. Run 04-seed-data.sh first.')
+            require(count > 0, f'{index}: no seed data. Run lab.sh seed first.')
             detail = self.client.request('GET', f'/{index}/_settings?flat_settings=true')[index]['settings']
             search = check_response(self.client.request('POST', f'/{index}/_search?allow_partial_search_results=false',
                         {'size': 5, 'sort': [{'event_seq': 'asc'}], 'query': {'match_all': {}}}))
