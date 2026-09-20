@@ -1,0 +1,4 @@
+kafka:
+  enabled: true
+redis:
+  enabled: false

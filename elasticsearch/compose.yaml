@@ -21,7 +21,7 @@ services:
     volumes:
     - es01-data:/usr/share/elasticsearch/data
     ports:
-    - ${ES_BIND_IP:-0.0.0.0}:${ES_PORT:-9200}:9200
+    - ${ES_BIND_IP:-127.0.0.1}:${ES_PORT:-9200}:9200
     networks:
     - es-lab
     healthcheck:
@@ -166,7 +166,7 @@ services:
     - es04
     - es05
     ports:
-    - ${ES_BIND_IP:-0.0.0.0}:${CEREBRO_PORT:-9000}:9000
+    - ${ES_BIND_IP:-127.0.0.1}:${CEREBRO_PORT:-9000}:9000
     volumes:
     - ./cerebro/application.conf:/opt/cerebro/conf/application.conf:ro,Z
     networks:
@@ -183,7 +183,7 @@ services:
     - es04
     - es05
     ports:
-    - ${ES_BIND_IP:-0.0.0.0}:${KIBANA_PORT:-5601}:5601
+    - ${ES_BIND_IP:-127.0.0.1}:${KIBANA_PORT:-5601}:5601
     networks:
     - es-lab
     environment:

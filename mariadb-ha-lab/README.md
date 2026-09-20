@@ -353,3 +353,11 @@ reports/                    복구/검증 보고서
 새 DB/프록시 설정과 초기화 스크립트는 이미지에 COPY하고 데이터는 named volume을 사용합니다. 호스트 bind mount에 의존하지 않아 기존에 겪을 수 있는 `initdb/: Permission denied`, SELinux 공유 라벨, rootless UID 매핑 문제를 줄입니다. **SELinux를 끄거나 privileged/host networking을 요구하지 않습니다.** 새 이미지 파일을 바꿨으면 `./lab.sh build`로 다시 빌드해야 하며, DB 설정 변경은 적용 대상 노드의 재생성 계획도 필요합니다.
 
 이것은 로컬 학습용입니다. SQL·Galera·SST 내부 통신에 TLS를 설정하지 않았고, DB 비밀번호는 `.env` 및 컨테이너 환경변수에 있습니다. SST auth는 프로세스 인자로도 보일 수 있습니다. 컨테이너 관리자에게 숨기는 비밀 저장소가 아닙니다. 운영에는 분리 호스트/AZ, 프록시 HA, 네트워크 ACL, SQL/Galera/SST 각각의 암호화, 비밀 관리, 보존·복구 정책, 모니터링과 업그레이드 검증이 추가로 필요합니다.
+
+## 2026-09-18 부하 제어/health 변경
+
+`lab.sh health --json`은 모든 Galera 노드의 Primary/Synced 준비·멤버 수·UUID를 읽기 전용으로 판정하고 비정상 시 실패합니다. 기존 `verify`처럼 시험 행을 쓰지 않습니다.
+Simulator는 monotonic 시간과 건별 pacing을 사용하며 지연된 스케줄은 건너뛰고 몰아서 따라잡지 않습니다.
+출력은 시도/성공/실패, 실제 발행률, 오류/성공 SQL/재접속 지연, 대기 시간, 종료 초과 시간을 구분합니다.
+진행 중인 SQL/접속은 타임아웃까지 종료 시각을 넘길 수 있으며 이를 `deadline_overrun_seconds`에 기록합니다.
+DB에 저장한 API latency는 합성값입니다. 주문 상태도 무작위 갱신이므로 업무 상태 전이/결제 정합성을 검증하는 모델이 아닙니다.

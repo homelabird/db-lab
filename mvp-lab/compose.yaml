@@ -1,0 +1,136 @@
+# Six containers by default. No DB host ports; only the API binds host loopback.
+# No fixed container/volume/network names: Compose owns them under MVP_PROJECT.
+x-app: &app
+  build:
+    context: .
+    dockerfile: Containerfile
+  image: ${MVP_PROJECT:-db-lab-mvp}-app:local
+  # manage.py injects APP_SQL_PASSWORD; use lab.sh rather than raw Compose.
+  environment: &app-env
+    STUDY_PROJECT: ${MVP_PROJECT:-db-lab-mvp}
+    SQL_HOST: mariadb
+    SQL_PORT: '3306'
+    SQL_DATABASE: mvp
+    SQL_USER: mvp
+    SQL_PASSWORD: ${APP_SQL_PASSWORD}
+    REDIS_HOST: ${CACHE_HOST:-redis}
+    REDIS_PORT: '6379'
+    REDIS_PASSWORD: ${REDIS_PASSWORD}
+    CACHE_TTL: ${CACHE_TTL:-30}
+    KAFKA_BOOTSTRAP: kafka:9092
+    KAFKA_TOPIC: mvp.orders.v1
+    KAFKA_GROUP: mvp.search.v1
+    ES_URL: http://elasticsearch:9200
+    ES_INDEX: ${SEARCH_INDEX:-mvp-orders-v1}
+  restart: unless-stopped
+  mem_limit: 256m
+  stop_grace_period: 25s
+  security_opt:
+    - no-new-privileges:true
+services:
+  mariadb:
+    image: ${MARIADB_IMAGE}
+    environment:
+      MARIADB_ROOT_PASSWORD: ${SQL_ROOT_PASSWORD}
+      MARIADB_DATABASE: mvp
+      MARIADB_USER: mvp
+      MARIADB_PASSWORD: ${SQL_PASSWORD}
+    command: [--innodb-buffer-pool-size=128M]
+    volumes: [mariadb-data:/var/lib/mysql]
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 5s
+      timeout: 4s
+      retries: 30
+      start_period: 30s
+    mem_limit: 512m
+    restart: unless-stopped
+  kafka:
+    image: ${KAFKA_IMAGE}
+    environment:
+      CLUSTER_ID: ${KRAFT_CLUSTER_ID}
+      KAFKA_NODE_ID: '1'
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: '1'
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: '1'
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: '1'
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: '0'
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_LOG_RETENTION_HOURS: '24'
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+    volumes: [kafka-data:/var/lib/kafka/data]
+    healthcheck:
+      test: [CMD-SHELL, 'kafka-broker-api-versions --bootstrap-server kafka:9092 >/dev/null 2>&1']
+      interval: 10s
+      timeout: 8s
+      retries: 30
+      start_period: 40s
+    mem_limit: 1g
+    restart: unless-stopped
+  elasticsearch:
+    image: ${ES_IMAGE}
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: 'false'
+      ES_JAVA_OPTS: -Xms384m -Xmx384m
+      # Avoid changing host vm.max_map_count for this small, non-performance lab.
+      node.store.allow_mmap: 'false'
+    volumes: [search-data:/usr/share/elasticsearch/data]
+    healthcheck:
+      test: [CMD-SHELL, 'curl -fsS http://localhost:9200/_cluster/health >/dev/null']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    mem_limit: 1g
+    restart: unless-stopped
+  redis:
+    image: ${REDIS_IMAGE}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: [sh, -ec, 'exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes --maxmemory 96mb --maxmemory-policy allkeys-lru']
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 192m
+    restart: unless-stopped
+  api:
+    <<: *app
+    ports: ['127.0.0.1:${API_PORT:-18090}:8080']
+    healthcheck:
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8080/health/live", timeout=2).read()']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+  worker:
+    <<: *app
+    environment:
+      <<: *app-env
+      # Wrong-password experiment affects API only, not this relay/consumer.
+      SQL_PASSWORD: ${SQL_PASSWORD}
+    command: [python, -m, mvp_app.worker]
+  redis-spare:
+    profiles: [spare]
+    image: ${REDIS_IMAGE}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: [sh, -ec, 'exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes --maxmemory 96mb --maxmemory-policy allkeys-lru']
+    volumes: [redis-spare-data:/data]
+    mem_limit: 192m
+    restart: unless-stopped
+volumes:
+  mariadb-data:
+  kafka-data:
+  search-data:
+  redis-data:
+  redis-spare-data:

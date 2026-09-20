@@ -1,0 +1,5 @@
+# Lab baseline, not a declaration of newest/security-audited releases.
+PyMySQL==1.1.2
+confluent-kafka==2.8.2
+redis==5.2.1
+requests==2.32.5

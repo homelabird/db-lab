@@ -1,0 +1,13 @@
+{{- if and .Values.kafka.enabled (not .Values.zookeeper.enabled) }}
+{{- fail "This Helm Kafka profile is ZooKeeper-only; zookeeper.enabled must be true." }}
+{{- end }}
+{{- if .Values.kafka.external.enabled }}{{ fail "External Kafka listeners are not implemented in this chart." }}{{ end }}
+{{- if and .Values.elasticsearch.enabled (not .Values.elasticsearch.allowLegacy) }}
+{{- fail "Elasticsearch 7.17 is a legacy lab; explicitly set elasticsearch.allowLegacy=true in an isolated environment." }}
+{{- end }}
+{{- if and .Values.mariadb.enabled (ge (int .Values.mariadb.recovery.bootstrapOrdinal) 0) (not .Values.mariadb.recovery.confirmed) }}
+{{- fail "Galera recovery requires offline state review and recovery.confirmed=true." }}
+{{- end }}
+{{- if and .Values.mariadb.bootstrapNewCluster (ge (int .Values.mariadb.recovery.bootstrapOrdinal) 0) }}
+{{- fail "Fresh bootstrap and recovery are mutually exclusive." }}
+{{- end }}

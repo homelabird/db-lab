@@ -3,6 +3,9 @@
 from __future__ import annotations
 import argparse
 import json
+import ipaddress
+import os
+import tempfile
 from pathlib import Path
 
 
@@ -22,9 +25,36 @@ def main() -> None:
     p.add_argument("--advertised-host", required=True)
     p.add_argument("--bind-ip", required=True)
     p.add_argument("--cluster-id")
+    p.add_argument("--port", action="append", default=[], help="node:host-port (repeatable)")
+    p.add_argument("--kafka-heap", default="-Xms256m -Xmx512m")
+    p.add_argument("--zookeeper-heap", default="-Xms128m -Xmx256m")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     n = a.nodes
+    if not 1 <= n <= 100 or (a.mode == "zk" and n % 2 == 0):
+        p.error("nodes must be 1..100; ZooKeeper mode requires an odd count")
+    try:
+        if ipaddress.ip_address(a.bind_ip).version != 4:
+            raise ValueError("only IPv4 bind addresses are supported")
+        ports = {i: external_port(i) for i in range(1, n + 1)}
+        seen = set()
+        for item in a.port:
+            node, port = map(int, item.split(":"))
+            if node not in ports or node in seen or not 1 <= port <= 65535:
+                raise ValueError("port override is duplicate or outside the supported range")
+            seen.add(node)
+            ports[node] = port
+        if len(set(ports.values())) != n:
+            raise ValueError("duplicate host ports")
+        if a.mode == "kraft":
+            import base64, re
+            if not re.fullmatch(r"[A-Za-z0-9_-]{22}", a.cluster_id or ""):
+                raise ValueError("KRaft cluster ID must be 22-character URL-safe Base64")
+            raw = base64.b64decode(a.cluster_id + "==", altchars=b"-_", validate=True)
+            if len(raw) != 16 or base64.urlsafe_b64encode(raw).decode().rstrip("=") != a.cluster_id:
+                raise ValueError("KRaft cluster ID is not canonical 128-bit Base64")
+    except ValueError as exc:
+        p.error(str(exc))
     rf = min(n, 3)
     min_isr = 2 if rf >= 2 else 1
     brokers = [f"kafka{i}:9092" for i in range(1, n + 1)]
@@ -51,7 +81,7 @@ def main() -> None:
                     "ZOOKEEPER_QUORUM_LISTEN_ON_ALL_IPS": "true",
                     "ZOOKEEPER_AUTOPURGE_SNAP_RETAIN_COUNT": "3",
                     "ZOOKEEPER_AUTOPURGE_PURGE_INTERVAL": "1",
-                    "KAFKA_HEAP_OPTS": "-Xms128m -Xmx256m",
+                    "KAFKA_HEAP_OPTS": a.zookeeper_heap,
                 },
                 "volumes": [f"zk{i}-data:/var/lib/zookeeper/data:U",
                             f"zk{i}-log:/var/lib/zookeeper/log:U"],
@@ -62,7 +92,7 @@ def main() -> None:
 
     voters = ",".join(f"{i}@kafka{i}:9094" for i in range(1, n + 1))
     for i in range(1, n + 1):
-        external = external_port(i)
+        external = ports[i]
         env = {
             "KAFKA_LISTENER_SECURITY_PROTOCOL_MAP": "INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT",
             "KAFKA_LISTENERS": "INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9093",
@@ -77,7 +107,7 @@ def main() -> None:
             "KAFKA_AUTO_LEADER_REBALANCE_ENABLE": "false", "KAFKA_REPLICA_LAG_TIME_MAX_MS": "10000",
             "KAFKA_LOG_RETENTION_HOURS": "24", "KAFKA_LOG_SEGMENT_BYTES": "16777216",
             "KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS": "10000", "KAFKA_LOG_CLEANER_ENABLE": "true",
-            "KAFKA_HEAP_OPTS": "-Xms256m -Xmx512m",
+            "KAFKA_HEAP_OPTS": a.kafka_heap,
         }
         if a.mode == "zk":
             env.update({"KAFKA_BROKER_ID": str(i), "KAFKA_ZOOKEEPER_CONNECT": zk_connect,
@@ -102,7 +132,7 @@ def main() -> None:
 
     services["tools"] = {
         "image": f"localhost/{a.lab_name}-tools:1.0",
-        "build": {"context": "./client", "dockerfile": "Containerfile"},
+        "build": {"context": str(Path(__file__).resolve().parents[1] / "client"), "dockerfile": "Containerfile"},
         "container_name": f"{a.lab_name}-tools", "restart": "no", "labels": labels(),
         "environment": {"BOOTSTRAP_SERVERS": ",".join(brokers),
                         "BROKER_COUNT": str(n), "REPLICATION_FACTOR": str(rf)},
@@ -110,7 +140,15 @@ def main() -> None:
     }
     result = {"services": services, "networks": {"labnet": {
         "name": f"{a.lab_name}-net", "driver": "bridge", "labels": labels()}}, "volumes": volumes}
-    a.output.write_text(json.dumps(result, indent=2) + "\n")
+    a.output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", dir=a.output.parent, delete=False) as stream:
+        temporary = Path(stream.name)
+        json.dump(result, stream, indent=2)
+        stream.write("\n")
+    try:
+        os.replace(temporary, a.output)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

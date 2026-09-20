@@ -1,38 +1,91 @@
-elasticsearch:
+# Default: Redis + Sentinel only. No bundled passwords. See README.md for first installation.
+# Full, legacy, and distributed profiles are explicit opt-ins.
+clusterDomain: cluster.local
+storageClassName: null
+scheduling:
+  requireSeparateNodes: false
+networkPolicy:
   enabled: true
+elasticsearch:
+  enabled: false
+  allowLegacy: false
   image: docker.elastic.co/elasticsearch/elasticsearch:7.17.29
   replicas: 3
   heap: 640m
-  storage: 20Gi
-
+  storage: 5Gi
+  bootstrapNewCluster: false
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: '2'
+      memory: 2Gi
 kafka:
-  enabled: true
+  enabled: false
   image: docker.io/confluentinc/cp-kafka:7.9.0
   replicas: 3
-  storage: 20Gi
+  storage: 5Gi
+  heap: -Xms256m -Xmx512m
   external:
     enabled: false
-
+  resources:
+    requests:
+      cpu: 250m
+      memory: 768Mi
+    limits:
+      cpu: '2'
+      memory: 1536Mi
 zookeeper:
   enabled: true
   image: docker.io/confluentinc/cp-zookeeper:7.9.0
   replicas: 3
-  storage: 5Gi
-
+  storage: 1Gi
+  heap: -Xms128m -Xmx256m
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: '1'
+      memory: 768Mi
 mariadb:
-  enabled: true
+  enabled: false
   image: bitnami/mariadb-galera:11.4.5
   replicas: 3
-  storage: 20Gi
-  rootPassword: change-me
-  sstPassword: change-me
-
+  storage: 5Gi
+  existingSecret: db-lab-credentials
+  bootstrapNewCluster: false
+  recovery:
+    bootstrapOrdinal: -1
+    confirmed: false
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: '2'
+      memory: 2Gi
 redis:
   enabled: true
   image: redis:7.4.11-alpine
   replicas: 3
-  storage: 5Gi
-  password: change-me
-
+  storage: 1Gi
+  sentinelStorage: 100Mi
+  existingSecret: db-lab-credentials
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: '1'
+      memory: 512Mi
+  sentinelResources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 128Mi
 service:
   type: ClusterIP

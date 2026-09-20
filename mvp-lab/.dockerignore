@@ -1,0 +1,6 @@
+*
+!requirements.txt
+!mvp_app/
+!mvp_app/**
+mvp_app/__pycache__/
+!Containerfile

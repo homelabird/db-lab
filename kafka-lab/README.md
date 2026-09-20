@@ -339,3 +339,14 @@ ADVERTISED_HOST=192.168.0.50
 | `reports/VALIDATION.md` | 통과한 검사와 미실행 항목 |
 
 **첫 실습은 `up → smoke → seed → read → consume → lag → broker-failover → min-isr` 순서로 진행하세요.**
+
+## 2026-09-18 실행 계약 수정
+
+실제 실행 파일은 `.state/compose.generated.yaml`입니다. tools build context는 프로젝트의 실제 `client/` 경로로 생성합니다.
+`KAFKA<N>_PORT`, `KAFKA_HEAP_OPTS`, `ZOOKEEPER_HEAP_OPTS`가 renderer에 반영되며, `.env`는 실행 가능한 셸이 아닌 KEY=value 데이터입니다.
+이미 export된 값이 우선하고 노드 번호는 설정한 NODES 범위 내에서 검사합니다. KRaft 상태 점검은 ZooKeeper를 호출하지 않습니다.
+
+KRaft ID는 canonical URL-safe Base64 16바이트 표현(22자)을 사용합니다. 정상 ID는 보존하며, 잘못된 기존 ID나 서로 다른 지정 ID는 거부합니다.
+기존 볼륨이 있을 때 저장 ID가 없으면 새 ID를 만들지 않습니다. **ID 오류 해결을 위해 상태 파일이나 볼륨을 무작정 지우지 마세요.**
+실제 meta.properties/백업과 일치하는 ID를 조사해야 합니다. 새 빈 실습을 시작할 때만 별도 프로젝트 이름/볼륨을 사용하세요.
+생성 산출물·경계·설정 반영 회귀 검사는 `tests/test_generated_config.py`를 포함한 `bash scripts/test-static.sh`로 실행합니다.

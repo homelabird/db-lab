@@ -1,0 +1,16 @@
+{
+  "bash_syntax_count": 53,
+  "python_syntax_count": 60,
+  "errors": [],
+  "tools": {
+    "docker": null,
+    "podman": null,
+    "podman-compose": null,
+    "helm": null,
+    "kubectl": null,
+    "shellcheck": null,
+    "go": "/usr/local/go/bin/go",
+    "java": "/usr/bin/java",
+    "python3": "/opt/pyvenv/bin/python3"
+  }
+}

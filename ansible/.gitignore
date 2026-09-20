@@ -1,0 +1,6 @@
+/artifacts/
+/inventory/hosts.yml
+/inventory/host_vars/
+/inventory/group_vars/
+/.venv/
+*.retry

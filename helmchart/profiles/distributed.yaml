@@ -1,0 +1,3 @@
+# Requires at least 3 schedulable workers. Placement is not an HA guarantee.
+scheduling:
+  requireSeparateNodes: true

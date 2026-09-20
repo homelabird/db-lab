@@ -1,0 +1,70 @@
+{
+  "date": "2026-09-18",
+  "generated_at": "2026-09-18T14:18:25.560049+00:00",
+  "input_sha256": "dc22615a4ff1aec59faf30a04eeb129b20e5ce61d466873a696e52385dad0731",
+  "tests": [
+    {
+      "suite": "root (51 routing + 24 guards + 16 chart subset)",
+      "tests": 91,
+      "status": "PASS",
+      "evidence": "root-expanded.log"
+    },
+    {
+      "suite": "elasticsearch",
+      "tests": 77,
+      "status": "PASS",
+      "evidence": "elasticsearch.log"
+    },
+    {
+      "suite": "kafka",
+      "tests": 94,
+      "status": "PASS",
+      "evidence": "kafka.log"
+    },
+    {
+      "suite": "mariadb",
+      "tests": 198,
+      "status": "PASS",
+      "evidence": "mariadb-host-tests.log"
+    },
+    {
+      "suite": "redis",
+      "tests": 184,
+      "status": "PASS",
+      "evidence": "redis.log"
+    }
+  ],
+  "total_passed": 644,
+  "scope": "host logic + explicit mocks + generated configuration + LIMITED Go-template contracts; NOT live engines or Helm",
+  "syntax": {
+    "bash_syntax_count": 53,
+    "python_syntax_count": 60,
+    "errors": [],
+    "tools": {
+      "docker": null,
+      "podman": null,
+      "podman-compose": null,
+      "helm": null,
+      "kubectl": null,
+      "shellcheck": null,
+      "go": "/usr/local/go/bin/go",
+      "java": "/usr/bin/java",
+      "python3": "/opt/pyvenv/bin/python3"
+    }
+  },
+  "real_helm": {
+    "status": "NOT_RUN",
+    "attempt_exit_code": 127,
+    "evidence": "real-helm.log"
+  },
+  "live_containers": "NOT_RUN",
+  "kubernetes_install": "NOT_RUN",
+  "failover_and_durability": "NOT_RUN",
+  "shellcheck": "NOT_RUN",
+  "python_environment": {
+    "version": "3.13.5",
+    "test_launcher": "python3 -S with explicit PYTHONPATH to installed site-packages; PYTHONDONTWRITEBYTECODE=1",
+    "site_packages": "/opt/pyvenv/lib/python3.13/site-packages"
+  },
+  "no_host_or_cluster_mutations": true
+}

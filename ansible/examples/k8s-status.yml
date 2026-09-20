@@ -1,0 +1,8 @@
+---
+db_lab_target: k8s
+db_lab_request: {action: status}
+db_lab_k8s:
+  context: kind-db-lab
+  allowed_contexts: [kind-db-lab]
+  namespace: db-lab
+  release: db-lab

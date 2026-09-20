@@ -615,6 +615,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest='command', required=True)
     sub.add_parser('idle')
+    health = sub.add_parser('health'); health.add_argument('--json', action='store_true')
     status = sub.add_parser('status'); status.add_argument('--json', action='store_true')
     wait = sub.add_parser('wait'); wait.add_argument('--timeout', type=int, default=180)
     sub.add_parser('master')
@@ -652,6 +653,18 @@ def main() -> int:
         signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
         print('lab-client ready; use ./lab.sh help', flush=True)
         while True: signal.pause()
+    elif args.command == 'health':
+        state = snapshot()
+        errors = topology_errors(state)
+        expected = CLUSTER_NODE_COUNT if DEPLOYMENT_MODE == 'cluster' else len(NODES)
+        if len(state.get('redis', {})) != expected: errors.append('Incomplete node sample')
+        if DEPLOYMENT_MODE == 'cluster' and len(state.get('cluster', {})) != expected:
+            errors.append('Incomplete CLUSTER INFO sample')
+        if DEPLOYMENT_MODE != 'cluster' and len(state.get('sentinel', {})) != len(SENTINELS):
+            errors.append('Incomplete Sentinel sample')
+        if args.json: print(json.dumps({'ready': not errors, 'errors': errors, 'scope': 'read-only topology'}))
+        else: print_status(state)
+        if errors: raise SystemExit(1)
     elif args.command == 'status':
         state = snapshot()
         print(json.dumps(state, indent=2)) if args.json else print_status(state)

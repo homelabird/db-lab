@@ -1,13 +1,15 @@
-db-lab has been rendered as one Helm release.
+Target: {{ .Release.Namespace }} / {{ .Release.Name }}
+Only explicitly enabled workloads are installed. Inspect with:
+  kubectl --context <LAB_CONTEXT> -n {{ .Release.Namespace }} get sts,pods,pvc,svc
 
-Check workloads:
-  kubectl get statefulsets,pods,svc
+Redis clients MUST discover the writable primary via the three authenticated
+{{ include "db-lab.fullname" . }}-redis-sentinel endpoints (port 26379), master name mymaster.
+The headless redis Service is a peer-discovery endpoint, NOT a writable load balancer.
 
-Internal endpoints:
-  Elasticsearch: {{ include "db-lab.fullname" . }}-elasticsearch:9200
-  Kafka:         {{ include "db-lab.fullname" . }}-kafka:9092
-  MariaDB:       {{ include "db-lab.fullname" . }}-mariadb:3306
-  Redis:         {{ include "db-lab.fullname" . }}-redis:6379
+No plaintext passwords are bundled. Secrets are external and must already exist.
+NetworkPolicy enforcement requires a supporting CNI. Clients in this namespace
+need the label db-lab/client={{ .Release.Name }}.
 
-This chart provides Kubernetes-native baseline workloads. The original
-Compose labs remain available for their lab-specific fault drills and clients.
+After first-time ES/Galera bootstrap, seal bootstrapNewCluster=false BEFORE
+loading data. Read helmchart/README.md for migration and full-outage recovery.
+This is a learning chart, not an automatically recovering production HA operator.

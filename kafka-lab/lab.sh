@@ -85,12 +85,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 case "$cmd" in help|-h|--help) help_text; exit 0;; esac
-[[ -f "$ROOT/.env" ]] || cp "$ROOT/.env.example" "$ROOT/.env"
-# This lab's .env is a trusted shell-compatible KEY=value configuration file.
-set -a
-# shellcheck source=/dev/null
-source "$ROOT/.env"
-set +a
+[[ -f "$ROOT/.env" ]] || (umask 077; set -C; cat "$ROOT/.env.example" > "$ROOT/.env")
+# Read KEY=value as data; never execute a configuration file. Exported env wins.
+while IFS='=' read -r key value || [[ -n "${key:-}" ]]; do
+    [[ -z "$key" || "$key" == \#* ]] && continue
+    [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "Invalid .env key: $key"
+    [[ -v "$key" ]] && continue
+    value="${value%$'\r'}"
+    if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then value="${value:1:${#value}-2}"; fi
+    printf -v "$key" '%s' "$value"
+    export "$key"
+done < "$ROOT/.env"
 : "${LAB_NAME:=kzk-lab}" "${KAFKA_MODE:=zk}" "${CP_VERSION:=7.9.0}" "${BIND_IP:=127.0.0.1}"
 : "${NODES:=${REQUESTED_NODES:-3}}"
 : "${REQUESTED_NODES:=$NODES}"
@@ -115,22 +120,27 @@ VOLUME_PREFIX="$LAB_NAME"
 if [[ "$KAFKA_MODE" == kraft ]]; then
     VOLUME_PREFIX="$LAB_NAME-kraft"
     : "${KRAFT_CLUSTER_ID:=}"
-    if [[ -z "$KRAFT_CLUSTER_ID" && -f "$ROOT/.state/kraft-cluster-id" ]]; then
-        KRAFT_CLUSTER_ID=$(cat "$ROOT/.state/kraft-cluster-id")
+    if [[ -z "$KRAFT_CLUSTER_ID" && ! -f "$ROOT/.state/kraft-cluster-id" ]]; then
+        need podman
+        for ((i=1; i<=NODES; i++)); do
+            if podman volume exists "$LAB_NAME-kraft-kafka$i-data"; then
+                die 'Existing KRaft volumes but no cluster ID. Recover it from meta.properties; automatic reinitialization is refused.'
+            fi
+        done
     fi
-    if [[ -z "$KRAFT_CLUSTER_ID" ]]; then
-        command -v python3 >/dev/null 2>&1 || die 'KRaft 최초 실행에는 python3 명령이 필요합니다.'
-        KRAFT_CLUSTER_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
-        mkdir -p "$ROOT/.state"
-        printf '%s\n' "$KRAFT_CLUSTER_ID" > "$ROOT/.state/kraft-cluster-id"
-    fi
-    [[ "$KRAFT_CLUSTER_ID" =~ ^[a-zA-Z0-9_-]{10,}$ ]] || die 'KRAFT_CLUSTER_ID가 유효하지 않습니다.'
+    KRAFT_CLUSTER_ID=$(python3 "$ROOT/scripts/kraft-id.py" "$ROOT/.state/kraft-cluster-id" "$KRAFT_CLUSTER_ID") || exit 1
     export KRAFT_CLUSTER_ID
 fi
 mkdir -p "$ROOT/.state" "$ROOT/reports"
 render_args=(--mode "$KAFKA_MODE" --nodes "$NODES" --lab-name "$LAB_NAME"
-    --cp-version "$CP_VERSION" --advertised-host "$ADVERTISED_HOST" --bind-ip "$BIND_IP")
-[[ "$KAFKA_MODE" != kraft ]] || render_args+=(--cluster-id "$KRAFT_CLUSTER_ID")
+    --cp-version "$CP_VERSION" --advertised-host "$ADVERTISED_HOST" --bind-ip "$BIND_IP"
+    "--kafka-heap=${KAFKA_HEAP_OPTS:--Xms256m -Xmx512m}"
+    "--zookeeper-heap=${ZOOKEEPER_HEAP_OPTS:--Xms128m -Xmx256m}")
+for ((i=1; i<=NODES; i++)); do
+    port_key="KAFKA${i}_PORT"
+    [[ -z "${!port_key:-}" ]] || render_args+=(--port "$i:${!port_key}")
+done
+[[ "$KAFKA_MODE" != kraft ]] || render_args+=("--cluster-id=$KRAFT_CLUSTER_ID")
 python3 "$ROOT/scripts/render-compose.py" "${render_args[@]}" --output "$COMPOSE_FILE"
 
 pc() {
@@ -139,8 +149,14 @@ pc() {
 pc_ui() {
     (cd "$ROOT" && podman-compose --in-pod=false --env-file "$ROOT/.env" -p "$LAB_NAME" -f "$COMPOSE_FILE" -f "$ROOT/compose.ui.yaml" "$@")
 }
-valid_service() { [[ "$1" =~ ^(kafka[1-9]|zk[1-9]|tools|ui)$ ]] || die "허용되지 않은 서비스: $1"; }
-valid_id() { [[ "$1" =~ ^[1-9]$ && "$1" -le "$NODES" ]] || die "노드 번호는 1..$NODES 범위만 허용합니다."; }
+valid_service() {
+    case "$1" in tools|ui) return 0;; esac
+    [[ "$1" =~ ^(kafka|zk)([1-9][0-9]*)$ ]] || die "허용되지 않은 서비스: $1"
+    local kind=${BASH_REMATCH[1]} number=${BASH_REMATCH[2]}
+    valid_id "$number"
+    [[ "$kind" != zk || "$KAFKA_MODE" == zk ]] || die 'ZooKeeper services are unavailable in KRaft mode.'
+}
+valid_id() { [[ "$1" =~ ^[1-9][0-9]*$ && ${#1} -le 3 && "$1" -le "$NODES" ]] || die "노드 번호는 1..$NODES 범위만 허용합니다."; }
 exists() { podman container exists "$LAB_NAME-$1"; }
 owned() {
     local s=$1 label
@@ -204,7 +220,7 @@ health() {
         client zk-status --serving "$NODES" --timeout "$STARTUP_TIMEOUT"
     fi
     client wait --brokers "$NODES" --timeout "$STARTUP_TIMEOUT"
-    [[ "$KAFKA_MODE" == kraft ]] && kraft_status
+    if [[ "$KAFKA_MODE" == kraft ]]; then kraft_status; fi
 }
 kraft_status() {
     [[ "$KAFKA_MODE" == kraft ]] || die 'kraft-status는 KRaft 모드에서만 사용할 수 있습니다.'
@@ -522,7 +538,7 @@ case "$cmd" in
   scenarios) scenarios;;
   status)
     podman ps -a --filter "label=io.kzk.lab=$LAB_NAME"
-    client zk-status
+    if [[ "$KAFKA_MODE" == zk ]]; then client zk-status; else kraft_status; fi
     client status;;
   topics) kcli kafka-topics --describe "$@";;
   seed) client seed "$@";;
@@ -540,7 +556,8 @@ case "$cmd" in
   zk-shell)
     [[ "$KAFKA_MODE" == zk ]] || die 'zk-shell은 ZooKeeper 모드에서만 사용할 수 있습니다.'
     broker=$(pick_broker)
-    podman exec -i "$broker" zookeeper-shell 'zk1:2181,zk2:2181,zk3:2181' "$@";;
+    zk_connect=$(printf 'zk%s:2181,' $(seq 1 "$NODES")); zk_connect=${zk_connect%,}
+    podman exec -i "$broker" zookeeper-shell "$zk_connect" "$@";;
   logs)
     [[ $# -ge 1 ]] || die 'logs kafka1 [--follow]'; service=$1; shift; owned "$service"
     podman logs --tail 150 "$@" "$LAB_NAME-$service";;

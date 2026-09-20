@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source ./scripts/common.sh
+check_exposure
 status=0
 for bin in python3 curl; do command -v "$bin" || status=1; done
 python3 -c 'import sys; assert sys.version_info >= (3,9), "Python 3.9+ required"' || status=1

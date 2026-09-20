@@ -2,46 +2,128 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "db-lab.fullname" . }}-sentinel
+  name: {{ include "db-lab.fullname" . }}-redis-sentinel
+  labels: {{- include "db-lab.labels" . | nindent 4 }}
 spec:
   clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    component: redis-sentinel
+    {{- include "db-lab.selector" . | nindent 4 }}
   ports:
     - name: sentinel
       port: 26379
-  selector:
-    component: redis-sentinel
+      targetPort: sentinel
 ---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "db-lab.fullname" . }}-sentinel
+  name: {{ include "db-lab.fullname" . }}-redis-sentinel
+  labels: {{- include "db-lab.labels" . | nindent 4 }}
 spec:
-  serviceName: {{ include "db-lab.fullname" . }}-sentinel
-  replicas: 3
+  serviceName: {{ include "db-lab.fullname" . }}-redis-sentinel
+  podManagementPolicy: Parallel
+  replicas: {{ .Values.redis.replicas }}
   selector:
     matchLabels:
       component: redis-sentinel
+      {{- include "db-lab.selector" . | nindent 6 }}
   template:
     metadata:
+      annotations:
+        checksum/sentinel-start.sh: {{ .Files.Get "scripts/sentinel-start.sh" | sha256sum | quote }}
       labels:
         component: redis-sentinel
+        {{- include "db-lab.selector" . | nindent 8 }}
     spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+        runAsGroup: 999
+        runAsNonRoot: true
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      {{- include "db-lab.placement" (dict "root" . "component" "redis-sentinel") | nindent 6 }}
       containers:
-        - name: sentinel
+        - name: redis-sentinel
           image: {{ .Values.redis.image | quote }}
-          command: ["sh", "-ec"]
-          args:
-            - |
-              cat > /tmp/sentinel.conf <<EOF
-              port 26379
-              sentinel monitor mymaster {{ include "db-lab.fullname" . }}-redis-0.{{ include "db-lab.fullname" . }}-redis 6379 2
-              sentinel auth-pass mymaster {{ .Values.redis.password }}
-              sentinel down-after-milliseconds mymaster 5000
-              sentinel failover-timeout mymaster 30000
-              sentinel parallel-syncs mymaster 1
-              EOF
-              exec redis-server /tmp/sentinel.conf --sentinel
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources: {{- toYaml .Values.redis.sentinelResources | nindent 12 }}
           ports:
             - name: sentinel
               containerPort: 26379
+          command: ["/bin/sh", "/opt/db-lab/sentinel-start.sh"]
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.existingSecret | quote }}
+                  key: redis-password
+            - name: REDIS_PREFIX
+              value: "{{ include "db-lab.fullname" . }}-redis"
+            - name: REDIS_SERVICE
+              value: "{{ include "db-lab.dns" (dict "root" . "service" (printf "%s-redis" (include "db-lab.fullname" .))) }}"
+            - name: SENTINEL_SERVICE
+              value: "{{ include "db-lab.dns" (dict "root" . "service" (printf "%s-redis-sentinel" (include "db-lab.fullname" .))) }}"
+          startupProbe:
+            tcpSocket:
+              port: sentinel
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-ec", "export REDISCLI_AUTH=\"$REDIS_PASSWORD\"; redis-cli --raw -p 26379 SENTINEL CKQUORUM mymaster | grep -q \"^OK \""]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-ec", "export REDISCLI_AUTH=\"$REDIS_PASSWORD\"; test \"$(redis-cli --raw -p 26379 ping)\" = PONG"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: scripts
+              mountPath: /opt/db-lab
+              readOnly: true
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ include "db-lab.fullname" . }}-scripts
+            defaultMode: 0555
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "db-lab.selector" . | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- include "db-lab.storageClass" . | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ .Values.redis.sentinelStorage }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "db-lab.fullname" . }}-redis-sentinel
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      component: redis-sentinel
+      {{- include "db-lab.selector" . | nindent 6 }}
 {{- end }}

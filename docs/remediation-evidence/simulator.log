@@ -1,0 +1,12 @@
+test_failures_and_reconnect_are_separate (test_simulator_pacing.PacingTests.test_failures_and_reconnect_are_separate) ... ok
+test_inflight_deadline_overrun_is_explicit (test_simulator_pacing.PacingTests.test_inflight_deadline_overrun_is_explicit) ... ok
+test_invalid_ranges (test_simulator_pacing.PacingTests.test_invalid_ranges) ... ok
+test_rates_1_10_100 (test_simulator_pacing.PacingTests.test_rates_1_10_100) ... ok
+test_reconnect_failure_does_not_abort_summary (test_simulator_pacing.PacingTests.test_reconnect_failure_does_not_abort_summary) ... ok
+test_slow_db_drops_slots_instead_of_burst (test_simulator_pacing.PacingTests.test_slow_db_drops_slots_instead_of_burst) ... ok
+test_synthetic_and_measured_latency_labels (test_simulator_pacing.PacingTests.test_synthetic_and_measured_latency_labels) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.007s
+
+OK

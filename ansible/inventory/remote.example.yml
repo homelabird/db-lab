@@ -1,0 +1,19 @@
+---
+all:
+  children:
+    db_lab:
+      hosts:
+        lab1:
+          # Documentation-only address. Replace with YOUR lab host.
+          ansible_host: 192.0.2.10
+          ansible_user: lab
+          ansible_python_interpreter: /usr/bin/python3
+          db_lab_project_root: /home/lab/db-lab-main
+        lab2:
+          ansible_host: 192.0.2.11
+          ansible_user: lab
+          ansible_python_interpreter: /usr/bin/python3
+          db_lab_project_root: /home/lab/db-lab-main
+      vars:
+        ansible_become: false
+        # SSH keys/agent/known_hosts are managed by you. No passwords in inventory.

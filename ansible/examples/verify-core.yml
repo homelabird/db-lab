@@ -1,0 +1,4 @@
+---
+db_lab_target: mvp
+db_lab_request: {action: verify, verb: run, name: core}
+db_lab_allow_changes: true  # smoke/baseline create synthetic orders

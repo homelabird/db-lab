@@ -1,0 +1,10 @@
+# Explicit, isolated full lab. Bootstrap flags default false; see first-install steps.
+elasticsearch:
+  enabled: true
+  allowLegacy: true
+kafka:
+  enabled: true
+mariadb:
+  enabled: true
+redis:
+  enabled: true

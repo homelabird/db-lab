@@ -1,0 +1,35 @@
+---
+- name: Export and fetch ONLY allowlisted acceptance reports
+  hosts: db_lab
+  gather_facts: false
+  become: false
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Validate report identity and inventory alias
+      ansible.builtin.assert:
+        that:
+          - db_lab_project_root is defined
+          - db_lab_acceptance_id is defined
+          - db_lab_acceptance_id is match('^accept-[a-f0-9]{12}$')
+          - inventory_hostname is match('^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$')
+          - not (ansible_become | default(false) | bool)
+        fail_msg: Use an exact acceptance run ID and a safe inventory alias; no become.
+    - name: Generate the existing sanitized export on the managed host
+      db_lab_control:
+        project_root: "{{ db_lab_project_root }}"
+        target: mvp
+        request:
+          action: verify
+          verb: export
+          name: "{{ db_lab_acceptance_id }}"
+      register: db_lab_export
+    - name: Fetch only the three validated share files
+      ansible.builtin.fetch:
+        src: "{{ item }}"
+        dest: "{{ db_lab_collect_root | default(playbook_dir ~ '/artifacts') }}/{{ inventory_hostname }}/{{ db_lab_acceptance_id }}/"
+        flat: true
+        validate_checksum: true
+      loop: "{{ db_lab_export.share_files | default([]) }}"
+      when: not ansible_check_mode
+      # No recursive fetch, env, raw stdout, credentials or fault markers.

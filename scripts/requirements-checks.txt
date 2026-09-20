@@ -1,0 +1,6 @@
+# Local manifest/contract tests and Kubernetes preflight only.
+PyYAML==6.0.2
+jsonschema==4.23.0
+
+# The HTTP, smoke and message contract tests import requests directly.
+requests==2.32.5

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "db-lab.fullname" . }}-scripts
+  labels: {{- include "db-lab.labels" . | nindent 4 }}
+data:
+  mariadb-ready.sh: |
+{{ .Files.Get "scripts/mariadb-ready.sh" | indent 4 }}
+  mariadb-start.sh: |
+{{ .Files.Get "scripts/mariadb-start.sh" | indent 4 }}
+  redis-ready.sh: |
+{{ .Files.Get "scripts/redis-ready.sh" | indent 4 }}
+  redis-start.sh: |
+{{ .Files.Get "scripts/redis-start.sh" | indent 4 }}
+  sentinel-start.sh: |
+{{ .Files.Get "scripts/sentinel-start.sh" | indent 4 }}

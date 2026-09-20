@@ -197,3 +197,9 @@ CPU 제한과 복제 resync, HA 전환은 위 확장 9개 자동 검증과 별�
 - `docs/ops/worksheet.md`: 기록용 빈 실습지.
 
 이 실습의 RESP2 클라이언트는 외부 Python 의존성 없이 동작하는 **교육용 최소 구현**입니다. TLS/Cluster/트랜잭션/운영 연결 풀을 제공하는 범용 클라이언트가 아닙니다. 기존 기본 HA 클라이언트는 redis-py를 계속 사용합니다.
+
+## 2026-09-18 health 어댑터
+
+`bash lab.sh health --json`은 읽기 전용 topology snapshot을 검사하여 부족한 노드/Sentinel 표본, 복제 연결, 역할, 클러스터 슬롯 이상을 오류로 반환합니다.
+기존 `wait`/`verify`의 데이터 쓰기 또는 내구성 시험과 별개입니다. 이 변경은 Compose 복제 토폴로지를 새로 구성하지 않습니다.
+Helm용 새 토폴로지는 `../helmchart`의 별도 구현이며 Compose 테스트 통과를 Helm 검증으로 해석하면 안 됩니다.

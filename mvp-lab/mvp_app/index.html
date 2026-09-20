@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DB Lab · 작은 주문 실습</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#14252f;background:#f4f7f9}*{box-sizing:border-box}body{max-width:1200px;margin:0 auto;padding:28px}h1{margin:4px 0 10px}h2{font-size:19px;margin-top:0}p{line-height:1.6}header{margin-bottom:24px}.eyebrow{color:#416676;font-size:12px;letter-spacing:2px}.flow{padding:16px;background:#173b4d;color:white;border-radius:10px;font-family:monospace;line-height:1.8;overflow:auto}.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}.card{background:white;padding:22px;border:1px solid #dce5e9;border-radius:12px;margin-bottom:20px}.wide{grid-column:1/-1}label{display:block;font-size:13px;margin:10px 0 4px}input,select{width:100%;padding:10px;border:1px solid #bacbd3;border-radius:6px;font:inherit}button{padding:10px 14px;border:0;border-radius:6px;background:#226482;color:white;cursor:pointer;margin:10px 8px 0 0}button.secondary{background:#e8eff3;color:#244652}button:disabled{opacity:.5;cursor:wait}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f6f8;border-radius:6px;padding:12px;max-height:310px;overflow:auto;font-size:12px}.hint{font-size:13px;color:#55717f}.badge{display:inline-block;font-size:12px;padding:5px 9px;border-radius:6px;background:#e7f1eb;margin:3px}.bad{background:#fde8e7}.warn{background:#fff1d2}#message{padding:12px;border-radius:6px;min-height:44px;margin-bottom:20px;background:#e9eff4}table{width:100%;border-collapse:collapse;font-size:13px}td,th{text-align:left;border-bottom:1px solid #e4ebef;padding:9px}td button{margin:0;padding:5px 9px}.scroll{overflow:auto}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}code{font-size:12px}@media(max-width:760px){.grid{grid-template-columns:1fr}body{padding:16px}.split{grid-template-columns:1fr}}
+</style></head>
+<body>
+<header><div class="eyebrow">LOCAL STUDY · NO PRODUCTION DATA</div><h1>작은 주문 시스템</h1>
+<p>정상일 때와 DB 하나가 멈췄을 때를 비교하세요. 주문 원본, 캐시, 검색 결과가 언제 같고 언제 달라지는지 확인합니다.</p>
+<div class="flow">쓰기: API → MariaDB [주문 + outbox] → worker → Kafka → worker → Elasticsearch<br>상세 읽기: API → Redis HIT / MISS → MariaDB → Redis (TTL)<br>상태 변경: MariaDB 버전 증가 → 검색 반영 · 캐시 무효화</div></header>
+<div id="message" role="status">서버 상태를 확인하려면 아래 버튼을 누르세요. 자동 장애 주입은 없습니다.</div>
+<div class="grid">
+<section class="card"><h2>1. 주문 만들기</h2><form id="createForm"><label for="item">상품 이름 (가짜 데이터만)</label><input id="item" value="연습용 키보드" maxlength="100" required>
+<div class="split"><div><label for="quantity">수량</label><input id="quantity" type="number" min="1" max="1000" value="1" required></div><div><label for="price">단가 (정수 단위)</label><input id="price" type="number" min="0" max="100000000" value="30000" required></div></div>
+<button type="submit">주문 저장</button></form><p class="hint">MariaDB 저장 성공 ≠ 검색 반영 완료. 통신 오류 후 같은 폼 재전송은 같은 Idempotency-Key를 유지합니다.</p><pre id="createResult">아직 요청하지 않았습니다.</pre></section>
+<section class="card"><h2>2. 상세 조회와 캐시 비교</h2><label for="orderId">주문 ID</label><input id="orderId" placeholder="주문을 만들거나 목록에서 선택하세요"><button id="detail">일반 조회</button><button id="fresh" class="secondary">MariaDB 직접 조회</button><button id="inspect" class="secondary">세 저장소 대조 (읽기 전용)</button>
+<p class="hint">응답의 source가 mariadb → redis로 바뀌는지 보세요. Redis 장애 시 DB로 우회합니다. TTL은 캐시 저장 시점 기준입니다. DB 직접 조회는 캐시도 채웁니다. 관측만 하려면 읽기 전용 대조를 사용하세요.</p>
+<div class="split"><div><label for="status">다음 상태</label><select id="status"><option value="paid">paid</option><option value="shipped">shipped</option><option value="cancelled">cancelled</option></select></div><div><label for="version">현재 version</label><input id="version" type="number" min="1" value="1"></div></div><button id="update" class="secondary">상태 변경</button><pre id="detailResult">아직 조회하지 않았습니다.</pre></section>
+<section class="card"><h2>3. Elasticsearch 검색</h2><label for="query">상품 이름 또는 주문 ID</label><input id="query" placeholder="비워 두면 전체 검색"><button id="search">검색</button><p class="hint">Kafka/worker 장애: 검색 성공이어도 최신 주문이 없을 수 있습니다. ES 장애: 검색은 503이며 SQL로 몰래 대체하지 않습니다.</p><pre id="searchResult">아직 검색하지 않았습니다.</pre></section>
+<section class="card"><h2>4. 연결 상태와 처리 대기</h2><button id="diagnostics">진단 새로고침</button><div id="badges"></div><p class="hint">outbox_pending: Kafka 전송 대기 · lag: 검색 소비 대기. 모든 연결이 정상이어도 worker가 멈췄을 수 있습니다.</p><pre id="diagnosticsResult">아직 진단하지 않았습니다.</pre></section>
+<section class="card wide"><h2>MariaDB 주문 원본</h2><button id="orders" class="secondary">목록 새로고침 (최근 100개)</button><div class="scroll"><table><thead><tr><th>상품</th><th>합계</th><th>상태</th><th>버전</th><th>ID / 선택</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+<section class="card wide"><h2>시나리오 자동 실행</h2><p class="hint">아래 명령은 터미널에서 실행합니다. seed는 요청 계획을 고정하며, 실제 지연·스레드 순서까지 같게 만들지는 않습니다. 결과는 reports/simulations에 기록됩니다.</p><pre>./all.sh mvp simulate list
+./all.sh mvp simulate plan kafka-outage --seed 42
+./all.sh mvp simulate run baseline --seed 42 --yes
+./all.sh mvp simulate run kafka-outage --seed 42 --yes
+./all.sh mvp simulate run row-lock --seed 42 --yes
+./all.sh mvp simulate run version-race --seed 42 --yes
+# 중단된 실습의 복원 마커가 남았을 때만:
+./all.sh mvp simulate recover --yes</pre><p class="hint">plan은 DB를 변경하지 않습니다. run은 합성 주문을 남기고 지정한 장애를 실제로 주입합니다. 웹에서 장애 명령은 실행하지 않습니다.</p></section>
+<section class="card wide"><h2>터미널에서 장애·교체 실습</h2><p class="hint">한 번에 하나만 변경한 뒤 같은 주문으로 비교하세요. 웹 화면은 호스트 명령을 실행하지 않습니다.</p><pre>./all.sh mvp stop kafka --yes         # 주문은 저장, outbox 증가
+./all.sh mvp resume kafka             # 전송 재개 후 검색 반영 확인
+./all.sh mvp stop redis --yes         # 일반 조회가 MariaDB로 우회
+./all.sh mvp resume redis
+./all.sh mvp experiment redis-spare --yes       # 별도 Redis로 연결 대상 교체
+./all.sh mvp experiment bad-db-password --yes   # API만 잘못된 DB 암호 사용
+./all.sh mvp experiment fresh-search --yes      # 기존 인덱스를 보존하고 새 인덱스 사용
+./all.sh mvp rebuild-search --yes               # MariaDB 원본으로 현재 검색 인덱스 재구축
+./all.sh mvp experiment normal --yes           # 앱 연결 설정 복원
+./all.sh mvp smoke                             # 실제 주문→검색 경로 확인</pre><p class="hint">normal은 앱 설정만 복원합니다. stop한 DB는 resume으로 별도 시작하세요. 컨테이너 재생성과 빈 데이터 저장소로 교체하는 것은 다릅니다.</p></section>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+let pendingKey=null,pendingBody=null;
+function show(id,value){$(id).textContent=JSON.stringify(value,null,2)}
+async function request(path,options={}){const r=await fetch(path,options);const body=await r.json();if(!r.ok){const e=new Error(`HTTP ${r.status}: ${body.error||'request_failed'}`);e.body=body;e.status=r.status;throw e}return body}
+async function perform(button,fn){button.disabled=true;try{await fn();$('message').textContent='요청 완료. 응답의 source, version, 대기 건수를 비교하세요.'}catch(e){$('message').textContent=e.message+' · 다른 영역에 남은 값은 이전 응답일 수 있습니다.';const output={detail:'detailResult',fresh:'detailResult',update:'detailResult',inspect:'detailResult',search:'searchResult',diagnostics:'diagnosticsResult'}[button.id];if(output)show(output,e.body||{error:e.message})}finally{button.disabled=false}}
+function selectOrder(o){$('orderId').value=o.id;$('version').value=o.version}
+$('createForm').onsubmit=e=>{e.preventDefault();perform(e.submitter,async()=>{const data={item:$('item').value,quantity:Number($('quantity').value),unit_price:Number($('price').value)};const body=JSON.stringify(data);if(body!==pendingBody||!pendingKey){pendingKey=crypto.randomUUID();pendingBody=body}try{const r=await request('/api/orders',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':pendingKey},body});show('createResult',r);selectOrder(r.order);pendingKey=null;pendingBody=null}catch(e){show('createResult',e.body||{error:e.message});throw e}})};
+for(const [id,fresh] of [['detail',false],['fresh',true]]){$(id).onclick=e=>perform(e.target,async()=>{const r=await request('/api/orders/'+encodeURIComponent($('orderId').value)+(fresh?'?fresh=1':''));show('detailResult',r);selectOrder(r.order)})}
+$('inspect').onclick=e=>perform(e.target,async()=>show('detailResult',await request('/api/study/order/'+encodeURIComponent($('orderId').value))));
+$('update').onclick=e=>perform(e.target,async()=>{const r=await request('/api/orders/'+encodeURIComponent($('orderId').value),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:$('status').value,expected_version:Number($('version').value)})});show('detailResult',r);selectOrder(r.order)});
+$('search').onclick=e=>perform(e.target,async()=>show('searchResult',await request('/api/search?q='+encodeURIComponent($('query').value))));
+$('diagnostics').onclick=e=>perform(e.target,async()=>{const r=await request('/api/diagnostics');show('diagnosticsResult',r);$('badges').replaceChildren();for(const [name,state] of Object.entries(r.dependencies)){const b=document.createElement('span');b.className='badge'+(state.reachable?'':' bad');b.textContent=name+': '+(state.reachable?'연결 가능':'실패');$('badges').appendChild(b)}});
+$('orders').onclick=e=>perform(e.target,async()=>{const r=await request('/api/orders');$('rows').replaceChildren();for(const o of r.orders){const tr=document.createElement('tr');for(const value of [o.item,o.total,o.status,o.version]){const td=document.createElement('td');td.textContent=String(value);tr.appendChild(td)}const td=document.createElement('td');const b=document.createElement('button');b.textContent=o.id;b.onclick=()=>selectOrder(o);td.appendChild(b);tr.appendChild(td);$('rows').appendChild(tr)}});
+</script></body></html>

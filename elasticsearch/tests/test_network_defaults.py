@@ -7,18 +7,18 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class NetworkDefaultsTests(unittest.TestCase):
-    def test_env_publishes_all_ipv4(self):
+    def test_env_defaults_to_loopback(self):
         text = (ROOT / '.env.example').read_text()
-        self.assertRegex(text, r'(?m)^ES_BIND_IP=0\.0\.0\.0$')
+        self.assertRegex(text, r'(?m)^ES_BIND_IP=127\.0\.0\.1$')
         self.assertNotRegex(text, r'(?m)^ES_BIND_IP=.*?/')
 
-    def test_ui_compose_port_defaults_publish_all_ipv4(self):
+    def test_ui_compose_port_defaults_are_loopback(self):
         text = (ROOT / 'compose.yaml').read_text()
         values = re.findall(r'\$\{ES_BIND_IP:-([^}]+)\}', text)
-        self.assertEqual(values, ['0.0.0.0', '0.0.0.0', '0.0.0.0'])
-        self.assertIn('${ES_BIND_IP:-0.0.0.0}:${ES_PORT:-9200}:9200', text)
-        self.assertIn('${ES_BIND_IP:-0.0.0.0}:${CEREBRO_PORT:-9000}:9000', text)
-        self.assertIn('${ES_BIND_IP:-0.0.0.0}:${KIBANA_PORT:-5601}:5601', text)
+        self.assertEqual(values, ['127.0.0.1', '127.0.0.1', '127.0.0.1'])
+        self.assertIn('${ES_BIND_IP:-127.0.0.1}:${ES_PORT:-9200}:9200', text)
+        self.assertIn('${ES_BIND_IP:-127.0.0.1}:${CEREBRO_PORT:-9000}:9000', text)
+        self.assertIn('${ES_BIND_IP:-127.0.0.1}:${KIBANA_PORT:-5601}:5601', text)
 
     def test_local_client_url_is_not_a_listen_address(self):
         env = (ROOT / '.env.example').read_text()

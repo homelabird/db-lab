@@ -1,0 +1,5 @@
+---
+db_lab_target: mvp
+db_lab_request: {action: messages, verb: run, name: poison-schema}
+db_lab_allow_changes: true
+db_lab_allow_faults: true

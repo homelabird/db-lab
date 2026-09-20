@@ -1,0 +1,49 @@
+test_all_cannot_be_mixed_with_other_targets (test_all.AllControllerTests.test_all_cannot_be_mixed_with_other_targets) ... ok
+test_child_working_directory_and_environment_isolation (test_all.AllControllerTests.test_child_working_directory_and_environment_isolation) ... ok
+test_common_aliases (test_all.AllControllerTests.test_common_aliases) ... ok
+test_common_down_rejects_deletion_flags (test_all.AllControllerTests.test_common_down_rejects_deletion_flags) ... ok
+test_dangling_env_symlink_is_not_overwritten (test_all.AllControllerTests.test_dangling_env_symlink_is_not_overwritten) ... ok
+test_default_status_visits_all_projects (test_all.AllControllerTests.test_default_status_visits_all_projects) ... ok
+test_down_reverses_selection_without_purge (test_all.AllControllerTests.test_down_reverses_selection_without_purge) ... ok
+test_dry_run_creates_nothing_and_executes_nothing (test_all.AllControllerTests.test_dry_run_creates_nothing_and_executes_nothing) ... ok
+test_dry_run_still_requires_reset_confirmation (test_all.AllControllerTests.test_dry_run_still_requires_reset_confirmation) ... ok
+test_fail_fast_marks_unattempted_projects (test_all.AllControllerTests.test_fail_fast_marks_unattempted_projects) ... ok
+test_failed_initialization_prevents_start (test_all.AllControllerTests.test_failed_initialization_prevents_start) ... ok
+test_failed_shutdown_prevents_restart_start (test_all.AllControllerTests.test_failed_shutdown_prevents_restart_start) ... ok
+test_failure_continues_and_returns_nonzero (test_all.AllControllerTests.test_failure_continues_and_returns_nonzero) ... ok
+test_helm_custom_release_namespace_timeout (test_all.AllControllerTests.test_helm_custom_release_namespace_timeout) ... ok
+test_helm_exit_status_is_preserved (test_all.AllControllerTests.test_helm_exit_status_is_preserved) ... ok
+test_helm_non_mutating_commands_and_aliases (test_all.AllControllerTests.test_helm_non_mutating_commands_and_aliases) ... ok
+test_helm_uninstall_requires_confirmation (test_all.AllControllerTests.test_helm_uninstall_requires_confirmation) ... ok
+test_helm_upgrade_uses_chart_defaults_and_caller_cwd (test_all.AllControllerTests.test_helm_upgrade_uses_chart_defaults_and_caller_cwd) ... ok
+test_help_and_dry_run_do_not_require_python_or_container_tools (test_all.AllControllerTests.test_help_and_dry_run_do_not_require_python_or_container_tools) ... ok
+test_help_and_list_require_no_runtime (test_all.AllControllerTests.test_help_and_list_require_no_runtime) ... ok
+test_init_preserves_existing_env (test_all.AllControllerTests.test_init_preserves_existing_env) ... ok
+test_interrupt_exit_stops_batch (test_all.AllControllerTests.test_interrupt_exit_stops_batch) ... ok
+test_logs_requires_valid_single_project (test_all.AllControllerTests.test_logs_requires_valid_single_project) ... ok
+test_logs_routes_one_project (test_all.AllControllerTests.test_logs_routes_one_project) ... ok
+test_missing_entrypoint_preflights_entire_selection (test_all.AllControllerTests.test_missing_entrypoint_preflights_entire_selection) ... ok
+test_missing_helm_has_clear_error (test_all.AllControllerTests.test_missing_helm_has_clear_error) ... ok
+test_missing_template_preflights_entire_selection (test_all.AllControllerTests.test_missing_template_preflights_entire_selection) ... ok
+test_native_exit_status_preserved (test_all.AllControllerTests.test_native_exit_status_preserved) ... ok
+test_no_arguments_only_shows_help (test_all.AllControllerTests.test_no_arguments_only_shows_help) ... ok
+test_offline_tests_use_existing_test_scripts (test_all.AllControllerTests.test_offline_tests_use_existing_test_scripts) ... ok
+test_project_first_preserves_native_semantics_and_arguments (test_all.AllControllerTests.test_project_first_preserves_native_semantics_and_arguments) ... ok
+test_project_without_command_gets_native_help (test_all.AllControllerTests.test_project_without_command_gets_native_help) ... ok
+test_reset_limits_scope (test_all.AllControllerTests.test_reset_limits_scope) ... ok
+test_reset_requires_scope_and_confirmation (test_all.AllControllerTests.test_reset_requires_scope_and_confirmation) ... ok
+test_reset_uses_each_native_deletion_guard (test_all.AllControllerTests.test_reset_uses_each_native_deletion_guard) ... ok
+test_restart_is_down_init_up (test_all.AllControllerTests.test_restart_is_down_init_up) ... ok
+test_selected_order_and_alias_deduplication (test_all.AllControllerTests.test_selected_order_and_alias_deduplication) ... ok
+test_start_initializes_before_up (test_all.AllControllerTests.test_start_initializes_before_up) ... ok
+test_symlink_and_foreign_working_directory (test_all.AllControllerTests.test_symlink_and_foreign_working_directory) ... ok
+test_termination_exit_stops_batch (test_all.AllControllerTests.test_termination_exit_stops_batch) ... ok
+test_trailing_dry_run_supported_for_common_commands (test_all.AllControllerTests.test_trailing_dry_run_supported_for_common_commands) ... ok
+test_unknown_commands_and_options (test_all.AllControllerTests.test_unknown_commands_and_options) ... ok
+test_unknown_target_prevents_all_side_effects (test_all.AllControllerTests.test_unknown_target_prevents_all_side_effects) ... ok
+test_up_creates_es_kafka_env_privately (test_all.AllControllerTests.test_up_creates_es_kafka_env_privately) ... ok
+
+----------------------------------------------------------------------
+Ran 44 tests in 1.974s
+
+OK

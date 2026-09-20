@@ -1,0 +1,6 @@
+# Optional helper ONLY. Not used by normal up or the six application services.
+FROM docker.io/library/python:3.12-slim-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends iproute2 && rm -rf /var/lib/apt/lists/*
+COPY mvp_app/netem_agent.py /netem_agent.py
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+ENTRYPOINT ["python", "/netem_agent.py"]

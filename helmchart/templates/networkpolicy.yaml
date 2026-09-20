@@ -1,0 +1,26 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "db-lab.fullname" . }}-isolation
+spec:
+  podSelector:
+    matchLabels: {{- include "db-lab.selector" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {{- include "db-lab.selector" . | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              db-lab/client: {{ .Release.Name | quote }}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {{- include "db-lab.selector" . | nindent 14 }}
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- end }}

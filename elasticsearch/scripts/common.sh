@@ -47,3 +47,24 @@ pretty() {
 try: print(json.dumps(json.loads(text),ensure_ascii=False,indent=2))
 except ValueError: print(text,end="")'
 }
+
+# Does not change existing settings or host firewall rules.
+check_exposure() {
+  local bind=${ES_BIND_IP:-127.0.0.1}
+  python3 - "$bind" <<'PY_IP'
+import ipaddress, sys
+try:
+    address = ipaddress.ip_address(sys.argv[1])
+    if address.version != 4: raise ValueError('only IPv4 publishing is supported')
+except ValueError as exc:
+    sys.exit('[error] ES_BIND_IP: ' + str(exc))
+PY_IP
+  if [[ "$bind" != 127.* ]]; then
+    printf '[warning] Unauthenticated legacy lab: bind=%s; ES=%s Cerebro=%s Kibana=%s; no TLS.\n' \
+      "$bind" "${ES_PORT:-9200}" "${CEREBRO_PORT:-9000}" "${KIBANA_PORT:-5601}" >&2
+    [[ "${ES_ALLOW_PUBLIC_BIND:-no}" == yes ]] || {
+      echo '[error] Refusing remote binding. Use 127.0.0.1 (SSH tunnel), or explicitly set ES_ALLOW_PUBLIC_BIND=yes on an isolated network.' >&2
+      return 1
+    }
+  fi
+}

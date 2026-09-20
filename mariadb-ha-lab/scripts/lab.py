@@ -475,6 +475,16 @@ class Lab:
         print(f'Running {path.name} on {node} ({("write-enabled" if allow_write else "read-only")})')
         self.run(self.sql_command(node), input=path.read_text())
 
+    def health_all(self, as_json=False):
+        states = {node: self.health(node) for node in NODES}
+        ready = all(d.get('ready') and str(d.get('wsrep_cluster_size')) == str(len(NODES)) for d in states.values())
+        ids = {d.get('wsrep_cluster_state_uuid') for d in states.values()}
+        ready = ready and len(ids) == 1 and None not in ids and '' not in ids
+        result = {'ready': ready, 'nodes': states, 'scope': 'read-only Primary/Synced membership and UUID'}
+        if as_json: print(json.dumps(result, indent=2))
+        else: print('READY' if ready else 'NOT READY')
+        if not ready: raise LabError('Cluster membership/readiness/UUID check failed.')
+
     def verify(self):
         data = {n:self.health(n) for n in NODES}
         expected_size = str(len(NODES))
@@ -603,6 +613,7 @@ def parser():
     sub = p.add_subparsers(dest='command', required=True)
     for command in ('init','doctor','build','up','status','down','verify','backup','ui','routes','labs'):
         sub.add_parser(command)
+    q = sub.add_parser('health'); q.add_argument('--json', action='store_true')
     q = sub.add_parser('run-lab', help='Run one SQL lab by name')
     q.add_argument('name')
     q.add_argument('node', choices=NODES, nargs='?', default='galera1')
@@ -657,6 +668,7 @@ def main():
         try: Runner(lab).execute(args)
         except ScenarioError as exc: raise LabError(str(exc)) from exc
     elif command in ('doctor','up','status','down','verify','backup','labs'): getattr(lab, command)()
+    elif command == 'health': lab.health_all(args.json)
     elif command == 'run-lab': lab.run_lab(args.name, args.node, args.allow_write)
     elif command == 'scale':
         if not args.confirm_scale: raise LabError('--scale requires --confirm-scale; nodes are started/stopped and cluster membership changes.')

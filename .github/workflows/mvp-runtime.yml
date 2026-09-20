@@ -1,0 +1,60 @@
+name: MVP live runtime acceptance
+# Explicit operator action only: no pull_request_target, schedule or automatic paid runs.
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Live suite on a NEW hosted Linux VM (synthetic writes)
+        type: choice
+        options: [core, transactions, messages, recovery]
+        default: core
+      acknowledge:
+        description: Allow image downloads/builds and synthetic DB writes on this disposable runner
+        type: boolean
+        required: true
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: mvp-runtime-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  offline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Require explicit disposable-runner consent
+        env:
+          ALLOW_DISPOSABLE: ${{ inputs.acknowledge }}
+        run: test "$ALLOW_DISPOSABLE" = true
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Isolated host test dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/checks"
+          "$RUNNER_TEMP/checks/bin/pip" install -r scripts/requirements-checks.txt requests==2.32.5
+          echo "$RUNNER_TEMP/checks/bin" >> "$GITHUB_PATH"
+      - name: All host tests (not live DB evidence)
+        run: bash scripts/test-offline.sh
+  runtime:
+    if: ${{ inputs.acknowledge }}
+    needs: offline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SELECTED_SUITE: ${{ inputs.suite }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build fresh stack and run real acceptance
+        run: python3 scripts/ci-mvp.py --suite "$SELECTED_SUITE" --allow-disposable-runner --yes
+      - name: Upload only allowlisted results (not env, orders or raw logs)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mvp-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/mvp-runtime/
+          if-no-files-found: error
+          retention-days: 7

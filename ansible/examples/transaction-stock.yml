@@ -1,0 +1,9 @@
+---
+db_lab_target: mvp
+db_lab_request:
+  action: drills
+  verb: run
+  name: stock-race
+  options: {clients: 4, seed: 42}
+db_lab_allow_changes: true
+db_lab_allow_faults: true

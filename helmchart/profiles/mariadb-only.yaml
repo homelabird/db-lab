@@ -1,0 +1,8 @@
+elasticsearch:
+  enabled: false
+kafka:
+  enabled: false
+mariadb:
+  enabled: true
+redis:
+  enabled: false

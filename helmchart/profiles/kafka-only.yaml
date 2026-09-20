@@ -1,0 +1,10 @@
+elasticsearch:
+  enabled: false
+kafka:
+  enabled: true
+zookeeper:
+  enabled: true
+mariadb:
+  enabled: false
+redis:
+  enabled: false

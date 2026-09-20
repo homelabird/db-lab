@@ -1,0 +1,43 @@
+{
+  "scope": "HOST_ONLY: includes explicit database/runtime test doubles, not a real DB",
+  "real_database_started": false,
+  "utc_time": "2026-09-18T14:12:22.543569+00:00",
+  "python": "3.13.5",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "checks": {
+    "bash_syntax": {
+      "count": 9,
+      "status": "PASS",
+      "files": [
+        "images/node/entrypoint.sh",
+        "images/node/init-users.sh",
+        "lab.sh",
+        "standalone-original/scripts/connect.sh",
+        "standalone-original/scripts/reset.sh",
+        "tests/acceptance.sh",
+        "tests/run-real.sh",
+        "tests/scenario_acceptance.sh",
+        "tests/validate.sh"
+      ]
+    },
+    "python_syntax": {
+      "count": 16,
+      "status": "PASS"
+    },
+    "shellcheck": {
+      "status": "NOT_RUN",
+      "reason": "shellcheck executable is not installed"
+    },
+    "tests": {
+      "status": "PASS",
+      "run": 198,
+      "passed": 198,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "skip_details": []
+    }
+  },
+  "status": "PASS",
+  "errors": []
+}

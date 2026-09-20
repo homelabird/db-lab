@@ -1,0 +1,18 @@
+---
+db_lab_target: mvp
+db_lab_request:
+  action: study
+  verb: run
+  name: kafka-outage
+  options:
+    seed: 42
+    workload: write-heavy
+    seconds: 60
+    rate: 3
+    workers: 4
+    fault_at: 15
+    fault_for: 15
+    recovery_timeout: 120
+db_lab_allow_changes: true
+db_lab_allow_faults: true
+db_lab_timeout: 3600

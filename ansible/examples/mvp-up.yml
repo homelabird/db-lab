@@ -1,0 +1,4 @@
+---
+db_lab_target: mvp
+db_lab_request: {action: up}
+db_lab_allow_changes: true

@@ -3,54 +3,124 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "db-lab.fullname" . }}-zookeeper
+  labels: {{- include "db-lab.labels" . | nindent 4 }}
 spec:
   clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    component: zookeeper
+    {{- include "db-lab.selector" . | nindent 4 }}
   ports:
     - name: client
       port: 2181
-  selector:
-    component: zookeeper
+      targetPort: client
+    - name: quorum
+      port: 2888
+      targetPort: quorum
+    - name: election
+      port: 3888
+      targetPort: election
 ---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: {{ include "db-lab.fullname" . }}-zookeeper
+  labels: {{- include "db-lab.labels" . | nindent 4 }}
 spec:
   serviceName: {{ include "db-lab.fullname" . }}-zookeeper
+  podManagementPolicy: Parallel
   replicas: {{ .Values.zookeeper.replicas }}
   selector:
     matchLabels:
       component: zookeeper
+      {{- include "db-lab.selector" . | nindent 6 }}
   template:
     metadata:
       labels:
         component: zookeeper
+        {{- include "db-lab.selector" . | nindent 8 }}
     spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      {{- include "db-lab.placement" (dict "root" . "component" "zookeeper") | nindent 6 }}
       containers:
         - name: zookeeper
           image: {{ .Values.zookeeper.image | quote }}
-          command: ["/bin/bash", "-ec"]
-          args:
-            - export ZOOKEEPER_SERVER_ID="${HOSTNAME##*-}"; exec /etc/confluent/docker/run
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources: {{- toYaml .Values.zookeeper.resources | nindent 12 }}
           ports:
             - name: client
               containerPort: 2181
+            - name: quorum
+              containerPort: 2888
+            - name: election
+              containerPort: 3888
+          command: ["/bin/bash", "-ec"]
+          args:
+            - mkdir -p /var/lib/zookeeper/data /var/lib/zookeeper/log; export ZOOKEEPER_SERVER_ID="$(( ${HOSTNAME##*-} + 1 ))"; exec /etc/confluent/docker/run
           env:
             - name: ZOOKEEPER_CLIENT_PORT
               value: "2181"
             - name: ZOOKEEPER_TICK_TIME
               value: "2000"
+            - name: ZOOKEEPER_INIT_LIMIT
+              value: "10"
+            - name: ZOOKEEPER_SYNC_LIMIT
+              value: "5"
             - name: ZOOKEEPER_SERVERS
-              value: {{ printf "%s-zookeeper-0:2888:3888;%s-zookeeper-1:2888:3888;%s-zookeeper-2:2888:3888" (include "db-lab.fullname" .) (include "db-lab.fullname" .) (include "db-lab.fullname" .) | quote }}
+              value: "{{ include "db-lab.fullname" . }}-zookeeper-0.{{ include "db-lab.dns" (dict "root" . "service" (printf "%s-zookeeper" (include "db-lab.fullname" .))) }}:2888:3888;{{ include "db-lab.fullname" . }}-zookeeper-1.{{ include "db-lab.dns" (dict "root" . "service" (printf "%s-zookeeper" (include "db-lab.fullname" .))) }}:2888:3888;{{ include "db-lab.fullname" . }}-zookeeper-2.{{ include "db-lab.dns" (dict "root" . "service" (printf "%s-zookeeper" (include "db-lab.fullname" .))) }}:2888:3888"
+            - name: ZOOKEEPER_QUORUM_LISTEN_ON_ALL_IPS
+              value: "true"
+            - name: KAFKA_OPTS
+              value: "-Dzookeeper.4lw.commands.whitelist=ruok,srvr,mntr,stat"
+            - name: KAFKA_HEAP_OPTS
+              value: "{{ .Values.zookeeper.heap }}"
+          startupProbe:
+            tcpSocket:
+              port: client
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            exec:
+              command: ["/bin/bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/2181; printf srvr >&3; cat <&3 | grep -Eq \"Mode: (leader|follower|standalone)\""]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           volumeMounts:
             - name: data
-              mountPath: /var/lib/zookeeper/data
+              mountPath: /var/lib/zookeeper
   volumeClaimTemplates:
     - metadata:
         name: data
+        labels:
+          {{- include "db-lab.selector" . | nindent 10 }}
       spec:
         accessModes: ["ReadWriteOnce"]
+        {{- include "db-lab.storageClass" . | nindent 8 }}
         resources:
           requests:
             storage: {{ .Values.zookeeper.storage }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "db-lab.fullname" . }}-zookeeper
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      component: zookeeper
+      {{- include "db-lab.selector" . | nindent 6 }}
 {{- end }}

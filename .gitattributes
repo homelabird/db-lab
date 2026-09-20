@@ -1,0 +1,2 @@
+all.sh text eol=lf
+tests/test_all.py text eol=lf

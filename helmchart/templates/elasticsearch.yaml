@@ -6,11 +6,17 @@ metadata:
   labels: {{- include "db-lab.labels" . | nindent 4 }}
 spec:
   clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    component: elasticsearch
+    {{- include "db-lab.selector" . | nindent 4 }}
   ports:
     - name: http
       port: 9200
-  selector:
-    component: elasticsearch
+      targetPort: http
+    - name: transport
+      port: 9300
+      targetPort: transport
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -19,44 +25,96 @@ metadata:
   labels: {{- include "db-lab.labels" . | nindent 4 }}
 spec:
   serviceName: {{ include "db-lab.fullname" . }}-elasticsearch
+  podManagementPolicy: Parallel
   replicas: {{ .Values.elasticsearch.replicas }}
   selector:
     matchLabels:
       component: elasticsearch
+      {{- include "db-lab.selector" . | nindent 6 }}
   template:
     metadata:
       labels:
         component: elasticsearch
         {{- include "db-lab.selector" . | nindent 8 }}
     spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
       securityContext:
         fsGroup: 1000
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      {{- include "db-lab.placement" (dict "root" . "component" "elasticsearch") | nindent 6 }}
       containers:
         - name: elasticsearch
           image: {{ .Values.elasticsearch.image | quote }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources: {{- toYaml .Values.elasticsearch.resources | nindent 12 }}
           ports:
             - name: http
               containerPort: 9200
+            - name: transport
+              containerPort: 9300
           env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: node.name
+              value: "$(POD_NAME)"
             - name: cluster.name
-              value: {{ printf "%s-elasticsearch" .Release.Name | quote }}
+              value: "{{ include "db-lab.fullname" . }}-elasticsearch"
             - name: discovery.seed_hosts
-              value: {{ printf "%s-elasticsearch" (include "db-lab.fullname" .) | quote }}
+              value: "{{ include "db-lab.dns" (dict "root" . "service" (printf "%s-elasticsearch" (include "db-lab.fullname" .))) }}"
+            {{- if .Values.elasticsearch.bootstrapNewCluster }}
             - name: cluster.initial_master_nodes
-              value: {{ printf "%s-elasticsearch-0,%s-elasticsearch-1,%s-elasticsearch-2" (include "db-lab.fullname" .) (include "db-lab.fullname" .) (include "db-lab.fullname" .) | quote }}
+              value: "{{ include "db-lab.fullname" . }}-elasticsearch-0,{{ include "db-lab.fullname" . }}-elasticsearch-1,{{ include "db-lab.fullname" . }}-elasticsearch-2"
+            {{- end }}
             - name: xpack.security.enabled
               value: "false"
             - name: ES_JAVA_OPTS
-              value: {{ printf "-Xms%s -Xmx%s" .Values.elasticsearch.heap .Values.elasticsearch.heap | quote }}
+              value: "-Xms{{ .Values.elasticsearch.heap }} -Xmx{{ .Values.elasticsearch.heap }}"
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            exec:
+              command: ["/bin/bash", "-ec", "curl -fsS --max-time 3 \"http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow&timeout=2s\" | grep -Eq '\"timed_out\"[[:space:]]*:[[:space:]]*false'"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           volumeMounts:
             - name: data
               mountPath: /usr/share/elasticsearch/data
   volumeClaimTemplates:
     - metadata:
         name: data
+        labels:
+          {{- include "db-lab.selector" . | nindent 10 }}
       spec:
         accessModes: ["ReadWriteOnce"]
+        {{- include "db-lab.storageClass" . | nindent 8 }}
         resources:
           requests:
             storage: {{ .Values.elasticsearch.storage }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "db-lab.fullname" . }}-elasticsearch
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      component: elasticsearch
+      {{- include "db-lab.selector" . | nindent 6 }}
 {{- end }}

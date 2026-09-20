@@ -26,12 +26,8 @@ sudo sysctl -w vm.max_map_count=262144
 `scripts/*.sh`와 `scenarios/*.sh`는 호환성을 위해 그대로 남아 있으며,
 `lab.sh`가 해당 스크립트로 전달합니다.
 
-일부 개발 컨테이너/Codespaces 호스트는 `iptables-legacy`의 기본
-`FORWARD DROP` 때문에 컨테이너끼리 통신하지 못할 수 있습니다. `lab.sh up`은
-Compose 네트워크의 실제 대역에 대해 필요한 허용 규칙을 중복 없이 자동으로
-추가하고, `es01`에서 `es02`로 연결되는지 확인한 뒤 계속 진행합니다. 자동
-수정 권한이 없으면 표시되는 `iptables-legacy` 명령을 관리자 권한으로 한 번
-실행한 뒤 `./lab.sh up`을 다시 실행하세요.
+일반 `up`은 호스트 방화벽을 수정하지 않습니다. 개발 컨테이너/VM의 네트워크 정책 때문에
+노드 통신이 실패하면 관리자와 해당 네트워크·방화벽 경로를 진단하세요. 전체 FORWARD 허용 규칙을 자동 삽입하지 않습니다.
 
 ```bash
 ./lab.sh status
@@ -51,9 +47,9 @@ Compose 네트워크의 실제 대역에 대해 필요한 허용 규칙을 중�
 `./lab.sh seed`를 별도로 실행합니다. `./lab.sh ui`는 Elasticsearch, Cerebro,
 Kibana와 Kibana Console 주소를 출력합니다.
 
-기본 호스트 바인딩은 **`0.0.0.0`(모든 IPv4 인터페이스)** 입니다. Elasticsearch는 `0.0.0.0:9200`, Cerebro는 `0.0.0.0:9000`, Kibana는 `0.0.0.0:5601`으로 포트를 공개합니다. Cerebro와 Kibana는 같은 Elasticsearch 클러스터를 동시에 사용합니다.
+기본 호스트 바인딩은 **`127.0.0.1`(loopback)** 입니다. Elasticsearch 9200, Cerebro 9000, Kibana 5601은 기본적으로 같은 호스트에서 접속합니다. Cerebro와 Kibana는 같은 Elasticsearch 클러스터를 동시에 사용합니다.
 
-다른 PC에서는 Cerebro `http://<서버IP>:9000`, Kibana `http://<서버IP>:5601`, Elasticsearch `http://<서버IP>:9200`에 접속하세요. 서버 자체에서는 `http://127.0.0.1:9000`, `http://127.0.0.1:5601`, `http://127.0.0.1:9200`을 사용할 수 있습니다. **`0.0.0.0/0`은 CIDR 대역 표기이며 바인딩 값이나 브라우저 접속 주소가 아닙니다.**
+원격 접속은 SSH 터널을 우선 사용하세요. 격리된 네트워크에서 공개하려면 `.env`에 `ES_BIND_IP=0.0.0.0` 및 `ES_ALLOW_PUBLIC_BIND=yes`를 명시해야 합니다. 기존 공개 `.env`도 동의값이 없으면 기동을 거부합니다. 공개를 선택한 경우 다른 PC에서는 Cerebro `http://<서버IP>:9000`, Kibana `http://<서버IP>:5601`, Elasticsearch `http://<서버IP>:9200`에 접속하세요. 서버 자체에서는 `http://127.0.0.1:9000`, `http://127.0.0.1:5601`, `http://127.0.0.1:9200`을 사용할 수 있습니다. **`0.0.0.0/0`은 CIDR 대역 표기이며 바인딩 값이나 브라우저 접속 주소가 아닙니다.**
 
 기존 프로젝트의 `.env`가 있다면 새 기본값보다 우선합니다. `KIBANA_PORT=5601`을 추가하고 `./lab.sh compose up -d kibana`를 실행하세요. 이미 존재하는 `.env`의 바인딩 설정까지 바꾸는 경우에는 `./lab.sh compose up -d --force-recreate es01 cerebro kibana`를 사용합니다. 포트 설정 적용에는 컨테이너 재생성이 필요하며 named volume은 보존됩니다.
 
@@ -179,6 +175,6 @@ rolling update를 수행합니다. 상세 조건과 삭제 주의사항은
 
 5개 노드의 heap 이외에도 JVM native memory, Lucene page cache, Cerebro에 메모리가 필요합니다. 실습 가이드 기준으로 VM/호스트 메모리 8GiB 이상, 가용 메모리 약 6GiB 이상, 이미지와 데이터를 위한 가용 디스크 10GiB 이상을 준비하세요. 이는 랩용 여유치이며 성능 보증이 아닙니다.
 
-인증/TLS가 비활성화되어 있으며, 기본 포트는 **모든 IPv4 호스트 인터페이스(`0.0.0.0`)**에 바인딩됩니다. **접근 가능한 사용자는 데이터 조회·변경·삭제를 할 수 있으므로 인터넷에 공개하지 마세요.** 호스트 방화벽과 클라우드 보안그룹에서 실습 PC의 IP만 허용하세요. 로컬 접속만 필요하면 `.env`에 `ES_BIND_IP=127.0.0.1`을 지정하고 컨테이너를 재생성합니다. ES 7.17은 기존 랩 호환을 위한 고정 버전이며 신규 운영 배포 권장이 아닙니다. 데이터 변경 스크립트는 기본적으로 `cluster.name=cerebro-shard-lab`을 확인하지만, 이름 검사는 인증이나 보안 경계가 아닙니다.
+인증/TLS가 비활성화되어 있으며, 기본 포트는 **loopback(`127.0.0.1`)**에 바인딩됩니다. 원격 바인딩은 명시적 동의가 필요합니다. **접근 가능한 사용자는 데이터 조회·변경·삭제를 할 수 있으므로 인터넷에 공개하지 마세요.** 호스트 방화벽과 클라우드 보안그룹에서 실습 PC의 IP만 허용하세요. 로컬 접속만 필요하면 `.env`에 `ES_BIND_IP=127.0.0.1`을 지정하고 컨테이너를 재생성합니다. ES 7.17은 기존 랩 호환을 위한 고정 버전이며 신규 운영 배포 권장이 아닙니다. 데이터 변경 스크립트는 기본적으로 `cluster.name=cerebro-shard-lab`을 확인하지만, 이름 검사는 인증이나 보안 경계가 아닙니다.
 
 공식 7.17 문서에 API 의미와 이 버전의 문서 유지보수 상태가 명시되어 있습니다: [Bulk API](https://www.elastic.co/guide/en/elasticsearch/reference/7.17/docs-bulk.html), [클러스터 초기 설정](https://www.elastic.co/guide/en/elasticsearch/reference/7.17/important-settings.html).

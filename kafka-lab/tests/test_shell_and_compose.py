@@ -19,6 +19,7 @@ class ShellTests(unittest.TestCase):
             shutil.copy2(ROOT/f,self.root/f)
         (self.root/'scripts').mkdir()
         shutil.copy2(ROOT/'scripts/render-compose.py',self.root/'scripts/render-compose.py')
+        shutil.copy2(ROOT/'scripts/kraft-id.py',self.root/'scripts/kraft-id.py')
         self.bin=self.root/'bin'; self.bin.mkdir()
         shutil.copy2(ROOT/'tests/fake_podman.py',self.bin/'podman')
         (self.bin/'podman').chmod(0o755)
@@ -139,6 +140,26 @@ elif '--version' in sys.argv: print('podman-compose version 1.3.0 [MOCK]')
     def test_logs_cannot_target_unrelated_container(self):
         self.run_lab('logs','production-db',success=False)
         self.assertFalse(any(a[0]=='logs' for a in self.load().get('calls',[])))
+
+    def test_kraft_status_does_not_query_zookeeper(self):
+        (self.root/'.env').write_text((self.root/'.env.example').read_text().replace('KAFKA_MODE=zk','KAFKA_MODE=kraft'))
+        self.run_lab('status')
+        self.assertFalse(any('zk-status' in call for call in self.load()['calls']))
+    def test_node_ten_and_range_checks(self):
+        (self.root/'.env').write_text((self.root/'.env.example').read_text().replace('NODES=3','NODES=11'))
+        self.data['containers']['kzk-lab-kafka10']=dict(owner='kzk-lab',running=True,paused=False,connected=True);self.save()
+        self.run_lab('logs','kafka10')
+        self.assertTrue(any('kzk-lab-kafka10' in call and 'logs' in call for call in self.load()['calls']))
+        self.run_lab('logs','kafka12',success=False)
+    def test_env_is_data_and_exported_settings_win(self):
+        self.run_lab('config',extra={'KAFKA1_PORT':'19100','KAFKA_HEAP_OPTS':'-Xms512m -Xmx1024m'})
+        c=json.loads((self.root/'.state/compose.generated.yaml').read_text())
+        self.assertEqual(c['services']['kafka1']['ports'],['127.0.0.1:19100:9093'])
+        (self.root/'.env').write_text((self.root/'.env.example').read_text()+'\nBOGUS=$(touch '+str(self.root/'unsafe')+')\n')
+        self.run_lab('config')
+        self.assertFalse((self.root/'unsafe').exists())
+    def test_zookeeper_health_exits_zero_after_success(self):
+        self.run_lab('health')
 
 
 class ComposeTests(unittest.TestCase):

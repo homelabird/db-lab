@@ -1,0 +1,34 @@
+---
+- name: Control DB Lab through its existing controllers
+  hosts: db_lab
+  gather_facts: false
+  become: false
+  serial: 1
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require an explicit path and one host for changing operations
+      ansible.builtin.assert:
+        that:
+          - db_lab_project_root is defined
+          - db_lab_project_root is string
+          - not (db_lab_allow_changes | default(false) | bool) or (ansible_play_hosts_all | length == 1) or ansible_check_mode
+          - not (ansible_become | default(false) | bool)
+        fail_msg: Set db_lab_project_root and use --limit ONE_HOST for changes. Run as the existing lab owner, without become.
+  tasks:
+    - name: Validate and invoke the native controller exactly once
+      db_lab_control:
+        project_root: "{{ db_lab_project_root }}"
+        target: "{{ db_lab_target | default(omit) }}"
+        request: "{{ db_lab_request | default(omit) }}"
+        allow_changes: "{{ db_lab_allow_changes | default(omit) }}"
+        allow_faults: "{{ db_lab_allow_faults | default(omit) }}"
+        allow_destroy: "{{ db_lab_allow_destroy | default(omit) }}"
+        confirmation: "{{ db_lab_confirmation | default(omit) }}"
+        k8s: "{{ db_lab_k8s | default(omit) }}"
+        timeout: "{{ db_lab_timeout | default(omit) }}"
+        show_output: "{{ db_lab_show_output | default(omit) }}"
+      register: db_lab_result
+      # No async/poll:0, no retries, no ignore_errors, no unconditional recovery.
+    - name: Show operation result (native private output is opt-in)
+      ansible.builtin.debug:
+        var: db_lab_result
