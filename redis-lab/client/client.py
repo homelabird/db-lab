@@ -10,6 +10,7 @@ import sys
 import time
 import uuid
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,6 +25,7 @@ SENTINEL_PASSWORD = os.environ.get('SENTINEL_PASSWORD', '')
 MASTER_NAME = os.environ.get('MASTER_NAME', 'mymaster')
 DEPLOYMENT_MODE = os.environ.get('DEPLOYMENT_MODE', 'sentinel')
 CLUSTER_NODE_COUNT = int(os.environ.get('CLUSTER_NODE_COUNT', '6'))
+CLUSTER_REPLICAS = int(os.environ.get('CLUSTER_REPLICAS', '1'))
 NODES = endpoint_list(os.environ.get('REDIS_NODES', '10.89.77.11:6379,10.89.77.12:6379,10.89.77.13:6379'))
 CLUSTER_NODES = endpoint_list(os.environ.get('CLUSTER_NODES', os.environ.get('REDIS_NODES', '10.89.77.11:6379,10.89.77.12:6379,10.89.77.13:6379')))[:CLUSTER_NODE_COUNT]
 SENTINELS = endpoint_list(os.environ.get('SENTINEL_NODES', '10.89.77.21:26379,10.89.77.22:26379,10.89.77.23:26379'))
@@ -62,8 +64,23 @@ def master_client() -> redis.Redis:
         from redis.cluster import ClusterNode, RedisCluster
         return RedisCluster(
             startup_nodes=[ClusterNode(host, port) for host, port in CLUSTER_NODES],
-            password=PASSWORD, **kwargs())
+            **kwargs())
     return sentinel().master_for(MASTER_NAME)
+
+
+@contextmanager
+def write_connection(client, key: str):
+    """Pin SET / WAIT / GET to one physical connection on the key's primary.
+
+    RedisCluster has no Redis.client() method. A keyless WAIT dispatched via
+    the cluster router could land on another node and certify the wrong write.
+    """
+    owner = client
+    if DEPLOYMENT_MODE == 'cluster':
+        node = client.get_node_from_key(key)
+        owner = client.get_redis_connection(node)
+    with owner.client() as connection:
+        yield connection
 
 
 def node_name(address: str) -> str:
@@ -99,7 +116,7 @@ def snapshot() -> dict:
                            'used_memory_human', 'used_memory', 'connected_clients',
                            'rejected_connections', 'aof_enabled')},
                         'dbsize': connection.dbsize()}
-                    cluster_info = connection.execute_command('CLUSTER', 'INFO')
+                    cluster_info = connection.execute_command('CLUSTER INFO')
                     if isinstance(cluster_info, dict):
                         result['cluster'][name] = cluster_info
                     else:
@@ -146,21 +163,31 @@ def snapshot() -> dict:
 def topology_errors(state: dict) -> list[str]:
     if DEPLOYMENT_MODE == 'cluster':
         errors = []
-        for name, data in state['redis'].items():
+        expected = {f'redis-cluster-{i}' for i in range(1, CLUSTER_NODE_COUNT + 1)}
+        redis_state, cluster_state = state.get('redis', {}), state.get('cluster', {})
+        if set(redis_state) != expected:
+            errors.append('Incomplete or unexpected Redis node sample')
+        if set(cluster_state) != expected or any(not data for data in cluster_state.values()):
+            errors.append('Incomplete CLUSTER INFO sample')
+        for name in sorted(expected):
+            data = redis_state.get(name, {})
             if not data.get('reachable'):
                 errors.append(f'{name}: unreachable')
-        infos = [data for data in state.get('cluster', {}).values() if data]
+            if data.get('role') == 'slave' and data.get('master_link_status') != 'up':
+                errors.append(f'{name}: replication not linked to primary')
+        infos = [data for data in cluster_state.values() if isinstance(data, dict) and data]
         if not infos:
             return errors + ['No cluster info available']
-        healthy = [info for info in infos if info.get('cluster_state') == 'ok']
-        if len(healthy) != len(infos):
+        if any(info.get('cluster_state') != 'ok' for info in infos):
             errors.append('Cluster state is not ok on every reachable node')
-        if any(info.get('cluster_slots_assigned') != '16384' or info.get('cluster_slots_ok') != '16384'
-               for info in healthy):
+        if any(str(info.get('cluster_slots_assigned')) != '16384' or
+               str(info.get('cluster_slots_ok')) != '16384' for info in infos):
             errors.append('Cluster does not cover all 16384 slots')
-        if any(int(info.get('cluster_slots_fail', 0)) or int(info.get('cluster_slots_pfail', 0))
-               for info in healthy):
-            errors.append('Cluster has failed or pfail slots')
+        if any(str(info.get('cluster_slots_fail')) != '0' or
+               str(info.get('cluster_slots_pfail')) != '0' for info in infos):
+            errors.append('Cluster has failed, pfail or unreported slot counts')
+        if any(str(info.get('cluster_known_nodes')) != str(CLUSTER_NODE_COUNT) for info in infos):
+            errors.append('Cluster membership does not match configured node count')
         return errors
     errors = []
     masters = [(name, d) for name, d in state['redis'].items() if d.get('role') == 'master']
@@ -223,16 +250,16 @@ def wait_ready(timeout: int) -> None:
         errors = topology_errors(state)
         if not errors:
             try:
-                with master_client().client() as connection:
-                    key = f'lab:health:{uuid.uuid4().hex}'
+                key = f'lab:health:{uuid.uuid4().hex}'
+                with master_client() as owner, write_connection(owner, key) as connection:
                     connection.set(key, 'ok', ex=60)
-                    required_replicas = 1 if DEPLOYMENT_MODE == 'cluster' else 2
+                    required_replicas = CLUSTER_REPLICAS if DEPLOYMENT_MODE == 'cluster' else 2
                     acknowledged = connection.wait(required_replicas, 1000)
                     if connection.get(key) == 'ok' and acknowledged >= required_replicas:
                         print_status(state)
                         print(f'PASS: authenticated write/read and WAIT {required_replicas} on the same connection')
                         return
-                    errors = ['Write/read/WAIT 2 verification not complete']
+                    errors = [f'Write/read/WAIT {required_replicas} verification not complete']
             except (redis.RedisError, OSError) as exc:
                 errors = [clean_error(exc)]
         message = '; '.join(errors)
@@ -465,7 +492,7 @@ def workload(args) -> None:
             stage = 'connect'
             try:
                 # One dedicated connection for INFO -> SET -> WAIT -> GET.
-                with c.client() as connection:
+                with write_connection(c, key) as connection:
                     stage = 'identify'
                     server = connection.info('server')
                     row['server_run_id'] = server.get('run_id')
@@ -605,9 +632,9 @@ def sandbox_recover() -> None:
 def marker() -> None:
     key = 'lab:backup:marker:' + uuid.uuid4().hex
     value = uuid.uuid4().hex
-    with master_client().client() as c:
+    with master_client() as owner, write_connection(owner, key) as c:
         c.set(key, value)
-        replicas = c.wait(2, 1000)
+        replicas = c.wait(CLUSTER_REPLICAS if DEPLOYMENT_MODE == 'cluster' else 2, 1000)
     print(json.dumps({'marker_key': key, 'marker_value': value, 'replicas_acknowledged': replicas, 'time_utc': now()}))
 
 

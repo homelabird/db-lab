@@ -54,3 +54,43 @@ jobs:
         run: python -m pip install -r ansible/requirements.txt
       - name: Real local playbooks with harmless fixture (not SSH/DB)
         run: bash scripts/test-ansible.sh
+  helm-render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install declared manifest-check dependencies
+        run: python -m pip install -r scripts/requirements-checks.txt
+      - name: Install pinned real Helm with release checksum
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          tmp=$(mktemp -d)
+          trap 'rm -rf -- "$tmp"' EXIT
+          curl --fail --show-error --silent --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 15 --max-time 120 --retry 2 \
+            https://get.helm.sh/helm-v3.22.0-linux-amd64.tar.gz -o "$tmp/helm.tar.gz"
+          echo '1e4ab49e429626cf6c6958d914248b78c9730803c2751b87627e171dc800e7bb  '"$tmp/helm.tar.gz" | sha256sum --check --strict
+          tar -xzf "$tmp/helm.tar.gz" -C "$tmp" linux-amd64/helm
+          install -m 0755 "$tmp/linux-amd64/helm" "$RUNNER_TEMP/helm"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Real Helm profiles, isolation, and rejected unsafe values (no cluster)
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p .quality/helm
+          bash scripts/test-helm.sh 2>&1 | tee .quality/helm/real-helm.log
+      - name: Upload actual Helm output
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-helm-render
+          path: .quality/helm/real-helm.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7

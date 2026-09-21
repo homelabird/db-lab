@@ -2,6 +2,8 @@
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 import json
+import os
+from unittest.mock import patch
 import threading
 import unittest
 from urllib.parse import urlsplit
@@ -126,7 +128,8 @@ class HTTPTests(unittest.TestCase):
                     project_one(self.broker.events[-1], self.search, self.cache, lambda: None)
         thread = threading.Thread(target=pump, daemon=True); thread.start()
         try:
-            result = probe(f"http://127.0.0.1:{self.port}", 5)
+            with patch.dict(os.environ, {"STUDY_PROJECT": "db-lab-mvp"}):
+                result = probe(f"http://127.0.0.1:{self.port}", 5)
             self.assertTrue(result["passed"])
             self.assertEqual(len(self.repo.orders), 1)
         finally:

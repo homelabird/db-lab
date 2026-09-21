@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SUITES = (('root', '.'), ('mvp', 'mvp-lab'), ('elasticsearch', 'elasticsearch'),
           ('kafka', 'kafka-lab'), ('mariadb', 'mariadb-ha-lab'), ('redis', 'redis-lab'))
 IGNORED_DIRS = {'.git', '__pycache__', '.state', 'reports', 'artifacts', '.quality',
-                'node_modules', 'htmlcov', '.pytest_cache'}
+                'node_modules', 'htmlcov', '.pytest_cache', '.lab'}
 MANIFEST = 'RELEASE-MANIFEST.json'
 
 
@@ -44,6 +44,9 @@ def source_files(root):
                 yield Path(directory) / dirname
                 dirs.remove(dirname)
         for filename in sorted(files):
+            relative_dir = Path(directory).relative_to(root).parts
+            if relative_dir[:2] == ('redis-lab', 'output') and filename != '.gitkeep':
+                continue
             if filename == '.env' or filename.startswith('.coverage') or filename.endswith(('.pyc', '.pyo')):
                 continue
             yield Path(directory) / filename

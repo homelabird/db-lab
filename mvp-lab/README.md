@@ -1,6 +1,7 @@
 # 작은 주문 시스템 — DB 연결·장애·교체 공부용 MVP
 
-현재 시작점은 [v10 품질 가이드](../docs/QUALITY-GUIDE.md)입니다.
+현재 시작점은 [v12 시작·진단 수정 가이드](../docs/FOLLOWUP-REPAIR-2026-09-21.md)입니다.
+검사 명령의 기본 설명은 [품질 가이드](../docs/QUALITY-GUIDE.md)를 확인하세요.
 전체 품질 검사 → core 인수 → 개별 장애 실습 → [같은 계획의 비교 실험](docs/COMPARATIVE-STUDIES.md) 순서로 진행합니다.
 트랜잭션·메시지·네트워크 실습은 아래 문서의 별도 경계를 확인하세요.
 [트랜잭션](docs/TRANSACTION-DRILLS.md) · [메시지](docs/MESSAGE-DRILLS.md) · [네트워크/복원](docs/ADVANCED-DRILLS.md) · [Ansible](../ansible/README.md)
@@ -14,7 +15,7 @@
 
 > 기존 `mariadb-ha-lab`, `kafka-lab`, `elasticsearch`, `redis-lab`의 실행 중인 클러스터에 자동 연결하지 않습니다.
 > 같은 네 가지 기술을 사용하는 **별도 단일 노드 MVP**이며, 프로젝트·네트워크·볼륨·암호가 분리됩니다.
-> 기존 HA 실습과 Helm 코드는 변경하지 않았습니다. 일반 `./all.sh up/down`의 대상에도 추가하지 않았습니다.
+> MVP를 일반 `./all.sh up/down`의 대상에 추가하지 않았습니다. HA 실습 및 Helm과는 별도의 실행 경로입니다.
 
 ## 1. 데이터 흐름
 
@@ -57,13 +58,16 @@ Linux 또는 WSL2, Python 3.10 이상, 루트 진입점용 Bash 4.4+, 컨테이�
 bash ./all.sh mvp init       # 암호·KRaft ID 생성; 기존 .env 보존
 bash ./all.sh mvp doctor     # 엔진 및 실제 Compose config 검사
 bash ./all.sh mvp up         # 이미지 빌드, 6개 컨테이너 기동, schema/topic/index 준비
-bash ./all.sh mvp smoke      # 실제 주문 1건 → Kafka → ES 검색 확인
+bash ./all.sh mvp diagnose   # 읽기 전용; 의존 서비스 장애면 exit 1
+bash ./all.sh mvp smoke      # 정확한 대상 확인 후 합성 주문 1건 → Kafka → ES 검색 확인
 ```
 
 브라우저에서 `http://127.0.0.1:18090`을 엽니다. 순서대로 **주문 저장 → 일반 조회 두 번 → 검색 → 진단 새로고침**을 누르세요.
 일반 조회의 `source`가 `mariadb`에서 `redis`로 바뀌는지 확인합니다. 검색은 비동기라 잠시 늦을 수 있습니다.
 
-원격 실습 서버는 DB/API 포트를 공개하지 말고 SSH 터널을 사용합니다.
+`smoke`/`diagnose` 명령은 엔진이 설치된 실습 호스트에서 실행합니다. 원격 Docker/Podman
+선택 상태에서는 로컬 HTTP 명령을 거부합니다. 원격 실습 서버의 브라우저 접근은 DB/API
+포트를 공개하지 말고 SSH 터널을 사용합니다.
 
 ```bash
 ssh -L 18090:127.0.0.1:18090 your-lab-host

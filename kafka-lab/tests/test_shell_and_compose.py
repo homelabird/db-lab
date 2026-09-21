@@ -20,6 +20,8 @@ class ShellTests(unittest.TestCase):
         (self.root/'scripts').mkdir()
         shutil.copy2(ROOT/'scripts/render-compose.py',self.root/'scripts/render-compose.py')
         shutil.copy2(ROOT/'scripts/kraft-id.py',self.root/'scripts/kraft-id.py')
+        if (ROOT/'scripts/topology-state.py').exists():
+            shutil.copy2(ROOT/'scripts/topology-state.py',self.root/'scripts/topology-state.py')
         self.bin=self.root/'bin'; self.bin.mkdir()
         shutil.copy2(ROOT/'tests/fake_podman.py',self.bin/'podman')
         (self.bin/'podman').chmod(0o755)
@@ -45,6 +47,49 @@ elif '--version' in sys.argv: print('podman-compose version 1.3.0 [MOCK]')
         if success: self.assertEqual(p.returncode,0,p.stdout+p.stderr)
         else: self.assertNotEqual(p.returncode,0,p.stdout+p.stderr)
         return p
+    def test_startup_waits_for_selected_broker_count(self):
+        for count in (1, 5):
+            with self.subTest(count=count):
+                self.data['containers'].update({f'kzk-lab-{kind}{i}':
+                    dict(owner='kzk-lab', running=True, paused=False, connected=True)
+                    for kind in ('zk', 'kafka') for i in range(1, count + 1)})
+                self.data['calls'] = []
+                self.save()
+                self.run_lab('up', '--nodes', str(count))
+                waits = [call for call in self.load()['calls'] if '--brokers' in call]
+                self.assertTrue(waits)
+                self.assertTrue(all(call[call.index('--brokers') + 1] == str(count)
+                                    for call in waits), waits)
+                # Isolate the next independent lab topology.
+                (self.root / '.state/active-topology.json').unlink(missing_ok=True)
+
+    def test_node_selection_survives_the_next_command(self):
+        self.run_lab('up', '--nodes', '1')
+        self.run_lab('health')
+        waits = [call for call in self.load()['calls'] if '--brokers' in call]
+        self.assertEqual(waits[-1][waits[-1].index('--brokers') + 1], '1')
+        self.assertIn('NODES=1', (self.root / '.env').read_text())
+
+    def test_started_topology_cannot_be_silently_replaced(self):
+        self.run_lab('up', '--nodes', '1')
+        previous_env = (self.root / '.env').read_bytes()
+        previous_compose = (self.root / '.state/compose.generated.yaml').read_bytes()
+        previous_calls = len(self.load()['compose_calls'])
+        self.run_lab('up', '--nodes', '5', success=False)
+        self.assertEqual((self.root / '.env').read_bytes(), previous_env)
+        self.assertEqual((self.root / '.state/compose.generated.yaml').read_bytes(), previous_compose)
+        self.assertEqual(len(self.load()['compose_calls']), previous_calls)
+
+    def test_exported_kraft_mode_survives_next_command(self):
+        self.run_lab('up', '--nodes', '1', extra={'KAFKA_MODE': 'kraft'})
+        self.run_lab('health')
+        self.assertIn('KAFKA_MODE=kraft', (self.root / '.env').read_text())
+
+    def test_explicit_successful_reset_releases_topology_pin(self):
+        self.run_lab('up', '--nodes', '1')
+        self.run_lab('reset', '--yes')
+        self.assertFalse((self.root / '.state/active-topology.json').exists())
+
     def test_help_without_engine(self):
         self.run_lab('help')
         self.assertEqual(self.load().get('calls',[]),[])

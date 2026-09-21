@@ -6,6 +6,18 @@
 
 > **검증 범위:** 제작 환경에서 75개 단위·모의 테스트 및 Bash/YAML 검사가 통과했습니다. 이 환경에는 Podman/Docker가 없어 이미지 다운로드, 실제 Kafka 기동·장애 전환, UI 접속은 실행하지 못했습니다. 실제 실행 검증용 `smoke`와 `scripts/test-live.sh`가 포함되어 있습니다. 자세한 내역은 `reports/VALIDATION.md`에 있습니다.
 
+## 2026-09-21 실행 수정
+
+가변 노드 기동의 고정 `--brokers 3`을 실제 `NODES`로 수정했습니다. 최초 기동 시 선택한
+`NODES`, `KAFKA_MODE`, `LAB_NAME`은 `.env`에 저장되고, `.state/active-topology.json`으로 고정됩니다.
+후속 `health`, `status`, `down`은 같은 구성을 사용합니다. 다른 기존 `.env` 값과 KRaft ID는 보존합니다.
+이미 기동한 구성을 다른 노드 수/모드로 덮어쓰는 요청은 거부합니다. `down`은 볼륨과 구성을 유지합니다.
+다른 토폴로지는 별도의 실습 디렉터리와 `LAB_NAME`을 사용하세요. 기존의 명시적 `reset --yes`가
+성공한 경우에만 고정을 해제합니다. **reset은 데이터를 삭제하므로 연결 오류 해결책으로 쓰지 마세요.**
+
+이번 호스트 검사와 미검증 범위는 [통합 수정 기록](../docs/STARTUP-REPAIR-2026-09-21.md)에 있습니다.
+위의 75개 테스트라는 문구는 초기 버전의 기록입니다.
+
 ## 1. 구성과 버전
 
 ```text
@@ -51,11 +63,11 @@ CP 7.9.x는 Kafka 3.9.x 계열이며 ZooKeeper 구성을 지원합니다. Kafka 
 # 5-node ZooKeeper cluster
 ./lab.sh up --nodes 5
 
-# 3-node KRaft cluster
+# 3-node KRaft cluster: 위 ZooKeeper 예시와 별도의 신규 실습 디렉터리에서 실행
 KAFKA_MODE=kraft ./lab.sh up --nodes 3
 ```
 
-ZooKeeper는 quorum 특성상 홀수 노드 수를 사용해야 합니다. 현재 `1..100` 노드까지 Compose를 생성할 수 있으며, 따라서 ZooKeeper 모드에서는 홀수 노드 수를 사용하고 KRaft 모드에서는 10·20·100 같은 구성도 생성할 수 있습니다. Kafka replication factor는 `min(NODES, 3)`으로 설정되고 1노드에서는 `min.insync.replicas=1`로 조정됩니다. 기존 클러스터와 노드 수를 바꿀 때는 컨테이너와 metadata 구성이 달라지므로 `down` 후 다시 `up`해야 합니다.
+ZooKeeper는 quorum 특성상 홀수 노드 수를 사용해야 합니다. 현재 `1..100` 노드까지 Compose를 생성할 수 있으며, 따라서 ZooKeeper 모드에서는 홀수 노드 수를 사용하고 KRaft 모드에서는 10·20·100 같은 구성도 생성할 수 있습니다. Kafka replication factor는 `min(NODES, 3)`으로 설정되고 1노드에서는 `min.insync.replicas=1`로 조정됩니다. 이 옵션은 신규 토폴로지 선택용이며 기존 클러스터의 무중단 확장 기능이 아닙니다. 이미 기동한 토폴로지 변경은 위의 고정 규칙을 따릅니다.
 
 ```bash
 # KRaft 기동
@@ -65,7 +77,7 @@ KAFKA_MODE=kraft ./lab.sh kraft-status
 KAFKA_MODE=kraft ./lab.sh smoke
 ```
 
-KRaft 최초 실행 시 `KRAFT_CLUSTER_ID`를 `.state/kraft-cluster-id`에 생성하고 이후 재기동에 재사용합니다. ZooKeeper 모드에서 사용한 Kafka volume을 KRaft에서 재사용하지 않으며, 모드 변경 시 기존 컨테이너를 먼저 내리고 해당 모드로 다시 기동해야 합니다. `zk`, `zk-shell`, `stop-zk`, `zk-quorum`은 KRaft에서 지원하지 않습니다.
+KRaft 최초 실행 시 `KRAFT_CLUSTER_ID`를 `.state/kraft-cluster-id`에 생성하고 이후 재기동에 재사용합니다. ZooKeeper 모드에서 사용한 Kafka volume을 KRaft에서 재사용하지 않으며, 기존 클러스터를 단순 모드 변경으로 변환하지 않습니다. 다른 모드는 별도 실습 디렉터리와 LAB_NAME에서 시작하세요. `zk`, `zk-shell`, `stop-zk`, `zk-quorum`은 KRaft에서 지원하지 않습니다.
 
 태그는 고정했지만 이미지 digest까지 잠그지는 않았습니다. Python base image의 patch release도 고정하지 않았습니다. 따라서 바이트 단위 재현 빌드는 보장하지 않습니다.
 

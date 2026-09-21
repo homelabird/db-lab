@@ -56,6 +56,8 @@ def validate_env(env: dict) -> None:
         raise ValueError('CLUSTER_REPLICAS must be 0..CLUSTER_NODE_COUNT-3')
     if replicas and node_count % (replicas + 1):
         raise ValueError('CLUSTER_NODE_COUNT must be divisible by CLUSTER_REPLICAS + 1')
+    if node_count // (replicas + 1) < 3:
+        raise ValueError('Redis Cluster requires at least three primary nodes')
     try:
         base_ip = ipaddress.ip_address(env['CLUSTER_BASE_IP'])
     except ValueError as exc:
@@ -84,8 +86,8 @@ def validate_env(env: dict) -> None:
         if not re.fullmatch(r'[A-Za-z0-9._/:@+-]+', env[key]): raise ValueError(f'Invalid image reference in {key}')
     if not 1000 <= int(env['DOWN_AFTER_MS']) <= 120000: raise ValueError('DOWN_AFTER_MS must be 1000..120000')
     if not 10000 <= int(env['FAILOVER_TIMEOUT_MS']) <= 600000: raise ValueError('FAILOVER_TIMEOUT_MS must be 10000..600000')
-    if not 1024 <= int(env['CLUSTER_BUS_PORT']) <= 65535:
-        raise ValueError('CLUSTER_BUS_PORT must be 1024..65535')
+    if not 1024 <= int(env['CLUSTER_BUS_PORT']) <= 65535 or int(env['CLUSTER_BUS_PORT']) == 6379:
+        raise ValueError('CLUSTER_BUS_PORT must be 1024..65535 and must differ from the client port 6379')
     if not 1000 <= int(env['CLUSTER_NODE_TIMEOUT_MS']) <= 120000:
         raise ValueError('CLUSTER_NODE_TIMEOUT_MS must be 1000..120000')
 
@@ -162,7 +164,7 @@ class Lab:
         for index, node in enumerate(self.cluster_nodes(), 1):
             ip = str(ipaddress.ip_address(base) + index - 1)
             build = f'''    build:
-      context: .
+      context: {json.dumps(str(ROOT))}
       dockerfile: Containerfile
       target: redis-node
       args:
@@ -212,7 +214,7 @@ services:
     image: localhost/{self.name}-client:1.1
     container_name: {self.name}-lab-client
     build:
-      context: .
+      context: {json.dumps(str(ROOT))}
       dockerfile: Containerfile
       target: client
       args:
@@ -227,6 +229,7 @@ services:
       MASTER_NAME: {self.env["MASTER_NAME"]}
       DEPLOYMENT_MODE: cluster
       CLUSTER_NODE_COUNT: {self.env["CLUSTER_NODE_COUNT"]}
+      CLUSTER_REPLICAS: {self.env["CLUSTER_REPLICAS"]}
       CLUSTER_NODES: {endpoints}
       REDIS_NODES: {endpoints}
     volumes:
@@ -277,7 +280,7 @@ volumes:
         return data
 
     def volume_owned(self, suffix: str, required=False):
-        if suffix not in VOLUMES: raise ValueError('Unexpected volume name')
+        if suffix not in self.active_volumes(): raise ValueError('Unexpected volume name')
         result = self.run(['podman', 'volume', 'inspect', f'{self.name}-{suffix}'], check=False)
         if result.returncode:
             if required: raise RuntimeError('Expected volume not found: ' + suffix)
@@ -390,7 +393,7 @@ volumes:
 
     def resolve(self, node: str):
         if node == 'master' and self.env['DEPLOYMENT_MODE'] == 'cluster':
-            raise ValueError('Cluster has multiple primaries; select redis-cluster-1..6 explicitly.')
+            raise ValueError(f'Cluster has multiple primaries; select redis-cluster-1..{self.env["CLUSTER_NODE_COUNT"]} explicitly.')
         return self.master() if node == 'master' else node
 
     def state(self) -> dict:
@@ -416,32 +419,74 @@ volumes:
         self.check_env_state(save=True)
         self.compose('up', '-d', *self.services())
         if self.env['DEPLOYMENT_MODE'] == 'cluster':
-            print('Cluster nodes are running but not initialized. Run ./lab.sh cluster-init before client operations.')
+            print('Cluster containers started. Run ./lab.sh cluster-init to initialize empty nodes or verify the existing cluster.')
             return
         self.client('wait', '--timeout', str(self.readiness_budget()))
         print('\nReady. Next: ./lab.sh demo ; ./lab.sh seed ; ./lab.sh status')
 
+    def cluster_inventory(self, timeout=None):
+        """Wait for authenticated node replies; never infer emptiness from errors."""
+        budget = self.readiness_budget() if timeout is None else timeout
+        deadline = time.monotonic() + budget
+        while True:
+            inventory, pending = {}, []
+            for node in self.cluster_nodes():
+                try:
+                    if self.cli(node, ['PING'], timeout=10).stdout.strip() != 'PONG':
+                        raise RuntimeError('PING did not return PONG')
+                    raw = self.cli(node, ['CLUSTER', 'INFO'], timeout=10).stdout
+                    fields = dict(line.split(':', 1) for line in raw.splitlines() if ':' in line)
+                    for key in ('cluster_known_nodes', 'cluster_slots_assigned',
+                                'cluster_slots_ok', 'cluster_slots_fail', 'cluster_slots_pfail'):
+                        if not fields.get(key, '').isdigit():
+                            raise RuntimeError('Incomplete CLUSTER INFO reply')
+                    size = self.cli(node, ['DBSIZE'], timeout=10).stdout.strip()
+                    if not size.isdigit():
+                        raise RuntimeError('Invalid DBSIZE reply')
+                    inventory[node] = dict(fields, dbsize=int(size))
+                except (RuntimeError, OSError) as exc:
+                    pending.append(f'{node}: {self.redact(str(exc))[:160]}')
+            if not pending:
+                return inventory
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Redis nodes are not ready: ' + '; '.join(pending) +
+                                   '. Inspect node logs. No cluster creation or cleanup was attempted.')
+            time.sleep(1)
+
     def cluster_init(self):
         if self.env['DEPLOYMENT_MODE'] != 'cluster':
             raise RuntimeError('cluster-init requires DEPLOYMENT_MODE=cluster')
+        self.check_env_state()
         nodes = self.cluster_nodes()
         for node in nodes:
             self.inspect(node)
-        addresses = [f'{self.env[f"CLUSTER_{i}_IP"]}:6379' for i in range(1, len(nodes) + 1)]
-        replicas = int(self.env['CLUSTER_REPLICAS'])
-        command = (
-            'export REDISCLI_AUTH="$REDIS_PASSWORD"; '
-            'redis-cli --cluster create ' + ' '.join(addresses) +
-            f' --cluster-replicas {replicas} --cluster-yes'
-        )
-        result = self.execute(nodes[0], ['sh', '-eu', '-c', command], timeout=60)
-        if result.returncode:
-            raise RuntimeError('Redis Cluster initialization failed; inspect node logs. No cleanup was attempted.')
-        info = self.cli(CLUSTER_NODES[0], ['CLUSTER', 'INFO']).stdout
-        fields = dict(line.split(':', 1) for line in info.splitlines() if ':' in line)
-        if fields.get('cluster_state') != 'ok' or fields.get('cluster_slots_assigned') != '16384':
-            raise RuntimeError('Cluster initialization did not produce a healthy 16384-slot cluster.')
-        print(f'PASS: Redis Cluster initialized with {len(nodes)} nodes and {replicas} replica(s) per master.')
+        inventory = self.cluster_inventory()
+        healthy = all(info.get('cluster_state') == 'ok' and
+                      info.get('cluster_known_nodes') == str(len(nodes)) and
+                      info.get('cluster_slots_assigned') == '16384' and
+                      info.get('cluster_slots_ok') == '16384' and
+                      info.get('cluster_slots_fail') == '0' and
+                      info.get('cluster_slots_pfail') == '0'
+                      for info in inventory.values())
+        empty = all(info.get('cluster_known_nodes') == '1' and
+                    info.get('cluster_slots_assigned') == '0' and info.get('dbsize') == 0
+                    for info in inventory.values())
+        if not healthy and not empty:
+            raise RuntimeError('Existing/non-empty or partially initialized cluster detected. '
+                               'Use ./lab.sh status, ./lab.sh wait and node logs; '
+                               'cluster create/reset was not run and data was preserved.')
+        if not healthy:
+            addresses = self.cluster_endpoints()
+            replicas = int(self.env['CLUSTER_REPLICAS'])
+            command = ('export REDISCLI_AUTH="$REDIS_PASSWORD"; '
+                       'redis-cli --cluster create ' + ' '.join(addresses) +
+                       f' --cluster-replicas {replicas} --cluster-yes')
+            self.execute(nodes[0], ['sh', '-eu', '-c', command], timeout=self.readiness_budget())
+        # Redis can report a transitional cluster_state after slot assignment.
+        # Verify all nodes plus authenticated write/read on the owning primary.
+        self.client('wait', '--timeout', str(self.readiness_budget()))
+        print(f'PASS: Redis Cluster {"verified (existing data retained)" if healthy else "initialized"} '
+              f'with {len(nodes)} nodes and {self.env["CLUSTER_REPLICAS"]} replica(s) per master.')
 
     def persist_cluster_settings(self, count: int, replicas: int):
         path = ROOT / '.env'
@@ -825,11 +870,17 @@ def main(argv=None):
     if getattr(args, 'cluster_nodes', None) is not None or getattr(args, 'cluster_replicas', None) is not None:
         if lab.env['DEPLOYMENT_MODE'] != 'cluster':
             raise ValueError('Cluster topology options require DEPLOYMENT_MODE=cluster')
+        previous_topology = (lab.env['CLUSTER_NODE_COUNT'], lab.env['CLUSTER_REPLICAS'])
         if args.cluster_nodes is not None:
             lab.env['CLUSTER_NODE_COUNT'] = str(args.cluster_nodes)
         if args.cluster_replicas is not None:
             lab.env['CLUSTER_REPLICAS'] = str(args.cluster_replicas)
         validate_env(lab.env)
+        if ((ROOT / '.lab/environment.sha256').exists() and previous_topology !=
+                (lab.env['CLUSTER_NODE_COUNT'], lab.env['CLUSTER_REPLICAS'])):
+            raise RuntimeError('Existing Redis topology is pinned. Keep the previous node/replica settings; '
+                               'use a separate lab for a different topology. No configuration or data was changed.')
+        lab.check_env_state()
         lab.proc_env.update(CLUSTER_NODE_COUNT=lab.env['CLUSTER_NODE_COUNT'],
                             CLUSTER_REPLICAS=lab.env['CLUSTER_REPLICAS'])
         lab.proc_env['CLUSTER_NODES'] = ','.join(lab.cluster_endpoints())

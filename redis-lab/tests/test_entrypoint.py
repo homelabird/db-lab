@@ -29,6 +29,33 @@ class EntrypointTests(unittest.TestCase):
             FAILOVER_TIMEOUT_MS='30000', ARGV_FILE=str(self.root / 'argv.txt'))
     def run_entry(self):
         return subprocess.run(['sh', str(self.script)], env=self.env, text=True, capture_output=True)
+    def test_cluster_bus_port_is_bound_and_announced(self):
+        self.env.update(LAB_MODE='cluster', CLUSTER_BUS_PORT='17000')
+        result = self.run_entry()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = (self.root / 'data/state/redis.conf').read_text()
+        self.assertIn('cluster-port 17000', text)
+        self.assertIn('cluster-announce-bus-port 17000', text)
+
+    def test_legacy_cluster_bus_fix_preserves_nodes_and_data(self):
+        self.env.update(LAB_MODE='cluster', CLUSTER_BUS_PORT='17000')
+        self.assertEqual(self.run_entry().returncode, 0)
+        config = self.root / 'data/state/redis.conf'
+        original = config.read_text().replace('cluster-port 17000\n', '')
+        config.write_text(original)
+        nodes = self.root / 'data/state/nodes.conf'
+        nodes.write_text('retain-existing-node-id-and-epochs')
+        data = self.root / 'data/db/dump.rdb'
+        data.write_bytes(b'preserve-existing-db-bytes')
+        self.assertEqual(self.run_entry().returncode, 0)
+        once = config.read_text()
+        self.assertTrue(once.startswith(original))
+        self.assertEqual(once.count('cluster-port 17000'), 1)
+        self.assertEqual(self.run_entry().returncode, 0)
+        self.assertEqual(config.read_text(), once)
+        self.assertEqual(nodes.read_text(), 'retain-existing-node-id-and-epochs')
+        self.assertEqual(data.read_bytes(), b'preserve-existing-db-bytes')
+
     def test_replica_config_initializes(self):
         result = self.run_entry(); self.assertEqual(result.returncode, 0, result.stderr)
         text = (self.root / 'data/state/redis.conf').read_text()

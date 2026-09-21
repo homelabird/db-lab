@@ -41,7 +41,7 @@ def sanitize_container(raw: dict, project: str, service: str) -> dict:
     running = state.get('Running') is True
     paused = state.get('Paused') is True
     ready = (status == 'running' and running and not paused and state.get('Restarting') is not True and
-             (health == 'healthy' or (service == 'worker' and health is None)))
+             health == 'healthy')
     return {'service': service, 'container_id': identity, 'image_id': image,
             'state': status if status in STATES else 'unknown',
             'running': running, 'paused': paused, 'oom_killed': state.get('OOMKilled') is True,

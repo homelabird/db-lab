@@ -151,6 +151,7 @@ class LoopbackScenarioTests(unittest.TestCase):
         server=ThreadingHTTPServer(('127.0.0.1',0),make_handler(lambda:app));server.daemon_threads=True
         thread=threading.Thread(target=lambda:server.serve_forever(poll_interval=.01),daemon=True);thread.start()
         try:
-            with self.assertRaises(RuntimeError):probe('http://127.0.0.1:'+str(server.server_port),2)
+            with patch.dict(os.environ, {'STUDY_PROJECT':'db-lab-mvp'}), self.assertRaisesRegex(RuntimeError, 'Search content'):
+                probe('http://127.0.0.1:'+str(server.server_port),2)
         finally:
             server.shutdown();server.server_close();thread.join(2)

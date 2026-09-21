@@ -256,6 +256,7 @@ class TopologyTests(unittest.TestCase):
                     'cluster_slots_ok': '16384',
                     'cluster_slots_fail': '0',
                     'cluster_slots_pfail': '0',
+                    'cluster_known_nodes': '6',
                 }
             self.assertEqual(CLIENT.topology_errors(state), [])
             state['cluster']['redis-cluster-1']['cluster_slots_ok'] = '16383'

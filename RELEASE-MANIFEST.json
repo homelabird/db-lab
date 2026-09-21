@@ -1,18 +1,10 @@
 {
   "schema": 1,
-  "release": "v10-quality",
-  "base_sha256": "3406e54009690df1524837e4ccf571b38bfe4d6670fd8fe578812e62996a6912",
+  "release": "v12-mvp-readiness-20260921",
+  "base_sha256": "76cf65a1777522aa2bd24c6799d6c55e16f3c07ed4fb65a056d98cc3f5449772",
   "files": {
     ".gitattributes": {
       "sha256": "67bb89f8881d00cf0bc4444ca1f1620c7f3059c55d305ed658e1562773956c2d",
-      "mode": 420
-    },
-    ".github/workflows/mvp-runtime.yml": {
-      "sha256": "51552bffd34fb81c99131fb0fbe8d2125dbc878edcafddf523049d75529d15d0",
-      "mode": 420
-    },
-    ".github/workflows/quality.yml": {
-      "sha256": "c396a05d1b905463d16858ce9aee137b8e535c32274e50670646537b73dd1f62",
       "mode": 420
     },
     ".gitignore": {
@@ -20,12 +12,20 @@
       "mode": 420
     },
     "README.md": {
-      "sha256": "8b32e2323ec2b47e9a04d174d407e5e33ede37e022ed9ff7496b2e5ce7d8e34b",
+      "sha256": "b903c0fb4b5485e26f7daf540ebec8c282cb1e8daaaace641644a7f23a27ef88",
       "mode": 420
     },
     "all.sh": {
       "sha256": "ad0f708485093155e4d87e701f1915f3e4a7968efd86e3d8eac8aeb3ebce040e",
       "mode": 493
+    },
+    ".github/workflows/mvp-runtime.yml": {
+      "sha256": "51552bffd34fb81c99131fb0fbe8d2125dbc878edcafddf523049d75529d15d0",
+      "mode": 420
+    },
+    ".github/workflows/quality.yml": {
+      "sha256": "79ba5b0aa8c1d9baf55bf7ebd4748a5e4b2907dfdd22ba381c7fa4d1815ab464",
+      "mode": 420
     },
     "ansible/.gitignore": {
       "sha256": "c5259d8c71dd9a3289824e303a315dd583c5e64798b8eb8ea50c616c510270af",
@@ -45,6 +45,10 @@
     },
     "ansible/control.yml": {
       "sha256": "1828d7ef772aadf986209d7200b559240582527b4d28dcfa3b71abd9e46582b8",
+      "mode": 420
+    },
+    "ansible/requirements.txt": {
+      "sha256": "324489b555289df23cc0888988354f95b8dbb0441b30242c56486d231ecab277",
       "mode": 420
     },
     "ansible/examples/k8s-status.yml": {
@@ -91,10 +95,6 @@
       "sha256": "f006693057c39dfc1bf33628abac87853f4b37b1ea28ac8997b8cd2440b556ef",
       "mode": 420
     },
-    "ansible/requirements.txt": {
-      "sha256": "324489b555289df23cc0888988354f95b8dbb0441b30242c56486d231ecab277",
-      "mode": 420
-    },
     "ansible/tests/test_playbooks_live.py": {
       "sha256": "45df5856377207301f94556266bf6ff37aa0860558f3e3472a0cd52a2a3b64df",
       "mode": 420
@@ -105,6 +105,10 @@
     },
     "docs/ANSIBLE-IMPLEMENTATION.md": {
       "sha256": "cf643a90725979cbe595a85a38ef44f88ae8b6f7260c95d753c8c2915883ff76",
+      "mode": 420
+    },
+    "docs/FOLLOWUP-REPAIR-2026-09-21.md": {
+      "sha256": "e32ae77834512ccef9552276a990b7f9b1031abbae8de936d6470e1f52a8d5a8",
       "mode": 420
     },
     "docs/QUALITY-GUIDE.md": {
@@ -121,6 +125,10 @@
     },
     "docs/RUNTIME-ACCEPTANCE.md": {
       "sha256": "149862346e8c2aa51985551c9659227726e161bf0897183eeb8b63d1af4a8899",
+      "mode": 420
+    },
+    "docs/STARTUP-REPAIR-2026-09-21.md": {
+      "sha256": "af0788102e192a5c9f70d94a9ebb1751a4f616710bedb03ad4ca6d571aeaec22",
       "mode": 420
     },
     "docs/all-sh-tests.txt": {
@@ -183,16 +191,20 @@
       "sha256": "28c4f44e92867c8104637071e25e872945c5b367109d83d267c8a4d5c12488f7",
       "mode": 420
     },
-    "elasticsearch/cerebro/application.conf": {
-      "sha256": "6e491bab53b39399ccc93a4932e894a8c94cbe3718ee676f5630956afcfd40d5",
-      "mode": 420
-    },
     "elasticsearch/compose.scaleout.yaml": {
       "sha256": "a7c8dc461cecf276990aef35f71951b80e030df7eb9aa70566985fa932a1771a",
       "mode": 420
     },
     "elasticsearch/compose.yaml": {
       "sha256": "42e47217a445453f0578628ba53ede3b9ef2755853e49996ad445ce8a9a74d85",
+      "mode": 420
+    },
+    "elasticsearch/lab.sh": {
+      "sha256": "9bd1e159b392d190ee84662cadbfe035f2e03007b1e10ef6e09ab91b22e803a7",
+      "mode": 493
+    },
+    "elasticsearch/cerebro/application.conf": {
+      "sha256": "6e491bab53b39399ccc93a4932e894a8c94cbe3718ee676f5630956afcfd40d5",
       "mode": 420
     },
     "elasticsearch/datasets/README.md": {
@@ -247,6 +259,10 @@
       "sha256": "34e5347f8d45106c7dc276d614fac0ec66182700ae59bcdae03a999d0d1397a0",
       "mode": 420
     },
+    "elasticsearch/helm/elasticsearch-lab/values.yaml": {
+      "sha256": "bae221ff843a4f341351d91c20287c94067d01b78f30b849af50a0fc7c5b384a",
+      "mode": 420
+    },
     "elasticsearch/helm/elasticsearch-lab/templates/NOTES.txt": {
       "sha256": "e570783b471af204cf4bd45135a0e707a21ec21b479c1821baa47f85fc380d66",
       "mode": 420
@@ -263,10 +279,6 @@
       "sha256": "2b54a9124a81cff9df31f720f0e1750b85ce6dfa3eec58820394f75ad392f655",
       "mode": 420
     },
-    "elasticsearch/helm/elasticsearch-lab/values.yaml": {
-      "sha256": "bae221ff843a4f341351d91c20287c94067d01b78f30b849af50a0fc7c5b384a",
-      "mode": 420
-    },
     "elasticsearch/k8s/elasticsearch.yaml": {
       "sha256": "2446594bfe68e51493105e63a856f5a65eb9e6979fdf31c489fc3e5420f6e227",
       "mode": 420
@@ -274,10 +286,6 @@
     "elasticsearch/k8s/ui.yaml": {
       "sha256": "2cff133e86fd70fd5cb4eae99c7733645f09b8695201cb48096849f68585bf14",
       "mode": 420
-    },
-    "elasticsearch/lab.sh": {
-      "sha256": "9bd1e159b392d190ee84662cadbfe035f2e03007b1e10ef6e09ab91b22e803a7",
-      "mode": 493
     },
     "elasticsearch/mappings/lab-audit-v1.json": {
       "sha256": "b69960edfd022af66fbcc93391bb5b1256051520669d214ec5d0f723475d3ff1",
@@ -405,18 +413,6 @@
     },
     "elasticsearch/queries/catalog.json": {
       "sha256": "580b5e7e05c67e6b89ff7994b1cdc01c3bf7afd3bfea66818b8422e0764fb322",
-      "mode": 420
-    },
-    "elasticsearch/reports/README.md": {
-      "sha256": "36fc2fa7a8c5532ecd6332c431c4957d1ca6cde55eb7c905f2033219ca2d9599",
-      "mode": 420
-    },
-    "elasticsearch/reports/validation/offline-summary.json": {
-      "sha256": "ef359f94e315cad98beb592c75a4ada12383d9ee2b623288353bbcfbe4dffc82",
-      "mode": 420
-    },
-    "elasticsearch/reports/validation/offline-tests.txt": {
-      "sha256": "de4f6450686a6146214bdca6b6a01750d6e2bf0f2999a5ed2ce6e2d9e5023151",
       "mode": 420
     },
     "elasticsearch/scenarios/01-manual-shard-move.sh": {
@@ -583,6 +579,14 @@
       "sha256": "77807b8e0bf5fa0a21a5f098f01f44eeff92b81addd07fb485ef4428ba37cc15",
       "mode": 420
     },
+    "helmchart/values.schema.json": {
+      "sha256": "78897ee74ea0dd64f2ec952f34614d5854ca0589a2ec0a89245df183f9136fd1",
+      "mode": 420
+    },
+    "helmchart/values.yaml": {
+      "sha256": "402aa06fbea94ff5258591565bd280e6dac03592cdc4ece393c295abf7026d1c",
+      "mode": 420
+    },
     "helmchart/profiles/distributed.yaml": {
       "sha256": "219875d3aa87f6cc7bdebdde256ce1ac6f6f859e08ce7d103410c0ca9d4bc687",
       "mode": 420
@@ -671,14 +675,6 @@
       "sha256": "01e7641989b2a8d0dc832421a49ca0143ed58c493281281f973077f6ff29f461",
       "mode": 420
     },
-    "helmchart/values.schema.json": {
-      "sha256": "78897ee74ea0dd64f2ec952f34614d5854ca0589a2ec0a89245df183f9136fd1",
-      "mode": 420
-    },
-    "helmchart/values.yaml": {
-      "sha256": "402aa06fbea94ff5258591565bd280e6dac03592cdc4ece393c295abf7026d1c",
-      "mode": 420
-    },
     "kafka-lab/.dockerignore": {
       "sha256": "1848b765e329a1a813ba16157b57c7cd0c0c8cbdf4df4b7bf9d935481c143c73",
       "mode": 420
@@ -696,8 +692,24 @@
       "mode": 420
     },
     "kafka-lab/README.md": {
-      "sha256": "2abf6700d746c05fe5d95663fed39a96707c22354771258d07073a4098a3cd2c",
+      "sha256": "55b6cf0f81d814bad7d2d5e5ac2e4e458c812cbb225107876d88784c1edb5f92",
       "mode": 420
+    },
+    "kafka-lab/compose.kraft.yaml": {
+      "sha256": "9fc11adebdec8b399e3ef3a27a30476d8655c0e1ac6921cddcc8aecd71a944bb",
+      "mode": 420
+    },
+    "kafka-lab/compose.ui.yaml": {
+      "sha256": "f234a3a96ed4eab6231019b01f6f852384b3163c4cd7ba27ae7e24eb69481c60",
+      "mode": 420
+    },
+    "kafka-lab/compose.yaml": {
+      "sha256": "df31cebed28ce5a9255ef1dfa08d7b8831ffe45eaf231b6cde3d70d26bb14680",
+      "mode": 420
+    },
+    "kafka-lab/lab.sh": {
+      "sha256": "c83e0c4f473c2baad59fe00e49b741761c3013409f1f315bb4387c1526bed292",
+      "mode": 493
     },
     "kafka-lab/client/Containerfile": {
       "sha256": "a9b9afa88fbf2597e42c018a95ab01f73fc4538482c30540e5953692ad2b6919",
@@ -713,18 +725,6 @@
     },
     "kafka-lab/client/requirements.txt": {
       "sha256": "6058f3b27c0007a05a9d3f9067b936469c3cc34346d3f58f0ed5431b19b0a231",
-      "mode": 420
-    },
-    "kafka-lab/compose.kraft.yaml": {
-      "sha256": "9fc11adebdec8b399e3ef3a27a30476d8655c0e1ac6921cddcc8aecd71a944bb",
-      "mode": 420
-    },
-    "kafka-lab/compose.ui.yaml": {
-      "sha256": "f234a3a96ed4eab6231019b01f6f852384b3163c4cd7ba27ae7e24eb69481c60",
-      "mode": 420
-    },
-    "kafka-lab/compose.yaml": {
-      "sha256": "df31cebed28ce5a9255ef1dfa08d7b8831ffe45eaf231b6cde3d70d26bb14680",
       "mode": 420
     },
     "kafka-lab/docs/01-kafka-basics.md": {
@@ -747,18 +747,6 @@
       "sha256": "eee028af2d759303dde563dd8bc080a6fc554ce5688a75c4fa0466f2c5c94a59",
       "mode": 420
     },
-    "kafka-lab/lab.sh": {
-      "sha256": "d8c8d84f069dd32bc017164097f65f6783352797042a9efb22e90f6f170d4b57",
-      "mode": 493
-    },
-    "kafka-lab/reports/VALIDATION.md": {
-      "sha256": "32505c480cb4f651885e9d67b5ece01e2893deaf68db3c61fa306563580582a9",
-      "mode": 420
-    },
-    "kafka-lab/reports/static-tests.txt": {
-      "sha256": "3575fd985745a3d1ea088ef092dea9b8aeb1d22f80e994e89734dc612866c238",
-      "mode": 420
-    },
     "kafka-lab/scripts/kraft-id.py": {
       "sha256": "432b0b3f0704900e3ca82bdfd2998c23ba4fd64c5355356a4b272aa76e6b737c",
       "mode": 493
@@ -775,6 +763,10 @@
       "sha256": "ddcccdd7ef763fdedacc345bc040b625df541e397a96c125edb8c71177bc4ee5",
       "mode": 420
     },
+    "kafka-lab/scripts/topology-state.py": {
+      "sha256": "5482eb709c12d931b04e17b659c248ee4b3a8a3de10fdb73cfc49655de73a093",
+      "mode": 420
+    },
     "kafka-lab/tests/fake_podman.py": {
       "sha256": "34884cc34f54248c738d1beb4c6e3a7bbda2334bf95b11b09175e95c85d083d5",
       "mode": 420
@@ -788,7 +780,11 @@
       "mode": 420
     },
     "kafka-lab/tests/test_shell_and_compose.py": {
-      "sha256": "fd7161643dcd5444b70a34489aa922b51ba4024cc8dbfbbebef41012fce0ea37",
+      "sha256": "4d6f116cc1f089fadc9bba835f8b8a4ec58007f6ae553d41a98e63759a53481d",
+      "mode": 420
+    },
+    "kafka-lab/tests/test_topology_state.py": {
+      "sha256": "850cd3e88631cbe49fe9268d52fc489617de13c9d435269b098c6ed91dc86310",
       "mode": 420
     },
     "mariadb-ha-lab/.dockerignore": {
@@ -811,16 +807,20 @@
       "sha256": "ccbcf819e2b5e48c94485a0b9c26d1ebdd6150049362643ec5ebbc61e6bb5137",
       "mode": 420
     },
-    "mariadb-ha-lab/backups/.gitkeep": {
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "mode": 420
-    },
     "mariadb-ha-lab/compose.production.yaml": {
       "sha256": "79f00817e2c30ef99177e8e1658251cedb18753f835532c3db92781c649a4bae",
       "mode": 420
     },
     "mariadb-ha-lab/compose.yaml": {
       "sha256": "3b0b0ca6916cfff9ee4296498c7c1f3be9ab5920adfe0b5e004ea873e25b9fe4",
+      "mode": 420
+    },
+    "mariadb-ha-lab/lab.sh": {
+      "sha256": "d71977a7f5826a481d06eab69199d94496a7bcaf243e345ffb6237445284a2e5",
+      "mode": 493
+    },
+    "mariadb-ha-lab/backups/.gitkeep": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "mode": 420
     },
     "mariadb-ha-lab/datasets/commerce-data-template.sql": {
@@ -871,10 +871,6 @@
       "sha256": "b3a84fcf54a297b9ec1e0ab7cf5f70e1da25a33a292f8f23f830cf5dd4fc5659",
       "mode": 420
     },
-    "mariadb-ha-lab/docs/history/scenarios-files.original.sha256": {
-      "sha256": "2986d0de25a56416f5613ea8dc36aa5bb8fdece4ff3cd40f1b20e4413a787ae9",
-      "mode": 420
-    },
     "mariadb-ha-lab/docs/original-files.sha256": {
       "sha256": "1731d5b05078d027e06fd9bd89545d52f88d79f7e54cec1b47bbd18c8b727506",
       "mode": 420
@@ -889,6 +885,10 @@
     },
     "mariadb-ha-lab/docs/static-tests.log": {
       "sha256": "e677d821ff73aecadd3a0c3d71a95c3e2898e68b155ce2d78112c1e42db70416",
+      "mode": 420
+    },
+    "mariadb-ha-lab/docs/history/scenarios-files.original.sha256": {
+      "sha256": "2986d0de25a56416f5613ea8dc36aa5bb8fdece4ff3cd40f1b20e4413a787ae9",
       "mode": 420
     },
     "mariadb-ha-lab/images/node/Dockerfile": {
@@ -914,10 +914,6 @@
     "mariadb-ha-lab/images/proxy/haproxy.cfg": {
       "sha256": "7c1dc25729d6da087848e7ccd36c41961fb44318fba886fca8377ede30b296dd",
       "mode": 420
-    },
-    "mariadb-ha-lab/lab.sh": {
-      "sha256": "d71977a7f5826a481d06eab69199d94496a7bcaf243e345ffb6237445284a2e5",
-      "mode": 493
     },
     "mariadb-ha-lab/labs/01-health.sql": {
       "sha256": "20bd859df05c50ced534d58d03b58ade816ad71589712c613d900e6d58216717",
@@ -967,10 +963,6 @@
       "sha256": "b9357139a7a5f3076d51b4e5e032ce51f5519609ce70803c79a223b67998a821",
       "mode": 420
     },
-    "mariadb-ha-lab/reports/.gitkeep": {
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "mode": 420
-    },
     "mariadb-ha-lab/scripts/dashboard.html": {
       "sha256": "8e061fd3373203c2e9c6562a7a3a664527afe939018e2d8fb7d6f7f9f2c59138",
       "mode": 420
@@ -984,7 +976,7 @@
       "mode": 420
     },
     "mariadb-ha-lab/scripts/lab.py": {
-      "sha256": "ad026fbfa7410eb6acda4c6b016632ddc1065c0fceb50fd016f057ced2243cdf",
+      "sha256": "f235ec8af975bd5b14e3a8207c048bc141d3de0a1265b8160f333e307513255d",
       "mode": 420
     },
     "mariadb-ha-lab/scripts/scenario_worker.py": {
@@ -1017,6 +1009,10 @@
     },
     "mariadb-ha-lab/standalone-original/README.md": {
       "sha256": "29857ff9260f423b4b9a388f0fa8a7b6af334748b43757de6a71beda77973d98",
+      "mode": 420
+    },
+    "mariadb-ha-lab/standalone-original/mariadb.yaml": {
+      "sha256": "10405ddf562580479b37e65547e7c28b64efb1ea9f32350d25129e7e65a25380",
       "mode": 420
     },
     "mariadb-ha-lab/standalone-original/config/advanced.cnf": {
@@ -1111,10 +1107,6 @@
       "sha256": "7e344ca50cee38a0041cabe96ef1b0884fdc920025998c91d5d690a71a0fb0d6",
       "mode": 420
     },
-    "mariadb-ha-lab/standalone-original/mariadb.yaml": {
-      "sha256": "10405ddf562580479b37e65547e7c28b64efb1ea9f32350d25129e7e65a25380",
-      "mode": 420
-    },
     "mariadb-ha-lab/standalone-original/scripts/connect.sh": {
       "sha256": "1f409635f17540bbaba545b045d6d10053de4ffee1d7b4f92ccc8162fef84196",
       "mode": 420
@@ -1188,11 +1180,19 @@
       "mode": 420
     },
     "mvp-lab/README.md": {
-      "sha256": "1ba51e5f0525ca87cc7bc03964b145b12898a074bbe8337bce3b4d5cae993c78",
+      "sha256": "81e3834ecc250919d4254d4c39930dd32ad4c072b7409aeb7a93f27ba549d7c9",
       "mode": 420
     },
     "mvp-lab/compose.yaml": {
-      "sha256": "bf8b34a84d18e2226da641171478ea3418715fba0eb4b1dc5712687c225434d9",
+      "sha256": "c636e74e8dee8d44ad1de05b2bf922e700aab1ce1565e4cfabc97886c6ea2684",
+      "mode": 420
+    },
+    "mvp-lab/lab.sh": {
+      "sha256": "7915909b9851e3591dd2ce33ba9e1c28bb4449b6b406cdf6c2727dc519e23ecb",
+      "mode": 493
+    },
+    "mvp-lab/requirements.txt": {
+      "sha256": "518c94d58cc5e1c5c4d956cbb128c7bcbe825948289d99ab4bfa602217474677",
       "mode": 420
     },
     "mvp-lab/docs/ADVANCED-DRILLS.md": {
@@ -1254,10 +1254,6 @@
     "mvp-lab/docs/VALIDATION.md": {
       "sha256": "cf85a21f902725165444d380d9eb0a2a31c73f6cd4d9571fe64c68134f3c9cde",
       "mode": 420
-    },
-    "mvp-lab/lab.sh": {
-      "sha256": "7915909b9851e3591dd2ce33ba9e1c28bb4449b6b406cdf6c2727dc519e23ecb",
-      "mode": 493
     },
     "mvp-lab/mvp_app/__init__.py": {
       "sha256": "0c62b51e1807a86ab4e68204294774460be0d80a6d8e41563222de4ebaa3bfe4",
@@ -1344,11 +1340,11 @@
       "mode": 420
     },
     "mvp-lab/mvp_app/worker.py": {
-      "sha256": "652b73108d68ed980edbce61222cf6e69a100388aa64237ead9f5f975e23b8b3",
+      "sha256": "f3b437b3ad5e523af2546e4324d1b14e244cc21bde9fea7c7cf7b759965f087a",
       "mode": 420
     },
-    "mvp-lab/requirements.txt": {
-      "sha256": "518c94d58cc5e1c5c4d956cbb128c7bcbe825948289d99ab4bfa602217474677",
+    "mvp-lab/mvp_app/worker_health.py": {
+      "sha256": "84b722d47b5de683112b483dd059a14fae6b74a510d51af955cd275bdcb88eb5",
       "mode": 420
     },
     "mvp-lab/tests/fakes.py": {
@@ -1400,7 +1396,11 @@
       "mode": 420
     },
     "mvp-lab/tests/test_http.py": {
-      "sha256": "7e0472c8e3f33569a28def81569e4465c92ab3d8cf592722336632472df86b88",
+      "sha256": "fb6cc2a7ed672dca0bbf73dbaf0a755402df8209f6d67ef6a0f666675e4ca5ba",
+      "mode": 420
+    },
+    "mvp-lab/tests/test_http_target_v12.py": {
+      "sha256": "5ab56f3de70385c71b0f1ed3b71a1d58bc8bd57e2736f41d3eafdb49709224cc",
       "mode": 420
     },
     "mvp-lab/tests/test_measurement_v8.py": {
@@ -1435,6 +1435,10 @@
       "sha256": "8cc85fe5c23f55c76a1063d9360d7ad6b3318dba103ac533af9df78177beb36c",
       "mode": 420
     },
+    "mvp-lab/tests/test_runtime_gaps_v12.py": {
+      "sha256": "b9fdb8562cd15b167270a2ef240d604545eb7a6054b0d8d1ecf36733b280a6a3",
+      "mode": 420
+    },
     "mvp-lab/tests/test_simulation.py": {
       "sha256": "14e68875c040c7f924f12e2415fe6c88efc82361b5bdb933a31f7b576d50a3fd",
       "mode": 420
@@ -1444,7 +1448,7 @@
       "mode": 420
     },
     "mvp-lab/tests/test_simulation_runner.py": {
-      "sha256": "cb6f3a81c9f153f60ea8d1d9e753535b7adced19ecdd0f8f606d3a350a3be5ba",
+      "sha256": "939bdbf73ce526405b4d0e537294df641c3b21e09674f80e13c8b4925533b379",
       "mode": 420
     },
     "mvp-lab/tests/test_sql.py": {
@@ -1452,7 +1456,7 @@
       "mode": 420
     },
     "mvp-lab/tests/test_startup_v7.py": {
-      "sha256": "6298ab26d186d663b75c300171cef3848845dc8105b28ceba9e58c892ccabdae",
+      "sha256": "15dcb7e7342113cfa51822ef08473cd8d6a8f69716aa264115afd97e38a19007",
       "mode": 420
     },
     "mvp-lab/tests/test_study_analysis_v8.py": {
@@ -1484,7 +1488,11 @@
       "mode": 420
     },
     "mvp-lab/tests/test_v6_regressions.py": {
-      "sha256": "ff00093dc974998b63826d75ee98486fbe4520003fe4cdbce702222d18db6d5f",
+      "sha256": "59783beb2341276b1ad1ab94299ceb5848e21f7e660cdd2cb262c13255d3b0b0",
+      "mode": 420
+    },
+    "mvp-lab/tests/test_worker_health_v12.py": {
+      "sha256": "3141f6945085b0fa5990a5fae2c479a28fef46a0eba4bb7cadccc1b7f328bc64",
       "mode": 420
     },
     "mvp-lab/tests/transaction_sqlite.py": {
@@ -1503,8 +1511,12 @@
       "sha256": "40e3fc31d83e09a09a66fcba8c674ae88eab77a9ec6e760e4d8af1274d403bd6",
       "mode": 420
     },
+    "mvp-lab/tools/http_target.py": {
+      "sha256": "c716ecf0905da4bb0c96bb28d97aa0ab235adab6d94354ef66c7a1586e9d7a53",
+      "mode": 420
+    },
     "mvp-lab/tools/manage.py": {
-      "sha256": "9bb4babb17c3cf4018c81b1c5e5554065272df61f9dbc94f3ce1931f6278e2c2",
+      "sha256": "129d7295fb5cd984e939d9206ff19bcc24614431f371a6ea399ff87cf06a91ce",
       "mode": 420
     },
     "mvp-lab/tools/measurement.py": {
@@ -1520,7 +1532,7 @@
       "mode": 420
     },
     "mvp-lab/tools/probe.py": {
-      "sha256": "50af1359eaef9db9f742881d26d2639411300eef5d545d9742dde4ff5f79a413",
+      "sha256": "724faa96a1b95d6c0a215164aa66bb5c7da85ca98777cf1d803164e735d64e99",
       "mode": 420
     },
     "mvp-lab/tools/sim_engine.py": {
@@ -1532,7 +1544,7 @@
       "mode": 420
     },
     "mvp-lab/tools/startup.py": {
-      "sha256": "5b4f48b7a15de251819cd4789bdbe82131a3986fa7964ab9bc296b4f8cb13a83",
+      "sha256": "1257ff4eab6676ea3d39fe4268f10f6c71680e136424877076c2fd42ab22bc3f",
       "mode": 420
     },
     "mvp-lab/tools/study.py": {
@@ -1576,7 +1588,7 @@
       "mode": 420
     },
     "redis-lab/README.md": {
-      "sha256": "1b26fb965384edab97d2db9211380d518a31c3ede521a28e9d174ce461b9b8d7",
+      "sha256": "ecd428fb392228f3105b3494a39aba6c64f5ac956ff22d3a4abfc1fca8f5db5b",
       "mode": 420
     },
     "redis-lab/REFERENCES.md": {
@@ -1595,18 +1607,6 @@
       "sha256": "c07500093b3b6d3d45f39b90ad45a610f1aa28f82cf48735001cdadbd9122f88",
       "mode": 420
     },
-    "redis-lab/client/client.py": {
-      "sha256": "b2681157e6abbbee8d3fdd6b5ab7f2cf784c2f0271c0e82aa6b8e9fe7724b37e",
-      "mode": 420
-    },
-    "redis-lab/client/core.py": {
-      "sha256": "ebf7a9170b1670752572534bc41ed54d4eb85c84c4283446dedcfaf1a64110f7",
-      "mode": 420
-    },
-    "redis-lab/client/requirements.txt": {
-      "sha256": "cf63e15a5e3510804ce009f586fbe7e72b96a35ea87d970ac8295869e57ce7e8",
-      "mode": 420
-    },
     "redis-lab/compose.cluster.yaml": {
       "sha256": "fbef2de7f59ceac3c797d71e03a096881a659acafc7e489c7dfda345740f299f",
       "mode": 420
@@ -1619,8 +1619,28 @@
       "sha256": "7297175e6866303fdb524990e17ee02e92ebbd3c885e917c747485eef60ecc79",
       "mode": 420
     },
+    "redis-lab/lab.sh": {
+      "sha256": "956788fc04b1f4d6083c0477cb98fa92eeb4cd877857674d2b6c7758db83b146",
+      "mode": 493
+    },
+    "redis-lab/ops.sh": {
+      "sha256": "f85d7622a1a2862b2529b861a33601437083eae9341fe07854544a036b4e15fc",
+      "mode": 420
+    },
+    "redis-lab/client/client.py": {
+      "sha256": "b5ea038218bee2dcd1c79e0ae3e4b540034cd28b7ad58c0a63a1327a88e06ed2",
+      "mode": 420
+    },
+    "redis-lab/client/core.py": {
+      "sha256": "ebf7a9170b1670752572534bc41ed54d4eb85c84c4283446dedcfaf1a64110f7",
+      "mode": 420
+    },
+    "redis-lab/client/requirements.txt": {
+      "sha256": "cf63e15a5e3510804ce009f586fbe7e72b96a35ea87d970ac8295869e57ce7e8",
+      "mode": 420
+    },
     "redis-lab/config/cluster.conf.template": {
-      "sha256": "fc7cf1753da72dc5d259154d6ea7481a0b9ce172eec479848e0a4af2249d166c",
+      "sha256": "4a02f8f46d017baf578b34b24c018867e10ea1039087d55e77acb2e0ac5c4a4b",
       "mode": 420
     },
     "redis-lab/config/redis.conf.template": {
@@ -1632,7 +1652,7 @@
       "mode": 420
     },
     "redis-lab/container/entrypoint.sh": {
-      "sha256": "4ddba2b56194cba19cfeff8bbe43fb756aa8e2229a7a0f4f7a2e52498a77a91b",
+      "sha256": "1a4a3ee1e00aa685417fbddbdb6fce3b5a882106e07bd42aae50b7e4d9953f9b",
       "mode": 420
     },
     "redis-lab/container/perf-start.sh": {
@@ -1667,6 +1687,10 @@
       "sha256": "0d21cab11ba5f06a96838607bf91f164451369cda78b980be4366480d5177200",
       "mode": 420
     },
+    "redis-lab/docs/worksheet.md": {
+      "sha256": "92dd44be055a2406f74d675b94ca92fa3761b6169107e7fa1129f688343606a6",
+      "mode": 420
+    },
     "redis-lab/docs/ops/00-start.md": {
       "sha256": "bbb5b6768f38cc977bf4d2e2aa7d97bc1ccae45683b49f4791f1acdc51ecb3c5",
       "mode": 420
@@ -1699,20 +1723,8 @@
       "sha256": "d3bbae2b8ff4b226ca5415f8bc04228d683c00eca0517f3f964e8dfe85368bd8",
       "mode": 420
     },
-    "redis-lab/docs/worksheet.md": {
-      "sha256": "92dd44be055a2406f74d675b94ca92fa3761b6169107e7fa1129f688343606a6",
-      "mode": 420
-    },
     "redis-lab/examples/session.sh": {
       "sha256": "36b09e8aa65688b0066f3215988c4c8e280759d9445c62722fe931afb413e066",
-      "mode": 420
-    },
-    "redis-lab/lab.sh": {
-      "sha256": "956788fc04b1f4d6083c0477cb98fa92eeb4cd877857674d2b6c7758db83b146",
-      "mode": 493
-    },
-    "redis-lab/ops.sh": {
-      "sha256": "f85d7622a1a2862b2529b861a33601437083eae9341fe07854544a036b4e15fc",
       "mode": 420
     },
     "redis-lab/ops/__init__.py": {
@@ -1752,7 +1764,7 @@
       "mode": 420
     },
     "redis-lab/scripts/manage.py": {
-      "sha256": "581cbc63dd23a5d1f5558fc10a575be075685bd5f09903f7dfba53fe30ee6000",
+      "sha256": "39ece52ddc867119e86e0264c1e76d81fc9ffe063693cd179fa55a58baa6b7e8",
       "mode": 420
     },
     "redis-lab/scripts/ops_manage.py": {
@@ -1761,22 +1773,6 @@
     },
     "redis-lab/tests/check.sh": {
       "sha256": "a356044c0dadc602ec2e5441067220291c6de20fbde87bc724832ab6f9e27238",
-      "mode": 420
-    },
-    "redis-lab/tests/evidence/offline-tests.txt": {
-      "sha256": "56e8e6594d9a53cd5690bcb864876fe0db22db1c8e7f5ddc6bf2f9c2dbae5ccd",
-      "mode": 420
-    },
-    "redis-lab/tests/evidence/ops-live-attempt.log": {
-      "sha256": "b237f9437876a6e9f645a4daf2aea5671b6f22c32e7dc7c87e44cc1bd81965ab",
-      "mode": 420
-    },
-    "redis-lab/tests/evidence/ops-live-validation.json": {
-      "sha256": "8a31048840e9775292502be808b1d0a80c78efd8723befa6264a7288030d86df",
-      "mode": 420
-    },
-    "redis-lab/tests/evidence/validation.json": {
-      "sha256": "8e9711cd2231eaa94a0c80f4a522eec26f3676811fad2ba12533a8c791433255",
       "mode": 420
     },
     "redis-lab/tests/live-validation-attempt.json": {
@@ -1799,8 +1795,16 @@
       "sha256": "01e08410080741c1f164e3b7459ea15db5966cef6629bfeb2691175f269efd00",
       "mode": 420
     },
+    "redis-lab/tests/test_cluster_init_flow.py": {
+      "sha256": "874dc6f83167e1635070aab5df0b0ba456a7b5ccb2e8f345fc94038132f3e20b",
+      "mode": 420
+    },
+    "redis-lab/tests/test_cluster_startup.py": {
+      "sha256": "0abe36634e79550dd95ac38433923ab500de97892e43c1a6243a2593f97e047f",
+      "mode": 420
+    },
     "redis-lab/tests/test_entrypoint.py": {
-      "sha256": "6186faaad2ee4d8bff5a91ed2198606f13e7ab284d5a26185e912cb26c4c621e",
+      "sha256": "50f96dd2cc2a917169c5f881a4534bbda6e314ed35a5d309d92dcfb1201c6020",
       "mode": 420
     },
     "redis-lab/tests/test_ops_core.py": {
@@ -1812,7 +1816,7 @@
       "mode": 420
     },
     "redis-lab/tests/test_project.py": {
-      "sha256": "052167c9b144b009dfdd17bee34524becdc389c965062c7bc7e3862690d35179",
+      "sha256": "daf077659a868a02becd90c879f1a4dd8518b965261ff0e14eda8a9eb6d62b90",
       "mode": 420
     },
     "redis-lab/tests/test_regressions.py": {
@@ -1821,6 +1825,22 @@
     },
     "redis-lab/tests/validation-report.json": {
       "sha256": "138c23236f9757d12718968f6a79fc85b19963280f7168eb5a2ae03c82fb93ba",
+      "mode": 420
+    },
+    "redis-lab/tests/evidence/offline-tests.txt": {
+      "sha256": "56e8e6594d9a53cd5690bcb864876fe0db22db1c8e7f5ddc6bf2f9c2dbae5ccd",
+      "mode": 420
+    },
+    "redis-lab/tests/evidence/ops-live-attempt.log": {
+      "sha256": "b237f9437876a6e9f645a4daf2aea5671b6f22c32e7dc7c87e44cc1bd81965ab",
+      "mode": 420
+    },
+    "redis-lab/tests/evidence/ops-live-validation.json": {
+      "sha256": "8a31048840e9775292502be808b1d0a80c78efd8723befa6264a7288030d86df",
+      "mode": 420
+    },
+    "redis-lab/tests/evidence/validation.json": {
+      "sha256": "8e9711cd2231eaa94a0c80f4a522eec26f3676811fad2ba12533a8c791433255",
       "mode": 420
     },
     "scripts/check-manifests.py": {
@@ -1840,7 +1860,7 @@
       "mode": 493
     },
     "scripts/quality.py": {
-      "sha256": "bb63cc1b6d200dc5084ac421fa4645521950e6496dec210cf65ed12e8f267dc6",
+      "sha256": "00812555f03d5dfce34fd8a246645acf6c81ce7e3441d03bad7297855f3c2223",
       "mode": 493
     },
     "scripts/requirements-checks.txt": {
@@ -1852,7 +1872,7 @@
       "mode": 493
     },
     "scripts/test-helm.sh": {
-      "sha256": "df242e0deec8bd3dea2368e1eecee442f038a6c9d76d82482d9196ec75609a9d",
+      "sha256": "bab5dbba02a0837f7a5111dda819c7544cbda58d95caa9ec35c37b045fe47517",
       "mode": 493
     },
     "scripts/test-offline.sh": {
@@ -1892,7 +1912,7 @@
       "mode": 420
     },
     "tests/test_quality_gate.py": {
-      "sha256": "c04959cff83ed4c95a10a4e07a463be5d5e4bb16d70e3703a5dac67e7cae968a",
+      "sha256": "2250496d4e5d465762c6658832bb4b8b9381fc7b78ed23d7a840d00fd243e68b",
       "mode": 420
     },
     "tests/tooling/render_contract.go": {

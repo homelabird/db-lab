@@ -112,6 +112,9 @@ fi
 [[ "$STARTUP_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || die 'STARTUP_TIMEOUT must be a positive integer'
 [[ "$NODES" =~ ^[1-9][0-9]*$ && "$NODES" -le 100 ]] || die 'NODES는 1..100 사이의 정수여야 합니다.'
 [[ "$KAFKA_MODE" == kraft || "$NODES" -eq 1 || $((NODES % 2)) -eq 1 ]] || die 'ZooKeeper 모드는 quorum을 위해 홀수 노드 수가 필요합니다.'
+# Pin a started topology before regenerating Compose. Never silently orphan nodes.
+mkdir -p "$ROOT/.state"
+python3 "$ROOT/scripts/topology-state.py" check --root "$ROOT" --lab-name "$LAB_NAME" --mode "$KAFKA_MODE" --nodes "$NODES"
 NETWORK="$LAB_NAME-net"
 BS=$(printf 'kafka%s:9092,' $(seq 1 "$NODES")); BS=${BS%,}
 export BOOTSTRAP_SERVERS="$BS"
@@ -293,20 +296,23 @@ start_lab() {
     check_existing
     say '클라이언트 이미지 빌드'
     pc build tools
+    # Persist the selected node count before the first DB mutation so health/down
+    # and recovery use exactly the same topology, even if startup is interrupted.
+    python3 "$ROOT/scripts/topology-state.py" save --root "$ROOT" --lab-name "$LAB_NAME" --mode "$KAFKA_MODE" --nodes "$NODES"
     if [[ "$KAFKA_MODE" == zk ]]; then
-        say 'ZooKeeper 3개 + 실습 도구 기동'
+        say "ZooKeeper ${NODES}개 + 실습 도구 기동"
         local nodes=(); for ((i=1; i<=NODES; i++)); do nodes+=("zk$i"); done
         pc up -d "${nodes[@]}" tools
         client zk-status --serving "$NODES" --timeout "$STARTUP_TIMEOUT"
-        say 'Kafka 3개 기동: ZooKeeper 모드'
+        say "Kafka ${NODES}개 기동: ZooKeeper 모드"
         local nodes=(); for ((i=1; i<=NODES; i++)); do nodes+=("kafka$i"); done
         pc up -d "${nodes[@]}"
     else
-        say 'KRaft Kafka 3개 + 실습 도구 기동'
+        say "KRaft Kafka ${NODES}개 + 실습 도구 기동"
         local nodes=(); for ((i=1; i<=NODES; i++)); do nodes+=("kafka$i"); done
         pc up -d tools "${nodes[@]}"
     fi
-    client wait --brokers 3 --timeout "$STARTUP_TIMEOUT"
+    client wait --brokers "$NODES" --timeout "$STARTUP_TIMEOUT"
     client init
     health
     say '기동 완료. ./lab.sh smoke → ./lab.sh seed → ./lab.sh read lab.payments'
@@ -590,7 +596,14 @@ case "$cmd" in
             if [[ $(podman inspect --format '{{.State.Paused}}' "$LAB_NAME-$service") == true ]]; then podman unpause "$LAB_NAME-$service"; fi
         fi
     done
-    if [[ "$cmd" == reset ]]; then pc_ui down -v; else pc_ui down; fi;;
+    if [[ "$cmd" == reset ]]; then
+        pc_ui down -v
+        # Only the already-confirmed, successful destructive reset releases this
+        # topology. Ordinary down/restarts keep both data and the topology pin.
+        rm -f "$ROOT/.state/active-topology.json"
+    else
+        pc_ui down
+    fi;;
   unlock)
     [[ "${1:-}" == --yes ]] || die 'unlock --yes'
     if [[ -d "$ROOT/.state/demo.lock" ]]; then

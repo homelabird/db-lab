@@ -50,10 +50,10 @@ class ContainerTests(unittest.TestCase):
     def test_missing_db_health_is_not_silently_ready(self):
         row=container();row['State'].pop('Health')
         self.assertFalse(startup.sanitize_container(row,PROJECT,'mariadb')['ready'])
-    def test_worker_without_healthcheck_is_only_process_ready(self):
+    def test_worker_without_healthcheck_is_not_ready(self):
         row=container('worker');row['State'].pop('Health')
         result=startup.sanitize_container(row,PROJECT,'worker')
-        self.assertTrue(result['ready']);self.assertEqual(result['health'],'not_configured')
+        self.assertFalse(result['ready']);self.assertEqual(result['health'],'not_configured')
     def test_unknown_state_and_fields_do_not_export_arbitrary_text(self):
         row=container();row['State']['Status']='PRIVATE-SENTINEL';row['RestartCount']='PRIVATE-SENTINEL'
         result=startup.sanitize_container(row,PROJECT,'mariadb')
@@ -147,3 +147,24 @@ class InitializationTests(unittest.TestCase):
         with patch.object(startup,'collect') as inspect,redirect_stdout(io.StringIO()):
             manage.Compose.wait_initialized(self.compose,seconds=4)
         inspect.assert_not_called();self.assertEqual(self.evidence()['status'],'initialized')
+
+
+class FailedInitializationEvidenceTests(unittest.TestCase):
+    setUp = InitializationTests.setUp
+    evidence = InitializationTests.evidence
+    def test_failed_admin_keeps_read_only_container_evidence(self):
+        self.compose.run.return_value=types.SimpleNamespace(returncode=1,stdout='PRIVATE-SENTINEL')
+        rows=[{'service':'mariadb','state':'exited','ready':False}]
+        with patch.object(startup,'collect',return_value={'ready':False,'containers':rows}) as collect,self.assertRaisesRegex(RuntimeError,'deadline'):
+            manage.Compose.wait_initialized(self.compose,seconds=2)
+        self.assertGreater(collect.call_count,0)
+        evidence=self.evidence()
+        self.assertEqual(evidence['containers'],rows);self.assertFalse(evidence['admin_initialized'])
+        self.assertEqual(evidence['last_error'],'admin_initialization_failed')
+        self.assertNotIn('PRIVATE',json.dumps(evidence))
+
+    def test_healthy_containers_do_not_hide_failed_initialization(self):
+        self.compose.run.return_value=types.SimpleNamespace(returncode=1)
+        with patch.object(startup,'collect',return_value={'ready':True,'containers':[]}),self.assertRaisesRegex(RuntimeError,'deadline'):
+            manage.Compose.wait_initialized(self.compose,seconds=2)
+        self.assertEqual(self.evidence()['status'],'failed')

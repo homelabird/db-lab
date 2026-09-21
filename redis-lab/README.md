@@ -4,6 +4,23 @@ Redis 기본 동작과 Sentinel 장애조치에 **지속 부하, 병목, 메모�
 
 > **검증 경계:** 제작 환경의 170개 정적·단위·회귀·로컬 TCP 검사는 통과했습니다. TCP 검사는 작은 테스트 서버/echo 서버를 사용합니다. 실제 Redis 서버와 Podman은 실행기가 없어 **BLOCKED(미검증)**입니다. `TESTING.md`와 `tests/evidence/`에 실제 실행 결과를 구분해 두었습니다. 이 압축파일은 소스·설정·교재이며 컨테이너 이미지나 사전 생성 데이터셋을 포함하지 않습니다.
 
+## 2026-09-21 실행 수정
+
+Redis Cluster의 생성 Compose 빌드 경로, cluster 볼륨 검사, 7개 이상 노드/IP 초기화,
+클라이언트 생성과 CLUSTER INFO 판독, 키 소유 노드의 단일 연결 WAIT 검사를 수정했습니다.
+`cluster-init`은 노드 응답을 기다린 뒤 빈 클러스터만 생성하고, 이미 정상인 클러스터는 데이터를
+그대로 둔 채 검증합니다. 일부만 초기화되었거나 데이터가 있는 불완전한 클러스터를 자동 초기화하지 않습니다.
+
+기본 Sentinel 실습은 `bash lab.sh init` → `bash lab.sh doctor` → `bash lab.sh up`입니다.
+Cluster를 새로 구성할 때만 최초 기동 전 `.env`에서 `DEPLOYMENT_MODE=cluster`와
+`CLUSTER_NODE_COUNT`, `CLUSTER_REPLICAS`, `CLUSTER_BASE_IP`를 정한 뒤
+`bash lab.sh up` → `bash lab.sh cluster-init` → `bash lab.sh health --json`을 실행하세요.
+예: 6노드/replicas=1 또는 3노드/replicas=0. 기본 설정의 비밀번호를 복사해서 덮어쓰지 마세요.
+기존 Sentinel 볼륨이 있는 디렉터리의 모드를 임의로 변경하지 마세요. `ops.sh` 확장 실습은 Sentinel 구성을 전제로 합니다.
+
+[이번 수정·검증 범위](../docs/STARTUP-REPAIR-2026-09-21.md)를 먼저 확인하세요. 아래의 초기 패키지명과
+170개 검사 수치는 이전 버전 기록입니다. 통합 ZIP에서는 `cd redis-lab` 후 명령을 실행하면 됩니다.
+
 ## 1. 처음 실행
 
 호스트: Linux, Python 3.10 이상, Podman, `podman-compose`. CPU 제한 실험은 cgroup v2와 해당 제어 권한이 필요합니다. 이미지 최초 다운로드/빌드에는 인터넷이 필요합니다. 호스트 Python에 Redis 패키지를 설치할 필요는 없습니다.

@@ -22,6 +22,7 @@ cluster-config-file /data/state/nodes.conf
 cluster-node-timeout @@CLUSTER_NODE_TIMEOUT_MS@@
 cluster-announce-ip @@NODE_IP@@
 cluster-announce-port 6379
+cluster-port @@CLUSTER_BUS_PORT@@
 cluster-announce-bus-port @@CLUSTER_BUS_PORT@@
 maxmemory @@REDIS_MAXMEMORY@@
 maxmemory-policy noeviction

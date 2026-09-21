@@ -287,7 +287,8 @@ class Lab:
             raise LabError(
                 f'Container network cannot reach {target}:4567 from the Compose network. '
                 'Check Docker bridge/iptables or rootless networking, '
-                'then recreate the lab network with ./lab.sh reset --confirm-delete-lab-data.')
+                'inspect ./lab.sh status and node logs before retrying. '
+                'Do not reset/delete DB volumes to troubleshoot a network failure.')
 
     def build_fingerprint(self, service):
         inputs = ('images/node', 'scripts', 'datasets') if service == 'galera1' else ('images/proxy',)

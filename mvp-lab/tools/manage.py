@@ -288,15 +288,15 @@ class Compose:
                     evidence["last_error"] = "admin_initialization_timeout"
                 evidence["admin_initialized"] = initialized
             left = deadline - time.monotonic()
-            if initialized and left > 0:
+            if left > 0:
                 if docker_readiness:
                     observed = collect(self, include_logs=False, budget=min(15, left))
                     evidence["containers"] = observed["containers"]
-                    ready = observed["ready"]
+                    ready = initialized and observed["ready"]
                 else:
                     # Legacy non-local/Podman lifecycle stays available; not locally certified readiness.
                     evidence["readiness_scope"] = "admin_only_non_local_docker_not_runtime_certified"
-                    ready = True
+                    ready = initialized
                 if ready:
                     evidence["status"] = "initialized_and_ready" if docker_readiness else "initialized"
                     atomic_json(path, evidence)
@@ -309,13 +309,6 @@ class Compose:
         evidence["status"] = "failed"
         atomic_json(path, evidence)
         raise RuntimeError("Initialization/readiness deadline exceeded; containers and volumes retained. See " + str(path))
-
-
-def api_json(config, path):
-    from urllib.request import build_opener, ProxyHandler
-    opener = build_opener(ProxyHandler({}))
-    with opener.open("http://127.0.0.1:" + config["API_PORT"] + path, timeout=25) as response:
-        print(json.dumps(json.load(response), ensure_ascii=False, indent=2))
 
 
 def parser():
@@ -417,13 +410,21 @@ def main(argv=None):
         if not (ROOT / ".env").exists():
             raise RuntimeError("Run ./all.sh mvp init first")
         config = validate(parse_env(ROOT / ".env"))
-        if args.action == "diagnose":
-            api_json(config, "/api/diagnostics")
-            return 0
-        if args.action == "smoke":
-            return subprocess.run([sys.executable, str(ROOT / "tools/probe.py"), "--url",
-                                   "http://127.0.0.1:" + config["API_PORT"]], cwd=ROOT).returncode
         compose = Compose(config)
+        if args.action in {"diagnose", "smoke"}:
+            from tools.http_target import guard, diagnostics
+            if args.action == "diagnose":
+                guard(compose)
+                result = diagnostics(config)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0 if result["dependencies_reachable"] else 1
+            # smoke writes a synthetic order: serialize with lifecycle/fault operations.
+            with lock():
+                require_no_active_fault()
+                guard(compose)
+                return subprocess.run([sys.executable, str(ROOT / "tools/probe.py"), "--url",
+                                       "http://127.0.0.1:" + config["API_PORT"],
+                                       "--project", config["MVP_PROJECT"]], cwd=ROOT, timeout=90).returncode
         if args.action == "inspect-runtime":
             from tools.startup import collect
             result = collect(compose)

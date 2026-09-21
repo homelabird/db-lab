@@ -61,6 +61,12 @@ if [ ! -s "$config" ]; then
 else
     echo "Reusing $config; preserving previous failover state."
 fi
+# Older generated cluster configs only announced the bus port, but did not bind it.
+# The fingerprint above has already checked the immutable settings. Add only the
+# missing listener directive; retain node IDs, replication roles and all DB data.
+if [ "$LAB_MODE" = cluster ] && ! grep -Eq '^[[:space:]]*cluster-port[[:space:]]' "$config"; then
+    printf '\ncluster-port %s\n' "$CLUSTER_BUS_PORT" >> "$config"
+fi
 # Official entrypoint drops root to the image's redis user and fixes /data ownership.
 # No host bind mounts, chmod 777, privileged mode, or SELinux disablement.
 if [ "$LAB_MODE" = sentinel ]; then

@@ -1,10 +1,13 @@
-# DB Lab — v10 품질 정리
+# DB Lab — v12 MVP 시작·진단 후속 수정
 
-[시작·품질 검사 가이드](docs/QUALITY-GUIDE.md) · [전체 품질 분석](docs/QUALITY-REPORT.md) · [Ansible](ansible/README.md)
+[이번 수정·실행 가이드](docs/FOLLOWUP-REPAIR-2026-09-21.md) · [v11 Redis/Kafka 수정](docs/STARTUP-REPAIR-2026-09-21.md) · [기존 품질 검사 명령](docs/QUALITY-GUIDE.md) · [Ansible](ansible/README.md)
 
-> 기존 30개 실습과 기본 6개 컨테이너를 유지합니다. v10은 HTTP 입력·검색 응답·로컬 상태 경로·Ansible 기본값을 보완하고,
-> 전체 호스트 검사와 실제 도구 검사를 구분합니다. **테스트 통과를 실제 DB/HA 인수 완료로 해석하지 마세요.**
-> 이전 버전 보고서는 당시 기록이며 현재 상태는 위 품질 보고서를 기준으로 읽습니다.
+> **먼저 실행 대상을 구분하세요.** `bash all.sh mvp up`은 6개 컨테이너 통합 주문 실습이며,
+> `bash all.sh up`은 별도의 4개 HA 실습을 모두 시작합니다. 두 명령은 같은 시스템이 아닙니다.
+> Kafka/Redis의 기존 HA 실습은 **Podman + podman-compose**가 필요합니다. Docker만 설치했다면 공통 `up`이 성공하지 않습니다.
+> v12는 MVP의 HTTP 대상 확인, API/worker 준비 상태, 초기화 실패 증적, 진단 종료 코드와 실제 Helm CI 경로를 보강했습니다. v11의 Redis/Kafka 수정은 유지합니다.
+> 실제 수정 근거와 실행한 검사/실행하지 못한 검사는 위의 **이번 수정·실행 가이드**에서 확인하세요.
+> 이전 보고서와 하위 디렉터리의 과거 테스트 수치는 당시 기록이며 이번 실기동 증거가 아닙니다. Docker/Podman·Helm·Ansible 실제 실행은 검증하지 못했습니다.
 
 Elasticsearch, Kafka, MariaDB HA, Redis 실습을 모아 놓은 프로젝트입니다.
 프로젝트 루트의 `all.sh`에서 각 실습의 기존 `lab.sh`를 호출하거나,
@@ -39,7 +42,7 @@ Elasticsearch, Kafka, MariaDB HA, Redis 실습을 모아 놓은 프로젝트입�
 하위 프로젝트의 오래된 보고서는 해당 시점의 기록이며 이번 수정본의 실기동 증거가 아닙니다.
 
 **이번 버전은 `all.sh` 하나만 교체하면 안 됩니다.** 루트 `scripts/`, 하위 변경 파일, Helm chart를 함께 적용하세요.
-기존 `.env`·DB 볼륨은 별도 보존하고 새 코드 사본에서 비교하세요. 자동 마이그레이션이나 데이터 삭제를 수행하지 않습니다.
+기존 `.env`·DB 볼륨은 별도 보존하고 새 코드 사본에서 비교하세요. DB 데이터 마이그레이션이나 자동 삭제를 수행하지 않습니다. Kafka 기동 시 선택한 토폴로지 설정을 저장하며, Redis의 구형 생성 설정에는 누락된 cluster bus 리스너 항목만 보완합니다.
 
 ## 루트에서 통합 관리
 

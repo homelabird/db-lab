@@ -18,7 +18,8 @@ ORDER={'id':ID,'item':'smoke-00000000','quantity':1,'unit_price':100,'total':100
 
 class SmokeRegressions(unittest.TestCase):
     def invoke(self,created=None,replayed=None,search=None):
-        responses=[{'order':created or ORDER,'created':True},{'order':replayed or ORDER,'created':False},
+        responses=[{'application':'db-lab-mvp','study_api':2,'project':'db-lab-mvp'},
+                   {'order':created or ORDER,'created':True},{'order':replayed or ORDER,'created':False},
                    {'orders':[search or ORDER]},{'order':ORDER}]
         opener=Mock();opener.open.side_effect=lambda *a,**k:io.BytesIO(json.dumps(responses.pop(0)).encode())
         with patch.object(p,'build_opener',return_value=opener),patch.object(p.uuid,'uuid4',return_value=uuid.UUID(ID)):
@@ -63,6 +64,7 @@ class SmokeRegressions(unittest.TestCase):
             def log_message(self,*args):pass
         target=ThreadingHTTPServer(('127.0.0.1',0),Destination)
         class Redirect(BaseHTTPRequestHandler):
+            def do_GET(self):self.do_POST()
             def do_POST(self):self.send_response(302);self.send_header('Location',f'http://127.0.0.1:{target.server_port}/unexpected');self.end_headers()
             def log_message(self,*args):pass
         origin=ThreadingHTTPServer(('127.0.0.1',0),Redirect)

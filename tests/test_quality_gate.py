@@ -90,6 +90,29 @@ class GateTests(unittest.TestCase):
     def test_runtime_output_does_not_break_manifest(self):
         self.manifest();(self.root/'reports').mkdir();(self.root/'reports/runtime.json').write_text('{}')
         self.assertEqual(quality.release_check(self.root)['status'],'passed')
+    def test_redis_runtime_state_does_not_break_manifest(self):
+        self.manifest()
+        state = self.root / 'redis-lab/.lab'
+        state.mkdir(parents=True)
+        (state / 'environment.sha256').write_text('runtime-only')
+        (state / 'compose.cluster.generated.yaml').write_text('services: {}')
+        self.assertEqual(quality.release_check(self.root)['status'], 'passed')
+
+    def test_redis_result_output_does_not_break_manifest(self):
+        output = self.root / 'redis-lab/output'
+        output.mkdir(parents=True)
+        (output / '.gitkeep').touch()
+        self.manifest()
+        (output / 'run.jsonl').write_text('{"event":"finish"}\n')
+        self.assertEqual(quality.release_check(self.root)['status'], 'passed')
+
+    def test_non_runtime_output_source_still_checked(self):
+        self.manifest()
+        output = self.root / 'output'
+        output.mkdir()
+        (output / 'new.py').write_text('x = 1\n')
+        self.assertEqual(quality.release_check(self.root)['status'], 'failed')
+
     def test_missing_tool_is_blocked_not_pass(self):
         r=quality.command_check('tool',['/no-such-db-lab-executable'],self.root,self.root)
         self.assertEqual((r['status'],r['returncode']),('blocked',127))
@@ -132,3 +155,29 @@ class AnsibleAndCIQualityTests(unittest.TestCase):
         text=(ROOT/'ansible/tests/test_playbooks_live.py').read_text()
         for name in ('test_inventory_request_is_not_shadowed','test_inventory_consent','test_real_fetch_collects'):
             self.assertIn('def '+name,text)
+
+class HelmCIContractTests(unittest.TestCase):
+    """Source checks only; these do not execute or emulate Helm."""
+    def test_actual_helm_job_is_present_and_uploads_output(self):
+        flow=yaml.safe_load((ROOT/'.github/workflows/quality.yml').read_text())
+        job=flow['jobs']['helm-render']
+        commands='\n'.join(step.get('run','') for step in job['steps'])
+        self.assertIn('bash scripts/test-helm.sh',commands)
+        self.assertIn('pipefail',commands)
+        self.assertIn('sha256sum --check --strict',commands)
+        self.assertIn('helm-v3.22.0-linux-amd64.tar.gz',commands)
+        self.assertTrue(any(step.get('uses','').startswith('actions/upload-artifact@') for step in job['steps']))
+
+    def test_real_helm_script_covers_all_shipped_profiles(self):
+        text=(ROOT/'scripts/test-helm.sh').read_text()
+        profiles=next(line for line in text.splitlines() if line.startswith('for profile in '))
+        for path in (ROOT/'helmchart/profiles').glob('*.yaml'):
+            self.assertIn(path.stem,profiles.replace(";", "").split(),path.name)
+
+    def test_real_helm_script_has_negative_controls_not_ignore_failures(self):
+        text=(ROOT/'scripts/test-helm.sh').read_text()
+        for name in ('kafka-without-zookeeper','kafka-external','legacy-without-consent',
+                     'recovery-without-consent','bootstrap-and-recovery','unknown-value'):
+            self.assertIn('reject '+name,text)
+        self.assertNotIn('|| true',text)
+        self.assertIn('exit 127',text)

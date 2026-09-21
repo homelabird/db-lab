@@ -108,7 +108,7 @@ services:
     <<: *app
     ports: ['127.0.0.1:${API_PORT:-18090}:8080']
     healthcheck:
-      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8080/health/live", timeout=2).read()']
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8080/health/ready", timeout=2).read()']
       interval: 10s
       timeout: 3s
       retries: 5
@@ -119,6 +119,12 @@ services:
       # Wrong-password experiment affects API only, not this relay/consumer.
       SQL_PASSWORD: ${SQL_PASSWORD}
     command: [python, -m, mvp_app.worker]
+    healthcheck:
+      test: [CMD, python, -m, mvp_app.worker_health]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
   redis-spare:
     profiles: [spare]
     image: ${REDIS_IMAGE}
