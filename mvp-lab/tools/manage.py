@@ -194,11 +194,32 @@ class Compose:
         if result.returncode:
             raise RuntimeError("Compose configuration rejected; inspect provider/version or .env syntax locally")
 
+    def _resolved_docker_host(self):
+        """Resolve the endpoint the docker CLI would use when DOCKER_HOST is unset."""
+        cached = getattr(self, "_resolved_host", None)
+        if cached is not None:
+            return cached
+        context = self.inherited.get("DOCKER_CONTEXT")
+        try:
+            result = subprocess.run([*self.engine, "context", "inspect", *([context] if context else [])],
+                                    env=self.inherited, capture_output=True, text=True, check=True, timeout=15)
+            host = json.loads(result.stdout)[0]["Endpoints"]["docker"]["Host"]
+        except (subprocess.SubprocessError, ValueError, KeyError, IndexError, TypeError):
+            host = ""
+        self._resolved_host = host
+        return host
+
     def engine_selector(self):
         keys = ("DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH",
                 "CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINERS_CONF")
         data = {k: self.inherited.get(k, "") for k in keys}
         data["engine"] = self.engine
+        # An unset DOCKER_HOST selects the current context's default endpoint.
+        # Normalize it so the same local engine hashes identically whether it was
+        # selected via DOCKER_HOST or via the default context (e.g. interactive
+        # shells that export DOCKER_HOST=unix:///var/run/docker.sock).
+        if self.engine == ["docker"] and not data["DOCKER_HOST"]:
+            data["DOCKER_HOST"] = self._resolved_docker_host()
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
     def engine_identity(self):

@@ -1,0 +1,17 @@
+{
+  "size": 10,
+  "query": {
+    "nested": {
+      "path": "items",
+      "query": {
+        "bool": {
+          "filter": [
+            {"range": {"items.price": {"gte": 100}}},
+            {"range": {"items.quantity": {"gte": 2}}}
+          ]
+        }
+      },
+      "inner_hits": {}
+    }
+  }
+}

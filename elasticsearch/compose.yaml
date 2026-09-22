@@ -8,7 +8,10 @@ services:
     - discovery.seed_hosts=es01,es02,es03,es04,es05
     - cluster.initial_master_nodes=es01,es02,es03
     - node.attr.zone=zone-a
-    - xpack.security.enabled=false
+    - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - path.repo=/usr/share/elasticsearch/snapshots
+    - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
+    - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
     - xpack.ml.enabled=false
     - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
     - node.roles=master,data,ingest
@@ -20,10 +23,19 @@ services:
         hard: 65536
     volumes:
     - es01-data:/usr/share/elasticsearch/data
+    - es-snapshots:/usr/share/elasticsearch/snapshots
     ports:
     - ${ES_BIND_IP:-127.0.0.1}:${ES_PORT:-9200}:9200
     networks:
     - es-lab
+    entrypoint:
+    - /bin/bash
+    - -c
+    - |
+      mkdir -p /usr/share/elasticsearch/snapshots
+      chown -R 1000:0 /usr/share/elasticsearch/snapshots
+      exec /usr/local/bin/docker-entrypoint.sh "$@"
+    - lab-bootstrap
     healthcheck:
       test:
       - CMD-SHELL
@@ -41,7 +53,10 @@ services:
     - discovery.seed_hosts=es01,es02,es03,es04,es05
     - cluster.initial_master_nodes=es01,es02,es03
     - node.attr.zone=zone-b
-    - xpack.security.enabled=false
+    - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - path.repo=/usr/share/elasticsearch/snapshots
+    - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
+    - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
     - xpack.ml.enabled=false
     - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
     - node.roles=master,data,ingest
@@ -53,8 +68,17 @@ services:
         hard: 65536
     volumes:
     - es02-data:/usr/share/elasticsearch/data
+    - es-snapshots:/usr/share/elasticsearch/snapshots
     networks:
     - es-lab
+    entrypoint:
+    - /bin/bash
+    - -c
+    - |
+      mkdir -p /usr/share/elasticsearch/snapshots
+      chown -R 1000:0 /usr/share/elasticsearch/snapshots
+      exec /usr/local/bin/docker-entrypoint.sh "$@"
+    - lab-bootstrap
     healthcheck:
       test:
       - CMD-SHELL
@@ -72,7 +96,10 @@ services:
     - discovery.seed_hosts=es01,es02,es03,es04,es05
     - cluster.initial_master_nodes=es01,es02,es03
     - node.attr.zone=zone-c
-    - xpack.security.enabled=false
+    - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - path.repo=/usr/share/elasticsearch/snapshots
+    - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
+    - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
     - xpack.ml.enabled=false
     - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
     - node.roles=master,data,ingest
@@ -84,8 +111,17 @@ services:
         hard: 65536
     volumes:
     - es03-data:/usr/share/elasticsearch/data
+    - es-snapshots:/usr/share/elasticsearch/snapshots
     networks:
     - es-lab
+    entrypoint:
+    - /bin/bash
+    - -c
+    - |
+      mkdir -p /usr/share/elasticsearch/snapshots
+      chown -R 1000:0 /usr/share/elasticsearch/snapshots
+      exec /usr/local/bin/docker-entrypoint.sh "$@"
+    - lab-bootstrap
     healthcheck:
       test:
       - CMD-SHELL
@@ -103,7 +139,10 @@ services:
     - discovery.seed_hosts=es01,es02,es03,es04,es05
     - cluster.initial_master_nodes=es01,es02,es03
     - node.attr.zone=zone-a
-    - xpack.security.enabled=false
+    - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - path.repo=/usr/share/elasticsearch/snapshots
+    - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
+    - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
     - xpack.ml.enabled=false
     - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
     - node.roles=master,data,ingest
@@ -115,8 +154,17 @@ services:
         hard: 65536
     volumes:
     - es04-data:/usr/share/elasticsearch/data
+    - es-snapshots:/usr/share/elasticsearch/snapshots
     networks:
     - es-lab
+    entrypoint:
+    - /bin/bash
+    - -c
+    - |
+      mkdir -p /usr/share/elasticsearch/snapshots
+      chown -R 1000:0 /usr/share/elasticsearch/snapshots
+      exec /usr/local/bin/docker-entrypoint.sh "$@"
+    - lab-bootstrap
     healthcheck:
       test:
       - CMD-SHELL
@@ -134,7 +182,10 @@ services:
     - discovery.seed_hosts=es01,es02,es03,es04,es05
     - cluster.initial_master_nodes=es01,es02,es03
     - node.attr.zone=zone-b
-    - xpack.security.enabled=false
+    - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - path.repo=/usr/share/elasticsearch/snapshots
+    - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
+    - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
     - xpack.ml.enabled=false
     - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
     - node.roles=master,data,ingest
@@ -146,8 +197,17 @@ services:
         hard: 65536
     volumes:
     - es05-data:/usr/share/elasticsearch/data
+    - es-snapshots:/usr/share/elasticsearch/snapshots
     networks:
     - es-lab
+    entrypoint:
+    - /bin/bash
+    - -c
+    - |
+      mkdir -p /usr/share/elasticsearch/snapshots
+      chown -R 1000:0 /usr/share/elasticsearch/snapshots
+      exec /usr/local/bin/docker-entrypoint.sh "$@"
+    - lab-bootstrap
     healthcheck:
       test:
       - CMD-SHELL
@@ -190,16 +250,21 @@ services:
     - SERVER_NAME=kibana
     - SERVER_HOST=0.0.0.0
     - ELASTICSEARCH_HOSTS=["http://es01:9200","http://es02:9200","http://es03:9200","http://es04:9200","http://es05:9200"]
-    - XPACK_SECURITY_ENABLED=false
+    - XPACK_SECURITY_ENABLED=${XPACK_SECURITY_ENABLED:-false}
+    - ELASTICSEARCH_USERNAME=${ELASTIC_USERNAME:-elastic}
+    - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD:-}
     - TELEMETRY_ENABLED=false
 networks:
+  # Plain bridge only: no runtime-specific options, so both Docker Compose
+  # and podman-compose can create this network (the Docker-only ICC bridge
+  # option is rejected by podman-netavark, aborting podman-compose with exit 125).
   es-lab:
     driver: bridge
-    driver_opts:
-      com.docker.network.bridge.enable_icc: "true"
 volumes:
   es01-data: null
   es02-data: null
   es03-data: null
   es04-data: null
   es05-data: null
+  # One shared filesystem for the snapshot repository on every node.
+  es-snapshots: null

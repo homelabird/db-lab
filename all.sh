@@ -78,7 +78,8 @@ Usage:
 
 Projects:
   elasticsearch (es) | kafka (kafka-lab) | mariadb (mariadb-ha-lab)
-  redis (redis-lab)  | all
+  redis (redis-lab)  | elasticsearch-9 (es9, opt-in, 9.x; NOT in default batches)
+  all
 
 Common commands (default: all four Compose/container labs):
   list                    List project directories and entrypoints
@@ -160,6 +161,7 @@ HELP
 canonical_project() {
   case "$1" in
     es|elastic|elasticsearch) printf '%s\n' elasticsearch ;;
+    es9|elasticsearch-9|elasticsearch9) printf '%s\n' elasticsearch9 ;;
     kafka|kafka-lab) printf '%s\n' kafka ;;
     maria|mariadb|mariadb-ha-lab) printf '%s\n' mariadb ;;
     redis|redis-lab) printf '%s\n' redis ;;
@@ -170,6 +172,7 @@ canonical_project() {
 project_dir() {
   case "$1" in
     elasticsearch) printf '%s/elasticsearch\n' "$ROOT" ;;
+    elasticsearch9) printf '%s/elasticsearch-9\n' "$ROOT" ;;
     kafka) printf '%s/kafka-lab\n' "$ROOT" ;;
     mariadb) printf '%s/mariadb-ha-lab\n' "$ROOT" ;;
     redis) printf '%s/redis-lab\n' "$ROOT" ;;
@@ -179,7 +182,7 @@ project_dir() {
 
 test_script() {
   case "$1" in
-    elasticsearch) printf '%s\n' scripts/12-offline-tests.sh ;;
+    elasticsearch|elasticsearch9) printf '%s\n' scripts/12-offline-tests.sh ;;
     kafka) printf '%s\n' scripts/test-static.sh ;;
     mariadb) printf '%s\n' tests/validate.sh ;;
     redis) printf '%s\n' tests/check.sh ;;
@@ -234,7 +237,7 @@ init_project() {
   local project=$1 dir
   dir=$(project_dir "$project") || return
   case "$project" in
-    elasticsearch|kafka) copy_env_if_missing "$dir" ;;
+    elasticsearch|elasticsearch9|kafka) copy_env_if_missing "$dir" ;;
     # Native initializers generate random passwords and preserve valid ones.
     mariadb|redis) run_lab "$project" init ;;
   esac
@@ -270,7 +273,7 @@ preflight() {
     require_file "$dir/lab.sh" || return
     case "$action" in
       init|up|restart)
-        if [[ "$project" == elasticsearch || "$project" == kafka ]]; then
+        if [[ "$project" == elasticsearch || "$project" == elasticsearch9 || "$project" == kafka ]]; then
           if [[ ! -e "$dir/.env" && ! -L "$dir/.env" ]]; then
             require_file "$dir/.env.example" || return
           else
@@ -303,7 +306,7 @@ perform_project() {
     doctor|status|down) run_lab "$project" "$action" ;;
     reset)
       case "$project" in
-        elasticsearch) run_lab "$project" down --purge --yes ;;
+        elasticsearch|elasticsearch9) run_lab "$project" down --purge --yes ;;
         kafka) run_lab "$project" reset --yes ;;
         mariadb) run_lab "$project" reset --confirm-delete-lab-data ;;
         redis) run_lab "$project" reset --yes ;;
@@ -503,6 +506,7 @@ main() {
         item=$(project_dir "$project")
         printf '%-16s %-24s %s\n' "$project" "${item##*/}/" lab.sh
       done
+      printf '%-16s %-24s %s\n' elasticsearch9 elasticsearch-9/ 'all.sh es9 (opt-in; not in the default batch)'
       printf '%-16s %-24s %s\n' k8s helmchart/ 'all.sh k8s (separate deployment)'
       printf '%-16s %-24s %s\n' mvp mvp-lab/ 'all.sh mvp (separate order system)'
       return

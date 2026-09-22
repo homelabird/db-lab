@@ -66,6 +66,19 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
             test.parent.mkdir(exist_ok=True)
             test.write_text('#!/usr/bin/env bash\n'
                             f'python3 -S "$ALL_TEST_RECORDER" "test:{project}" "$@"\n')
+        # es9 (elasticsearch-9) is an opt-in project: it is NOT part of the
+        # default batch or the PROJECT_DIRS mapping, but must be selectable.
+        self.es9 = self.root / 'elasticsearch-9'
+        self.es9.mkdir()
+        (self.es9 / 'lab.sh').write_text(
+            '#!/usr/bin/env bash\nset -euo pipefail\n'
+            'python3 -S "$ALL_TEST_RECORDER" "es9" "$@"\n'
+            'export CHILD_ONLY=must-not-leak\n')
+        (self.es9 / '.env.example').write_text('SETTING=original\n')
+        es9_test = self.es9 / TEST_SCRIPTS['elasticsearch']
+        es9_test.parent.mkdir(exist_ok=True)
+        es9_test.write_text('#!/usr/bin/env bash\n'
+                            'python3 -S "$ALL_TEST_RECORDER" "test:es9" "$@"\n')
         (self.root / 'helmchart').mkdir()
         (self.root / 'helmchart/Chart.yaml').write_text('apiVersion: v2\nname: db-lab\nversion: 0.1.0\n')
         self.bin = self.base / 'bin'
@@ -275,6 +288,29 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
     def test_offline_tests_use_existing_test_scripts(self):
         self.run_all('test')
         self.assertEqual(self.names(), ['test:' + name for name in PROJECT_DIRS])
+
+    def test_es9_is_opt_in_and_not_in_default_batch(self):
+        self.run_all('status')
+        self.assertNotIn('es9', self.names())
+        self.assertEqual(self.names(), list(PROJECT_DIRS))
+        self.run_all('status', 'es9')
+        self.assertEqual(self.names()[-1], 'es9')
+        self.assertEqual(self.calls()[-1]['cwd'], str(self.es9))
+
+    def test_es9_up_creates_env_privately(self):
+        self.run_all('up', 'es9')
+        path = self.es9 / '.env'
+        self.assertEqual(path.read_text(), 'SETTING=original\n')
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.names(), ['es9'])
+
+    def test_es9_reset_uses_purge_guard(self):
+        self.run_all('reset', 'es9', '--yes')
+        self.assertEqual(self.calls()[-1]['args'], ['down', '--purge', '--yes'])
+
+    def test_es9_native_passthrough(self):
+        self.run_all('es9', 'snapshot')
+        self.assertEqual(self.calls()[-1]['args'], ['snapshot'])
 
     def test_symlink_and_foreign_working_directory(self):
         link = self.base / 'linked-all.sh'

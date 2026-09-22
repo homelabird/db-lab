@@ -26,6 +26,56 @@ def percentiles(values):
     return {'samples': len(ordered), 'p50': at(.5), 'p95': at(.95), 'p99': at(.99)}
 
 
+def weighted_choice(pairs, rng):
+    draw = rng.random() * sum(w for _, w in pairs)
+    total = 0.0
+    for value, weight in pairs:
+        total += weight
+        if draw <= total:
+            return value
+    return pairs[-1][0]
+
+
+# Realistic order lifecycle. A phase may only move to a listed successor; terminal phases stay.
+LIFECYCLE = {
+    'PENDING': (('PAID', 0.80), ('CANCELLED', 0.20)),
+    'PAID': (('PACKING', 0.90), ('REFUNDED', 0.10)),
+    'PACKING': (('SHIPPED', 0.95), ('REFUNDED', 0.05)),
+    'SHIPPED': (('DELIVERED', 0.92), ('REFUNDED', 0.08)),
+}
+TERMINAL = frozenset(('DELIVERED', 'CANCELLED', 'REFUNDED'))
+
+
+def next_phase(current, rng):
+    if not isinstance(current, str) or current.upper() not in LIFECYCLE:
+        return None
+    return weighted_choice(LIFECYCLE[current.upper()], rng)
+
+
+# Per-endpoint traffic profile: methods, status mix, and latency distribution.
+API_ENDPOINTS = (
+    ('/api/products', (('GET', 1.00),), {200: 0.95, 404: 0.03, 500: 0.02}, (4, 1500)),
+    ('/api/orders', (('GET', 0.90), ('POST', 0.10)), {200: 0.80, 201: 0.08, 400: 0.07, 404: 0.03, 500: 0.02}, (5, 1500)),
+    ('/api/cart', (('GET', 0.40), ('POST', 0.30), ('PUT', 0.20), ('DELETE', 0.10)), {200: 0.85, 400: 0.08, 404: 0.02, 429: 0.02, 500: 0.03}, (5, 1200)),
+    ('/api/payments', (('POST', 1.00),), {200: 0.75, 201: 0.10, 400: 0.08, 422: 0.04, 500: 0.03}, (15, 6000)),
+    ('/api/search', (('GET', 1.00),), {200: 0.90, 404: 0.04, 429: 0.03, 500: 0.03}, (20, 9000)),
+    ('/api/profile', (('GET', 1.00),), {200: 0.97, 404: 0.03}, (4, 1400)),
+    ('/api/reviews', (('GET', 0.60), ('POST', 0.40)), {200: 0.80, 201: 0.10, 400: 0.06, 500: 0.04}, (5, 2000)),
+    ('/api/inventory', (('GET', 1.00),), {200: 0.70, 404: 0.20, 500: 0.07, 503: 0.03}, (6, 4000)),
+)
+
+
+def api_profile(rng):
+    """Endpoint-correlated method/status/latency. Latency is simulated, never measured wall time."""
+    endpoint, methods, statuses, (base, span) = rng.choice(API_ENDPOINTS)
+    method = weighted_choice(methods, rng)
+    status = weighted_choice(statuses.items(), rng)
+    latency = base + int(rng.random() * span)
+    if status in (500, 503):
+        latency += 800 + int(rng.random() * 3000)
+    return method, endpoint, status, latency
+
+
 def run(seconds, rate, seed, mode):
     import pymysql
     if not 1 <= seconds <= 86400 or not 1 <= rate <= 2000:

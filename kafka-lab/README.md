@@ -83,7 +83,7 @@ KRaft 최초 실행 시 `KRAFT_CLUSTER_ID`를 `.state/kraft-cluster-id`에 생�
 
 ## 2. 준비
 
-목표 환경은 **Linux + Podman(rootless 가능)** 입니다. Linux x86_64를 우선 대상으로 작성했습니다. ARM, Windows/macOS Podman machine, 각 배포판별 실기동 호환성은 이 패키지 제작 환경에서 확인하지 않았습니다.
+목표 환경은 **Linux + Podman(rootless 가능)** 입니다. Linux x86_64를 우선 대상으로 작성했습니다. ARM, Windows/macOS Podman machine, 각 배포판별 실기동 호환성은 이 패키지 제작 환경에서 확인하지 않았습니다. **Docker + Compose v2 플러그인**으로도 실행할 수 있습니다(`.env`의 `CONTAINER_ENGINE=docker`).
 
 설계상 권장 자원은 **4 vCPU, RAM 8GB, 여유 디스크 10GB 이상**입니다. 이는 실측 벤치마크가 아니라 이 Lab의 JVM/데이터 규모를 위한 권장 예산입니다. 다른 JVM/DB 실습을 동시에 켜면 더 필요합니다.
 
@@ -91,6 +91,7 @@ Fedora 계열:
 
 ```bash
 sudo dnf install -y podman podman-compose python3
+# Docker를 쓰는 경우: sudo dnf install -y docker-ce docker-compose-plugin python3
 ```
 
 Ubuntu/Debian 계열:
@@ -98,9 +99,21 @@ Ubuntu/Debian 계열:
 ```bash
 sudo apt update
 sudo apt install -y podman podman-compose python3
+# Docker를 쓰는 경우: sudo apt install -y docker-ce docker-compose-plugin python3
 ```
 
 Podman 4/5 계열과 `podman-compose` 1.x를 대상으로 합니다. `--in-pod=false` 옵션을 지원해야 합니다. 이 프로젝트는 `podman compose`의 외부 provider 자동 선택이 아니라 **`podman-compose` 실행 파일을 직접 사용**합니다. netavark/aardvark-dns 등 컨테이너 DNS가 정상이어야 합니다. [S8]
+
+엔진은 `.env`의 `CONTAINER_ENGINE`으로 선택합니다.
+
+```bash
+CONTAINER_ENGINE=auto    # 설치된 엔진 중 podman 우선 (기본값)
+CONTAINER_ENGINE=podman  # podman-compose 또는 podman compose 사용
+CONTAINER_ENGINE=docker  # docker compose (Compose v2 플러그인) 사용
+```
+
+Docker 경로도 동일한 `./lab.sh` 명령과 검증 절차를 사용하며, `doctor`가 엔진·Compose 버전을 함께 출력합니다. 컨테이너/볼륨/네트워크 소유권 확인에는 동일한 `io.kzk.lab` 라벨을 사용합니다.
+
 
 호스트에 Kafka, JDK, Python Kafka 패키지를 설치할 필요는 없습니다. 이미지 레지스트리와 PyPI에 대한 최초 다운로드 접근은 필요합니다. 컨테이너 실행은 한 사용자로 통일하고 `sudo podman`과 일반 `podman`을 섞지 마세요.
 

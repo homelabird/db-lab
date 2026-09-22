@@ -55,6 +55,86 @@ Kibana와 Kibana Console 주소를 출력합니다.
 
 `./lab.sh up`은 클러스터만 기동하고 시드는 자동 실행하지 않습니다. `./lab.sh verify`는 사용자의 **실제 Elasticsearch**에서 문서 수, 5개 이상의 데이터 노드, 샤드 배치, 검색 예제 22개를 검사합니다. 모든 샤드가 안정적인 green 상태여야 하므로 장애 시나리오를 진행하기 전에 실행하세요.
 
+## 런타임 자동 감지와 네트워크 진단
+
+`lab.sh`는 실행 환경을 자동 감지합니다. `.env`의 `COMPOSE_PROVIDER`를
+`auto|docker|podman|podman-compose`로 지정할 수 있고, `auto`는
+podman-compose → `podman compose` → `docker compose` 순으로 선택합니다.
+컨테이너 런타임(`RUNTIME`)과 Compose 네트워크(`es-lab`)의 실제 서브넷을
+`./lab.sh doctor`에서 확인할 수 있습니다.
+
+```
+Container runtime: docker
+Compose provider: docker
+Compose network: cerebro-seed-lab_es-lab (172.26.0.0/16)
+```
+
+`compose.yaml`의 네트워크는 Docker 전용 옵션 없이 일반 bridge만 사용하므로
+Docker Compose와 podman-compose 모두에서 생성됩니다.
+
+`./lab.sh up`은 다음과 같이 단계별로 준비 상태를 확인합니다.
+
+```
+1  컨테이너 5개가 running인지
+2  Elasticsearch HTTP가 9200에서 응답하고 5개 노드가 클러스터를 구성했는지
+3  공유 Snapshot Repository 등록 + _verify
+4  Kibana / API status
+5  Cerebro / HTTP
+```
+
+클러스터가 준비되지 않으면 스크립트가 ①요청 서비스 자체가 죽었는지(로그 확인)
+②컨테이너 내부 localhost:9200은 응답하는데 컨테이너 간 통신만 실패하는지(호스트
+방화벽)를 구분해 안내합니다. 둘째 경우 실제 서브넷이 포함된 실행 가능한 규칙을
+출력합니다(`LAB_SUBNET` 같은 placeholder를 사용하지 않습니다).
+
+```
+sudo iptables-legacy -I FORWARD 1 -s 172.26.0.0/16 -d 172.26.0.0/16 -j ACCEPT
+```
+
+일반 `up`은 호스트 방화벽을 변경하지 않습니다. FORWARD 전체 허용은 관리자가 수동 적용합니다.
+
+## Snapshot Repository
+
+기본적으로 5개 노드가 공유하는 `es-snapshots` 볼륨을
+`/usr/share/elasticsearch/snapshots`에 마운트하고, `./lab.sh up`이 종료 시점에
+`lab-snapshots`(fs) 저장소를 등록하고 `_verify`까지 수행합니다. 저장소 이름은
+`.env`의 `SNAPSHOT_REPO_NAME`으로 바꿀 수 있습니다. `up` 직후부터 다음 실습이
+바로 가능합니다.
+
+```bash
+./lab.sh snapshot          # (재)등록 + verify + 확인 노드 출력
+# 저장소 지정 스냅샷 생성/조회/복원/삭제 (Kibana Console 또는 curl)
+curl -X PUT  http://127.0.0.1:9200/_snapshot/lab-snapshots/snap1?wait_for_completion=true \
+     -H 'Content-Type: application/json' -d '{"indices":"lab-transactions-v1"}'
+curl        http://127.0.0.1:9200/_snapshot/lab-snapshots/_all
+curl -X POST http://127.0.0.1:9200/_snapshot/lab-snapshots/snap1/_restore?wait_for_completion=true
+curl -X DELETE http://127.0.0.1:9200/_snapshot/lab-snapshots/snap1
+curl -X POST http://127.0.0.1:9200/_snapshot/lab-snapshots/_verify
+```
+
+## X-Pack Security (옵트인)
+
+기본은 기존처럼 인증 없는 legacy 랩입니다(`xpack.security.enabled=false`).
+`.env`에서 명시적으로 켤 수 있습니다.
+
+```bash
+XPACK_SECURITY_ENABLED=true
+ELASTIC_USERNAME=elastic
+ELASTIC_PASSWORD=<강한 비밀번호>
+```
+
+켜면 Elasticsearch 홈 도메인 수준(password policy 충족)에서 `elastic` 부트스트랩
+비밀번호가 설정됩니다. `lab.sh`의 모든 curl 요청과 `lablib.py`(Python 스크립트)는
+`ELASTIC_USERNAME`/`ELASTIC_PASSWORD`로 Basic 인증을 자동 첨부합니다.
+Kibana도 같은 자격 증명을 사용합니다.
+
+주의: ES 7.17은 Security 활성화 시 Transport TLS도 필수이므로, 이 옵트인이 켜지면
+각 노드에 `xpack.security.transport.ssl.*`(자체 서명 인증서 + keystore/truststore)
+설정과 인증서 볼륨을 추가해야 기동됩니다. 인증서를 만들고 `ELASTIC_USERNAME`
+을 사용하도록 `cerebro/application.conf`의 host에 Basic auth를 연결하는 절차가
+완성되기 전까지는 실습 환경에서 켜지 않는 것을 권장합니다. 이 랩의 현재
+`compose.yaml`에는 위 TLS 설정이 포함되어 있지 않습니다.
+
 ## Kubernetes 배포 및 버전 업그레이드
 
 Compose 외에 `./lab.sh k8s apply`로 Elasticsearch 3노드 StatefulSet, Kibana,
@@ -109,18 +189,28 @@ rolling update를 수행합니다. 상세 조건과 삭제 주의사항은
 | 적재 방식 | 기본 500건씩, 요청 크기 최대 4MiB, 고정 문서 ID |
 | 정적 데이터 파일 | ZIP에 없음. 기본 적재 실행 시에도 원문 파일을 저장하지 않음 |
 
+### 9.x 랩과 공용 코어
+
+이 7.x 랩과 신규 **`../elasticsearch-9/`(es9)** 랩은 `../lib/es-lab/`의 공용 코어
+(`common.sh` + `lablib_core.py`)를 공유합니다. `scripts/common.sh`는 코어 로더이고,
+노드·네트워크·스냅샷·진단 공통 로직은 코어에 있습니다. 이 랩의
+`scripts/lablib.py`는 7.x 전용(인덱스 레이아웃/시드 적재/쿼리 예제)만 유지합니다.
+`es9`은 opt-in 프로젝트이며 루트 `./all.sh es9 ...`로 실행합니다.
+
 | 인덱스 | 기본 생성 확인 문서 수* | 원문 크기 | Primary | Replica 설정 | 전체 copy |
 |---|---:|---:|---:|---:|---:|
-| `lab-transactions-v1` | 66,796 | 약 50MiB | 12 | 1 | 24 |
-| `lab-web-logs-v1` | 47,956 | 약 32MiB | 18 | 1 | 36 |
-| `lab-audit-v1` | 27,888 | 약 18MiB | 8 | 2 | 24 |
-| `lab-commerce-v1` | — | 약 12MiB | 16 | 2 | 48 |
-| `lab-observability-v1` | — | 약 8MiB | 24 | 1 | 48 |
-| **합계** | **약 142,000** | **약 100MiB** | **78** | — | **180** |
+| `lab-transactions-v1` | 47,157 | 약 40MiB | 12 | 1 | 24 |
+| `lab-web-logs-v1` | 28,021 | 약 25MiB | 18 | 1 | 36 |
+| `lab-audit-v1` | 25,411 | 약 18MiB | 8 | 2 | 24 |
+| `lab-commerce-v1` | 10,623 | 약 12MiB | 16 | 2 | 48 |
+| `lab-observability-v1` | 8,929 | 약 8MiB | 24 | 1 | 48 |
+| **합계** | **약 120,000** | **약 103MiB** | **78** | — | **180** |
 
 \* 제공 환경에서 기본 설정으로 생성한 결과입니다. 정확한 실행 결과는 `reports/seed-manifest.json`으로 확인하세요. 용량·기간·payload·seed 변경 시 문서 수는 달라집니다.
 
 **100MiB는 `pri.store.size` 목표가 아닙니다.** 원문 JSON, Bulk 전송량, Primary Lucene 저장량, Replica 포함 저장량, translog까지 포함한 파일시스템 사용량은 서로 다릅니다. Primary/Replica 저장량은 `./lab.sh size`로 측정합니다. 많은 작은 샤드는 배치와 이동을 관찰하기 위한 의도적인 교육용 설정이며 운영 권장 샤드 크기를 뜻하지 않습니다.
+
+**시드 데이터는 현실적인 분포로 생성됩니다.** 생성기(shared `lib/es-lab/datagen/realistic.py`, `seed-v4-real`)는 카드 발급사/브랜드, 국내외 실제풍 가맹점명·도시, 카테고리별 금액대, 요일·시간대 패턴, 기기·해외·암호화폐 결제의 사기 룰, 웹 요청의 서비스별 엔드포인트·상태코드·지연 분포, 상품 카탈로그 기반 주문/배송/결제, 메트릭 계열의 트렌드·이상치 등 실제 근접한 필드와 값으로 문서를 만듭니다. 결정성(seed 42), ID 규칙, 고정 사고 카덴스는 유지되며, ES 9 랩(`../elasticsearch-9/`)과 동일 생성기·동일 스키마를 공유합니다.
 
 ## 문서 읽는 순서
 

@@ -16,6 +16,8 @@ import pymysql
 
 NODES = tuple(filter(None, os.environ.get('GALERA_NODES', 'galera1,galera2,galera3').split(',')))
 RETRYABLE = {1047, 1062, 1205, 1213, 2002, 2003, 2006, 2013}
+# A freshly recreated HAProxy can refuse SQL until its backend table converges.
+CHECK_ATTEMPTS = int(os.environ.get('CHECK_ATTEMPTS', '60'))
 
 
 def connect(host='proxy', port=3306, readonly=False):
@@ -28,7 +30,7 @@ def connect(host='proxy', port=3306, readonly=False):
 
 def checked_connect(host='proxy', port=3306, readonly=False):
     last = None
-    for _ in range(12):
+    for _ in range(CHECK_ATTEMPTS):
         conn = None
         try:
             conn = connect(host, port, readonly)

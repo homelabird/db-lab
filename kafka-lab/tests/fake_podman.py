@@ -31,7 +31,9 @@ try:
     elif a[:2]==['network','disconnect']: container(a[-1])['connected']=False
     elif a[:2]==['network','connect']: container(a[-1])['connected']=True
     elif a[0]=='exec':
-        if 'client.py' in ' '.join(a):
+        if 'zookeeper-shell' in ' '.join(a):
+            out='[]'
+        elif 'client.py' in ' '.join(a):
             sub=a[a.index('/opt/lab/client.py')+1]
             if sub=='wait' and os.getenv('FAKE_FAIL_WAIT')=='1': rc=12
             elif sub in ['wait','zk-status']: out='{"mock": true}'

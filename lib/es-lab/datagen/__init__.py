@@ -1,0 +1,1 @@
+"""Shared realistic seed-data generator for the Elasticsearch labs."""

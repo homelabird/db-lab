@@ -23,8 +23,9 @@ class NetworkDefaultsTests(unittest.TestCase):
     def test_local_client_url_is_not_a_listen_address(self):
         env = (ROOT / '.env.example').read_text()
         self.assertRegex(env, r'(?m)^ES_URL=http://127\.0\.0\.1:9200$')
-        for name in ('scripts/common.sh', 'scripts/lablib.py'):
-            text = (ROOT / name).read_text()
+        shared = ROOT.parent / 'lib' / 'es-lab'
+        for name in ('common.sh', 'lablib_core.py'):
+            text = (shared / name).read_text()
             self.assertIn('http://127.0.0.1:9200', text)
             self.assertNotIn('http://0.0.0.0', text)
 
@@ -37,7 +38,49 @@ class NetworkDefaultsTests(unittest.TestCase):
         text = (ROOT / 'compose.yaml').read_text()
         self.assertIn('docker.elastic.co/kibana/kibana:7.17.29', text)
         self.assertIn('ELASTICSEARCH_HOSTS=["http://es01:9200","http://es02:9200","http://es03:9200","http://es04:9200","http://es05:9200"]', text)
-        self.assertIn('XPACK_SECURITY_ENABLED=false', text)
+        self.assertIn('XPACK_SECURITY_ENABLED=${XPACK_SECURITY_ENABLED:-false}', text)
+
+    def test_network_has_no_docker_only_driver_opts(self):
+        text = (ROOT / 'compose.yaml').read_text()
+        self.assertNotIn('driver_opts', text)
+        self.assertNotIn('enable_icc', text)
+        self.assertIn('driver: bridge', text)
+
+    def test_snapshot_repository_is_shared_and_preconfigured(self):
+        main = (ROOT / 'compose.yaml').read_text()
+        self.assertEqual(main.count('- es-snapshots:/usr/share/elasticsearch/snapshots'), 5)
+        self.assertIn('es-snapshots: null', main)
+        self.assertIn('path.repo=/usr/share/elasticsearch/snapshots', main)
+        scaleout = (ROOT / 'compose.scaleout.yaml').read_text()
+        self.assertIn('- es-snapshots:/usr/share/elasticsearch/snapshots', scaleout)
+        self.assertIn('path.repo=/usr/share/elasticsearch/snapshots', scaleout)
+
+    def test_xpack_optin_and_snapshot_vars_documented(self):
+        env = (ROOT / '.env.example').read_text()
+        for key in ('XPACK_SECURITY_ENABLED=false',
+                    'ELASTIC_USERNAME=elastic',
+                    'SNAPSHOT_REPO_NAME=lab-snapshots',
+                    'SNAPSHOT_PATH=/usr/share/elasticsearch/snapshots'):
+            self.assertIn(key, env)
+        self.assertIn('ELASTIC_PASSWORD', env)
+
+    def test_engine_and_network_helpers_exist(self):
+        shared = ROOT.parent / 'lib' / 'es-lab'
+        common = (shared / 'common.sh').read_text()
+        for name in ('resolve_engine', 'network_subnet', 'es_network_diagnose',
+                     'ensure_snapshot_repo', 'container_running'):
+            self.assertIn(f'{name}()', common)
+        core = (shared / 'lablib_core.py').read_text()
+        self.assertIn('def ensure_snapshot_repo', core)
+        self.assertIn("'snapshot-repo'", core)
+
+    def test_lab_wires_the_shared_core(self):
+        loader = (ROOT / 'scripts/common.sh').read_text()
+        self.assertIn('export LAB_ROOT', loader)
+        self.assertIn('lib/es-lab/common.sh', loader)
+        self.assertIn('LAB_CONTAINER_PREFIX="${LAB_CONTAINER_PREFIX:-cerebro-seed-}"', loader)
+        lablib = (ROOT / 'scripts/lablib.py').read_text()
+        self.assertIn('from lablib_core import', lablib)
 
 
 if __name__ == '__main__':

@@ -35,6 +35,14 @@ class ComposeContracts(unittest.TestCase):
         self.assertEqual(env["KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR"], "1")
         self.assertEqual(env["KAFKA_PROCESS_ROLES"], "broker,controller")
 
+    def test_kafka_listeners_avoid_nonroutable_meta_address(self):
+        # Kafka 3.9.0 (cp-kafka 7.9.0) refuses the explicit 0.0.0.0 bind during
+        # kafka-storage format (KAFKA-18281). Use the implicit host form instead.
+        listeners = self.data["services"]["kafka"]["environment"]["KAFKA_LISTENERS"]
+        self.assertNotIn("0.0.0.0", listeners)
+        self.assertIn("PLAINTEXT://:9092", listeners)
+        self.assertIn("CONTROLLER://:9093", listeners)
+
     def test_wrong_password_only_changes_api(self):
         api = self.data["services"]["api"]["environment"]
         worker = self.data["services"]["worker"]["environment"]

@@ -22,7 +22,7 @@ Replica 인증 오류, Sentinel 다수 상실 수동 절차, 고정/Sentinel 클
 ## 버전과 배포
 
 Redis base image: `docker.io/library/redis:7.4.11-alpine` — 패치 버전 태그 고정.
-Python client library: `redis==6.4.0` — 패키지 버전 고정.
+Python client library: `redis==7.4.1` — 패키지 버전 고정 (6.4.0의 Sentinel 응답 파서 버그 회피).
 Python base image: `docker.io/library/python:3.12-slim-bookworm` — minor/배포판 고정, patch와 image digest는 고정하지 않음.
 
 “모든 의존성이 byte-for-byte 재현된다”거나 “현재 최신 버전이다”라고 주장하지 않습니다.

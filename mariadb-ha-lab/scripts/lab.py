@@ -281,8 +281,10 @@ class Lab:
             's=socket.socket(); s.settimeout(3); '
             's.connect((%r,4567)); s.close()'
         ) % target
+        # Docker Compose can spend ~25s creating/attaching this one-shot container
+        # under load, so the socket probe alone (3s timeout) is not the bottleneck.
         result = self.comp('run', '--rm', '--no-deps', '--entrypoint', 'python3', 'tools',
-                           '-c', probe, capture=True, check=False, timeout=30)
+                           '-c', probe, capture=True, check=False, timeout=120)
         if result.returncode:
             raise LabError(
                 f'Container network cannot reach {target}:4567 from the Compose network. '
@@ -323,12 +325,14 @@ class Lab:
 
     def wait_frontends(self):
         # A running process is not proof of a working SQL route or HTTP listener.
-        self.comp('run', '--rm', '--no-deps', 'tools', 'check', timeout=360)
+        # Wait for the proxy/dashboard listeners BEFORE probing SQL: HAProxy only
+        # routes to a backend after its DNS resolver and health checks converge,
+        # which can lag container start by several seconds after --force-recreate.
         host = self.settings['BIND_ADDRESS']
         if host == '0.0.0.0': host = '127.0.0.1'
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        for service, port, path in (('dashboard', 'DASHBOARD_PORT', '/api/cluster'),
-                                    ('proxy', 'HAPROXY_STATS_PORT', '/stats')):
+        for service, port, path in (('proxy', 'HAPROXY_STATS_PORT', '/stats'),
+                                    ('dashboard', 'DASHBOARD_PORT', '/api/cluster')):
             deadline = time.monotonic() + min(60, int(self.settings['WAIT_SECONDS']))
             while time.monotonic() < deadline:
                 if self.state(service) != 'running':
@@ -339,6 +343,9 @@ class Lab:
                 except (OSError, urllib.error.URLError): pass
                 time.sleep(1)
             else: raise LabError(service + ' HTTP endpoint did not become ready.')
+        # The SQL route is checked last with a generous retry window so a cold
+        # HAProxy backend table cannot fail `up` while the cluster itself is healthy.
+        self.comp('run', '--rm', '--no-deps', 'tools', 'check', timeout=360)
 
 
     def doctor(self):

@@ -16,10 +16,46 @@ EOF
   exit 1
 fi
 
+net_name="$(network_name)"
+printf '[info] Runtime: %s | Compose provider: %s\n' "$RUNTIME" "$COMPOSE_PROVIDER"
+printf '[info] Compose network: %s\n' "$net_name"
+
 compose up -d
-# Normal startup never modifies host firewall rules. Network failures are diagnosed
-# after application readiness, not by a one-shot request during process startup.
-python3 ./scripts/lablib.py wait --nodes 5 --yellow --seconds "${WAIT_SECONDS:-300}"
+
+# Stage 1: containers must be running before we check application readiness.
+printf '[info] Waiting for %s..%s containers to be running...\n' es01 es05
+container_wait_seconds="${CONTAINER_WAIT_SECONDS:-90}"
+deadline=$(( $(date +%s) + container_wait_seconds ))
+while (( $(date +%s) < deadline )); do
+  running=0
+  for name in es01 es02 es03 es04 es05; do
+    container_running "$name" && running=$((running + 1))
+  done
+  (( running == 5 )) && break
+  sleep 2
+done
+if [[ "$running" != 5 ]]; then
+  echo '[error] Not all Elasticsearch containers are running.' >&2
+  es_network_diagnose "$net_name"
+  exit 1
+fi
+printf '[ok] All 5 Elasticsearch containers are running.\n'
+
+# Stage 2: Elasticsearch HTTP + cluster formation (all nodes joined).
+# Normal startup never modifies host firewall rules; if the cluster cannot
+# form, es_network_diagnose distinguishes startup problems from blocked
+# inter-container traffic and prints a working firewall hint with the real subnet.
+if ! python3 ./scripts/lablib.py wait --nodes 5 --yellow --seconds "${WAIT_SECONDS:-300}"; then
+  es_network_diagnose "$net_name"
+  exit 1
+fi
+
+# Stage 3: shared filesystem snapshot repository (register + verify) so
+# snapshot/restore exercises work immediately after ./lab.sh up.
+# Failures here are fatal for up: the lab bootstraps the repository by design.
+ensure_snapshot_repo
+
+# Stage 4: Kibana ready (its /api/status flips to green once ES is weak-healthy).
 KIBANA_WAIT_SECONDS="${KIBANA_WAIT_SECONDS:-180}"
 kibana_ready=0
 for _ in $(seq 1 "$((KIBANA_WAIT_SECONDS / 2))"); do
@@ -35,17 +71,42 @@ if (( kibana_ready == 0 )); then
   echo "[hint] Inspect with: ./lab.sh logs kibana" >&2
   exit 1
 fi
-guard_lab
-bash ./lab.sh status
-printf '\nHost port binding: %s (Elasticsearch %s, Cerebro %s, Kibana %s)\n' \
-  "${ES_BIND_IP:-127.0.0.1}" "${ES_PORT:-9200}" "${CEREBRO_PORT:-9000}" "${KIBANA_PORT:-5601}"
-printf 'Local script Elasticsearch URL: %s\n' "$ES_URL"
-if [[ "${ES_BIND_IP:-127.0.0.1}" == "0.0.0.0" ]]; then
-  printf 'Remote Cerebro: http://<SERVER_IP>:%s\nRemote Kibana: http://<SERVER_IP>:%s\nRemote Elasticsearch: http://<SERVER_IP>:%s\n' \
-    "${CEREBRO_PORT:-9000}" "${KIBANA_PORT:-5601}" "${ES_PORT:-9200}"
-  echo 'WARNING: No authentication/TLS. Restrict these ports to trusted lab clients; do not expose them to the Internet.'
-else
-  printf 'Cerebro: http://%s:%s\nKibana: http://%s:%s\nElasticsearch: http://%s:%s\n' \
-    "${ES_BIND_IP:-127.0.0.1}" "${CEREBRO_PORT:-9000}" "${ES_BIND_IP:-127.0.0.1}" "${KIBANA_PORT:-5601}" "${ES_BIND_IP:-127.0.0.1}" "${ES_PORT:-9200}"
+
+# Stage 5: Cerebro answers on its HTTP port.
+CEREBRO_WAIT_SECONDS="${CEREBRO_WAIT_SECONDS:-120}"
+cerebro_ready=0
+for _ in $(seq 1 "$((CEREBRO_WAIT_SECONDS / 2))"); do
+  if curl -fsS --connect-timeout 2 --max-time 5 \
+      "http://127.0.0.1:${CEREBRO_PORT:-9000}/" >/dev/null 2>&1; then
+    cerebro_ready=1
+    break
+  fi
+  sleep 2
+done
+if (( cerebro_ready == 0 )); then
+  echo "[error] Cerebro did not answer within ${CEREBRO_WAIT_SECONDS}s." >&2
+  echo "[hint] Inspect with: ./lab.sh logs cerebro" >&2
+  exit 1
 fi
+
+guard_lab
+printf '\n=== cluster status ===\n'
+bash ./lab.sh status
+bash ./lab.sh ui
+
+subnet="$(network_subnet "$net_name" 2>/dev/null || echo unknown)"
+cat <<EOF
+
+Lab is ready.
+  Runtime:            ${RUNTIME}
+  Compose provider:   ${COMPOSE_PROVIDER}
+  Compose network:    ${net_name} (${subnet})
+  Cluster:            ${LAB_CLUSTER_NAME} (5 nodes)
+  Snapshot repo:      ${SNAPSHOT_REPO_NAME} (${SNAPSHOT_PATH}, verified)
+  Elasticsearch:      ${ES_URL}
+  Cerebro:            http://${ES_BIND_IP:-127.0.0.1}:${CEREBRO_PORT:-9000}
+  Kibana:             http://${ES_BIND_IP:-127.0.0.1}:${KIBANA_PORT:-5601}
+  Kibana Console:     http://${ES_BIND_IP:-127.0.0.1}:${KIBANA_PORT:-5601}/app/dev_tools#/console
+  Security:           ${XPACK_SECURITY_ENABLED:-false} (opt-in via .env; see README)
+EOF
 echo 'Data is NOT seeded automatically. Next: ./lab.sh seed'

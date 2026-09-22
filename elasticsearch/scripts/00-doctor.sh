@@ -7,6 +7,27 @@ status=0
 for bin in python3 curl; do command -v "$bin" || status=1; done
 python3 -c 'import sys; assert sys.version_info >= (3,9), "Python 3.9+ required"' || status=1
 compose version || status=1
+resolve_engine || { echo 'No usable Compose provider (docker, podman, or podman-compose).' >&2; status=1; }
+network_info() {
+  local net subnet
+  net="$(network_name)"
+  if network_exists "$net"; then
+    subnet="$(network_subnet "$net" || echo 'unknown subnet')"
+    printf 'Compose network: %s (%s)\n' "$net" "$subnet"
+    if [[ "$subnet" == 'unknown subnet' ]]; then
+      printf 'Inspect it manually: %s network inspect %s\n' "$RUNTIME" "$net"
+    fi
+  else
+    printf 'Compose network: %s (created on ./lab.sh up)\n' "$net"
+  fi
+}
+network_info
+printf 'Container runtime: %s\n' "$RUNTIME"
+printf 'Compose provider: %s\n' "$COMPOSE_PROVIDER"
+printf 'Snapshot repository: %s at %s (registered/verified by ./lab.sh up)\n' \
+  "$SNAPSHOT_REPO_NAME" "$SNAPSHOT_PATH"
+printf 'Security: %s (opt-in; see README for ELASTIC_USERNAME/ELASTIC_PASSWORD)\n' \
+  "${XPACK_SECURITY_ENABLED:-false}"
 value=$(cat /proc/sys/vm/max_map_count 2>/dev/null || echo 0)
 echo "vm.max_map_count=$value (this ES 7.17 lab expects >=262144 with mmap enabled)"
 if (( value < 262144 )); then echo 'Set on the host: sudo sysctl -w vm.max_map_count=262144'; status=1; fi

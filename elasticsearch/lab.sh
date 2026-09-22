@@ -33,6 +33,7 @@ Data and queries:
   pit [options]      Run PIT/search_after pagination example
   load [options]     Run the live write load
   reset              Restore lab cluster settings without deleting data
+  snapshot           (Re)register + verify the shared snapshot repository
 
 Operations:
   fault [args...]    Run the managed fault-lab controller
@@ -189,6 +190,7 @@ case "$command" in
   status|ps) run_script "$ROOT/scripts/03-status.sh" "$@" ;;
   seed) run_python generate_and_load.py "$@" ;;
   reset) run_script "$ROOT/scripts/05-reset-cluster-settings.sh" "$@" ;;
+  snapshot|snapshot-repo) ensure_snapshot_repo "$@" ;;
   purge) run_script "$ROOT/scripts/06-purge-lab-indices.sh" "$@" ;;
   size|dataset-size) run_script "$ROOT/scripts/07-dataset-size.sh" "$@" ;;
   query|queries)

@@ -1,0 +1,22 @@
+{
+  "size": 20,
+  "track_total_hits": true,
+  "_source": {
+    "excludes": [
+      "payload"
+    ]
+  },
+  "query": {
+    "term": {
+      "user_id": "user-00042"
+    }
+  },
+  "sort": [
+    {
+      "@timestamp": "asc"
+    },
+    {
+      "document_id": "asc"
+    }
+  ]
+}

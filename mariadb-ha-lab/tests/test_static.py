@@ -172,6 +172,32 @@ class DatasetTests(unittest.TestCase):
         self.assertIn('WHERE p.product_id BETWEEN 51 AND 100;',self.sql)
     def test_shipment_where_clause_preserved(self):
         self.assertIn("WHERE o.status NOT IN ('CANCELLED','REFUNDED','PENDING') AND o.order_id BETWEEN",self.sql)
+    def test_seed_order_lifecycle_realism(self):
+        # Status must be correlated with order age, not a uniform draw over the full range.
+        self.assertIn("IF(n < 120000, 30 + (119999 - n) DIV 240, (199999 - n) DIV 4000)", self.template)
+        self.assertIn('WHEN n >= 185000 THEN \'PAID\'', self.template)
+        self.assertNotIn("DATE_ADD('2024-01-01 00:00:00', INTERVAL (n % 989) DAY)", self.template)
+        # updated_at reflects the per-status lifecycle timeline, not a fixed +120s offset.
+        self.assertIn("WHEN status = 'PACKING' THEN ordered_at + INTERVAL 12 MINUTE", self.template)
+        self.assertIn("WHEN status = 'CANCELLED' THEN ordered_at + INTERVAL 30 MINUTE", self.template)
+        self.assertNotIn('INTERVAL (((n*97)%86400)+120) SECOND', self.template)
+    def test_seed_no_shipment_share_kept(self):
+        # The 10% cancelled/refunded/pending share must be preserved for verify().
+        self.assertLessEqual(self.template.count("WHEN n % 100 < 10 THEN"), 1)
+        self.assertIn("WHEN n % 100 < 6 THEN 'REFUNDED'", self.template)
+        self.assertIn("ELSE 'PENDING' END", self.template)
+    def test_seed_payment_timeline_realism(self):
+        self.assertIn('o.ordered_at + INTERVAL (o.order_id % 7) SECOND', self.template)
+        self.assertIn('o.ordered_at + INTERVAL 3 MINUTE', self.template)
+        self.assertNotIn("o.ordered_at + INTERVAL 3 SECOND", self.template)
+    def test_seed_api_traffic_realism(self):
+        # Latency and status must be endpoint-correlated, and the newest chunk recent-biased.
+        self.assertIn("WHEN endpoint = '/api/search' THEN 20 + ((log_id * 97) % 9000)", self.template)
+        self.assertIn("WHEN endpoint = '/api/payments' THEN 15 + ((log_id * 41) % 6000)", self.template)
+        self.assertIn("WHEN status_code IN (500, 503) THEN 800 + ((log_id * 13) % 4000)", self.template)
+        self.assertIn("IF(n < 400000, (399999 - n) DIV 1360, (499999 - n) DIV 3333)", self.template)
+        self.assertNotIn("DATE_ADD('2025-10-01 00:00:00', INTERVAL (n % 350) DAY)", self.template)
+        self.assertIn("WHEN 3 THEN 'POST'", self.template)
     def test_payload_added(self): self.assertIn("'payload', RPAD(SHA2(CONCAT('row-',n),256), 256, 'x')",self.sql)
     def test_batch_boundaries(self): self.assertEqual(list(seed.blocks(101,50)),[(0,49),(50,99),(100,100)])
     def test_invalid_batch_zero(self):

@@ -16,6 +16,8 @@
 
 `user-00042`는 각 인덱스의 주입 사례에서 반복 등장합니다. `trace_id`도 인덱스 간 같은 순번을 비교하기 위한 합성 식별자입니다. 독립적으로 생성한 이벤트 시간을 실제 서비스의 인과관계나 정확한 분산 추적 시간으로 해석하지 마세요.
 
+현실적 생성기(`lib/es-lab/datagen/realistic.py`, `seed-v4-real`)는 발급사·카드 브랜드·국내 가맹점명·도시, 카테고리별 금액대·요일/시간대 패턴, 서비스별 엔드포인트·상태코드·지연 분포, 상품 카탈로그 기반 주문/배송/결제, 메트릭 트렌드·이상치 필드를 추가합니다. 매핑·생성기는 9.x 랩(`elasticsearch-9/`)과 공유하며 같은 seed·설정이면 양 랩이 동일 문서를 만듭니다. 기본 검색 예제의 카운트가 v3 대비 달라질 수 있으므로 `./lab.sh verify`의 실제 검색 결과를 기준으로 확인하세요.
+
 ## 2. 매핑이 왜 필요한가
 
 | 타입 | 이 랩의 예 | 주된 사용 |
@@ -42,7 +44,7 @@
 분배 = 거래 40% / 웹 로그 25% / 감사로그 15% / 주문 12% / observability 8%
 ```
 
-각 인덱스는 문서를 중간에 자를 수 없으므로 목표 크기를 마지막 문서 한 건 이내에서 넘깁니다. 제공 환경에서는 합계 104,858,904 bytes, 142,640건을 생성했습니다. 이 수치는 Elasticsearch에 저장한 후의 측정값이 아니라 **실제 생성한 원문 파일을 전수 검사한 결과**입니다.
+각 인덱스는 문서를 중간에 자를 수 없으므로 목표 크기를 마지막 문서 한 건 이내에서 넘깁니다. 제공 환경에서는 합계 108,005,594 bytes, 120,141건을 생성했습니다. 이 수치는 Elasticsearch에 저장한 후의 측정값이 아니라 **실제 생성한 원문 파일을 전수 검사한 결과**입니다.
 
 Bulk action 메타데이터와 재시도 전송량은 위 기준에 포함되지 않습니다. Lucene은 저장·색인·압축 구조가 다르므로 `pri.store.size`가 원문과 같지 않습니다. Replica를 포함하는 `store.size`는 더 다른 값이며, translog 등을 포함한 전체 디스크 사용량과도 같지 않습니다.
 
@@ -78,10 +80,12 @@ refresh 복원·문서 수 확인·manifest 기록까지 수행합니다.
 
 ```text
 [connect] http://127.0.0.1:9200; wait for >= 5 nodes
-[lab-transactions-v1] complete: 66,796 docs, source=50.001 MiB
-[lab-web-logs-v1] complete: 47,956 docs, source=32.001 MiB
-[lab-audit-v1] complete: 27,888 docs, source=18.001 MiB
-[DONE] 142,640 docs / 100.001 MiB source
+[lab-transactions-v1] complete: 47,157 docs, source=40.000 MiB
+[lab-web-logs-v1] complete: 28,021 docs, source=25.000 MiB
+[lab-audit-v1] complete: 25,411 docs, source=18.001 MiB
+[lab-commerce-v1] complete: 10,623 docs, source=12.000 MiB
+[lab-observability-v1] complete: 8,929 docs, source=8.000 MiB
+[DONE] 120,141 docs / 103.002 MiB source
 [report] .../reports/seed-manifest.json
 ```
 
@@ -104,7 +108,7 @@ primary shard 하나의 목표 최대 `_source` MiB입니다. 두 옵션은 기�
 primary shard 수가 많을 때 자동으로 shard 수를 늘립니다. Elasticsearch의 shard는 생성 후
 크기를 줄일 수 없으므로 기존 데이터에는 적용되지 않으며 `--recreate --yes`가 필요합니다.
 `--batch-size`/`--max-batch-mb`는 Bulk 크기, `--generate-only`는 ES 없이 파일만
-생성, `--recreate --yes`는 세 seed 인덱스를 삭제 후 재생성합니다.
+생성, `--recreate --yes`는 다섯 seed 인덱스를 삭제 후 재생성합니다.
 
 ## 5. 크기·날짜·부하 조절
 
@@ -121,7 +125,7 @@ primary shard 수가 많을 때 자동으로 shard 수를 늘립니다. Elastics
 다른 설정의 시드가 이미 있다면 아래처럼 **삭제를 명시해야** 합니다.
 
 ```bash
-# 거래·웹·감사 인덱스 3개 안의 모든 데이터가 삭제됩니다.
+# 다섯 시드 인덱스 안의 모든 데이터가 삭제됩니다.
 ./lab.sh seed --size-mb 300 --recreate --yes
 
 # 날짜를 변경한 새 시드. 기존 검색 예제의 고정 날짜 범위도 직접 조정해야 합니다.

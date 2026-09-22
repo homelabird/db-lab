@@ -43,7 +43,26 @@ def parse_env(path: Path) -> dict[str, str]:
     return env
 
 
+def resolve_engine(requested: str) -> str:
+    if requested not in ('auto', 'podman', 'docker'):
+        raise ValueError('CONTAINER_ENGINE must be auto, podman or docker')
+    candidates = ('podman', 'docker') if requested == 'auto' else (requested,)
+    engine = next((name for name in candidates if shutil.which(name)), None)
+    if engine is None:
+        raise RuntimeError('No container engine found; install Podman or Docker, or set CONTAINER_ENGINE.')
+    return engine
+
+
+def compose_base(engine: str) -> list[str]:
+    """Prefer podman-compose when it is the installed Podman provider, else the Compose plugin."""
+    if engine == 'podman' and shutil.which('podman-compose'):
+        return ['podman-compose']
+    return [engine, 'compose']
+
+
 def validate_env(env: dict) -> None:
+    if env['CONTAINER_ENGINE'] not in ('auto', 'podman', 'docker'):
+        raise ValueError('CONTAINER_ENGINE must be auto, podman or docker')
     if not re.fullmatch(r'[a-z][a-z0-9-]{0,39}', env['LAB_NAME']):
         raise ValueError('LAB_NAME must match [a-z][a-z0-9-]{0,39}')
     if env['DEPLOYMENT_MODE'] not in ('sentinel', 'cluster'):
@@ -116,6 +135,8 @@ class Lab:
         self.env = env
         self.name = env['LAB_NAME']
         self.network = self.name + '-net'
+        self.engine = resolve_engine(env['CONTAINER_ENGINE'])
+        self.compose_cmd = compose_base(self.engine)
         self.proc_env = dict(os.environ, **env)
         self.proc_env['CLUSTER_NODES'] = ','.join(self.cluster_endpoints())
         self._compose = None
@@ -139,11 +160,14 @@ class Lab:
 
     def compose(self, *args, capture=False, check=True, timeout=None):
         if self._compose is None:
-            if not shutil.which('podman-compose'): raise RuntimeError('podman-compose is required; see README.md.')
-            if '--in-pod' not in self.run(['podman-compose', '--help']).stdout:
-                raise RuntimeError('This podman-compose lacks --in-pod; install a newer version.')
+            if self.compose_cmd == ['podman-compose']:
+                if '--in-pod' not in self.run(['podman-compose', '--help']).stdout:
+                    raise RuntimeError('This podman-compose lacks --in-pod; install a newer version.')
+                base = ['podman-compose', '--in-pod=false']
+            else:
+                base = list(self.compose_cmd)
             compose_file = self.cluster_compose_path() if self.env['DEPLOYMENT_MODE'] == 'cluster' else ROOT / 'compose.yaml'
-            self._compose = ['podman-compose', '--in-pod=false', '-p', self.name, '-f', str(compose_file)]
+            self._compose = base + ['-p', self.name, '-f', str(compose_file)]
         return self.run(self._compose + list(args), capture=capture, check=check, timeout=timeout)
 
     def services(self):
@@ -270,7 +294,7 @@ volumes:
         return self.name + '-' + node
 
     def inspect(self, node: str, required=True) -> dict | None:
-        result = self.run(['podman', 'container', 'inspect', self.cname(node)], check=False)
+        result = self.run([self.engine, 'container', 'inspect', self.cname(node)], check=False)
         if result.returncode:
             if required: raise RuntimeError(f'{node} does not exist. Run ./lab.sh up first.')
             return None
@@ -281,7 +305,7 @@ volumes:
 
     def volume_owned(self, suffix: str, required=False):
         if suffix not in self.active_volumes(): raise ValueError('Unexpected volume name')
-        result = self.run(['podman', 'volume', 'inspect', f'{self.name}-{suffix}'], check=False)
+        result = self.run([self.engine, 'volume', 'inspect', f'{self.name}-{suffix}'], check=False)
         if result.returncode:
             if required: raise RuntimeError('Expected volume not found: ' + suffix)
             return None
@@ -290,23 +314,35 @@ volumes:
             raise RuntimeError(f'REFUSED: volume {self.name}-{suffix} is not owned by this lab.')
         return data
 
+    def _network_names(self):
+        if self.engine == 'docker':
+            out = self.run(['docker', 'network', 'ls', '--format', '{{.Name}}']).stdout
+            return [line.strip() for line in out.splitlines() if line.strip()]
+        existing = json.loads(self.run(['podman', 'network', 'ls', '--format', 'json']).stdout)
+        return [entry.get('name', entry.get('Name')) for entry in existing if entry.get('name', entry.get('Name'))]
+
+    def _network_labels_and_subnets(self, name):
+        data = json.loads(self.run([self.engine, 'network', 'inspect', name]).stdout)[0]
+        if self.engine == 'docker':
+            labels = data.get('Labels') or {}
+            subnets = [item['Subnet'] for item in ((data.get('IPAM') or {}).get('Config') or []) if item.get('Subnet')]
+        else:
+            labels = data.get('labels') or data.get('Labels') or {}
+            subnets = [item['subnet'] for item in data.get('subnets', []) if item.get('subnet')]
+        return labels, subnets
+
     def check_network(self):
         desired = ipaddress.ip_network(self.env['LAB_SUBNET'])
-        existing = json.loads(self.run(['podman', 'network', 'ls', '--format', 'json']).stdout)
         own_exists = False
-        for entry in existing:
-            name = entry.get('name', entry.get('Name'))
-            if not name: continue
-            data = json.loads(self.run(['podman', 'network', 'inspect', name]).stdout)[0]
+        for name in self._network_names():
+            labels, subnets = self._network_labels_and_subnets(name)
             if name == self.network:
-                labels = data.get('labels') or data.get('Labels') or {}
                 if labels.get(LABEL) != self.name: raise RuntimeError(f'REFUSED: network {name} is not owned by this lab.')
                 own_exists = True
-                subnets = [item['subnet'] for item in data.get('subnets', []) if item.get('subnet')]
                 if subnets and str(desired) not in subnets: raise RuntimeError('Existing lab subnet differs from .env.')
                 continue
-            for item in data.get('subnets', []):
-                other = ipaddress.ip_network(item['subnet'])
+            for subnet in subnets:
+                other = ipaddress.ip_network(subnet)
                 if other.version == 4 and desired.overlaps(other):
                     raise RuntimeError(f'Network overlap: {desired} with {name} ({other}). Change LAB_SUBNET and all IPs before startup.')
         if shutil.which('ip'):
@@ -329,10 +365,15 @@ volumes:
         if save: path.write_text(digest + '\n')
 
     def doctor(self):
-        print('Checking Podman, Compose, resource ownership and subnet conflicts...', flush=True)
-        self.run(['podman', 'info', '--format', 'json'])
-        print(self.run(['podman', '--version']).stdout.strip())
-        version = self.run(['podman-compose', '--version']); print((version.stdout + version.stderr).strip())
+        print(f'Checking {self.engine}, Compose, resource ownership and subnet conflicts...', flush=True)
+        if self.engine == 'docker':
+            self.run(['docker', 'info', '--format', '{{json .}}'])
+            print(self.run(['docker', '--version']).stdout.strip())
+        else:
+            self.run(['podman', 'info', '--format', 'json'])
+            print(self.run(['podman', '--version']).stdout.strip())
+        version_cmd = ['podman-compose', '--version'] if self.compose_cmd == ['podman-compose'] else [*self.compose_cmd, 'version']
+        version = self.run(version_cmd); print((version.stdout + version.stderr).strip())
         self.compose('config', capture=True)  # Do not print secrets.
         for node in self.active_nodes(): self.inspect(node, required=False)
         for suffix in self.active_volumes(): self.volume_owned(suffix)
@@ -371,7 +412,7 @@ volumes:
 
     def execute(self, node: str, command: list, *, capture=True, check=True, timeout=30, tty=False):
         self.inspect(node)
-        args = ['podman', 'exec'] + (['-it'] if tty else [])
+        args = [self.engine, 'exec'] + (['-it'] if tty else [])
         return self.run(args + [self.cname(node)] + command, capture=capture, check=check, timeout=timeout)
 
     def cli(self, node: str, args: list, *, capture=True, check=True, timeout=30, tty=False):
@@ -518,10 +559,10 @@ volumes:
         self.save_state(state)  # Persist before change so interruption leaves a recovery route.
         print(f'Injecting {action} into {node}.', flush=True)
         try:
-            if action == 'kill': self.run(['podman', 'kill', '--signal', 'KILL', self.cname(node)])
-            elif action == 'stop': self.run(['podman', 'stop', '-t', '10', self.cname(node)])
-            elif action == 'pause': self.run(['podman', 'pause', self.cname(node)])
-            elif action == 'isolate': self.run(['podman', 'network', 'disconnect', self.network, self.cname(node)])
+            if action == 'kill': self.run([self.engine, 'kill', '--signal', 'KILL', self.cname(node)])
+            elif action == 'stop': self.run([self.engine, 'stop', '-t', '10', self.cname(node)])
+            elif action == 'pause': self.run([self.engine, 'pause', self.cname(node)])
+            elif action == 'isolate': self.run([self.engine, 'network', 'disconnect', self.network, self.cname(node)])
             elif action == 'auth-replica':
                 self.cli(node, ['CONFIG', 'SET', 'masterauth', 'IntentionallyWrongLabPassword'])
                 self.cli(node, ['CLIENT', 'KILL', 'TYPE', 'master'])
@@ -536,7 +577,7 @@ volumes:
         info = self.inspect(node)
         if self.network in info.get('NetworkSettings', {}).get('Networks', {}): return
         key = node.upper().replace('-', '_') + '_IP'
-        self.run(['podman', 'network', 'connect', '--ip', self.env[key], '--alias', node, self.network, self.cname(node)])
+        self.run([self.engine, 'network', 'connect', '--ip', self.env[key], '--alias', node, self.network, self.cname(node)])
 
     def recover(self, selected='all', wait=True):
         state = self.state()
@@ -546,9 +587,9 @@ volumes:
             fault = state.get(node)
             if not fault: print(f'{node}: no recorded fault'); continue
             info = self.inspect(node)
-            if info['State'].get('Paused'): self.run(['podman', 'unpause', self.cname(node)])
+            if info['State'].get('Paused'): self.run([self.engine, 'unpause', self.cname(node)])
             if fault['action'] == 'isolate': self.connect_network(node)
-            if not self.inspect(node)['State'].get('Running'): self.run(['podman', 'start', self.cname(node)])
+            if not self.inspect(node)['State'].get('Running'): self.run([self.engine, 'start', self.cname(node)])
             if fault['action'] == 'auth-replica':
                 script = 'export REDISCLI_AUTH="$REDIS_PASSWORD"; redis-cli -e CONFIG SET masterauth "$REDIS_PASSWORD"; redis-cli -e CLIENT KILL TYPE master'
                 self.execute(node, ['sh', '-eu', '-c', script])
@@ -627,7 +668,7 @@ fi
         remote = '/data/state/backup-' + stamp + '.rdb'
         script = 'export REDISCLI_AUTH="$REDIS_PASSWORD"; exec redis-cli -e --rdb "$1"'
         self.execute(node, ['sh', '-eu', '-c', script, 'backup', remote], capture=False, timeout=180)
-        self.run(['podman', 'cp', self.cname(node) + ':' + remote, target])
+        self.run([self.engine, 'cp', self.cname(node) + ':' + remote, target])
         self.execute(node, ['rm', '-f', remote])
         with target.open('rb') as stream:
             if stream.read(5) != b'REDIS': raise RuntimeError('Backup does not have an RDB header')
@@ -659,13 +700,13 @@ fi
         self.sandbox_up(); self.volume_owned('sandbox-data', required=True)
         staged = '/data/state/restore-candidate-' + secrets.token_hex(8) + '.rdb'
         try:
-            self.run(['podman', 'cp', source, self.cname('redis-sandbox') + ':' + staged])
+            self.run([self.engine, 'cp', source, self.cname('redis-sandbox') + ':' + staged])
             self.execute('redis-sandbox', ['redis-check-rdb', staged], timeout=180)
         except BaseException:
             self.execute('redis-sandbox', ['rm', '-f', staged], check=False)
             raise
         # Only a structurally valid RDB may reach the destructive sandbox-only step.
-        self.run(['podman', 'stop', '-t', '10', self.cname('redis-sandbox')])
+        self.run([self.engine, 'stop', '-t', '10', self.cname('redis-sandbox')])
         # One owned disposable volume; no host filesystem bind mount.
         script = '''
 set -eu
@@ -676,10 +717,10 @@ rm -f "/restore/state/$1"
 sed -i 's/^appendonly .*/appendonly no/' /restore/state/redis.conf
 rm -f /restore/state/persistence-fault-active /restore/state/pre-fault.rdb
 '''
-        self.run(['podman', 'run', '--rm', '--network', 'none', '--label', LABEL + '=' + self.name,
+        self.run([self.engine, 'run', '--rm', '--network', 'none', '--label', LABEL + '=' + self.name,
             '-v', self.name + '-sandbox-data:/restore', '--entrypoint', 'sh',
             f'localhost/{self.name}-redis:1.1', '-c', script, 'restore', staged.rsplit('/', 1)[1]])
-        self.run(['podman', 'start', self.cname('redis-sandbox')])
+        self.run([self.engine, 'start', self.cname('redis-sandbox')])
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             result = self.cli('redis-sandbox', ['PING'], check=False)
@@ -712,7 +753,7 @@ rm -f /restore/state/persistence-fault-active /restore/state/pre-fault.rdb
             minimal = {'Name': data.get('Name'), 'State': data.get('State'),
                 'RestartCount': data.get('RestartCount'), 'NetworkSettings': data.get('NetworkSettings')}
             (out / (node + '-state.json')).write_text(self.redact(json.dumps(minimal, indent=2)))
-            logs = self.run(['podman', 'logs', '--tail', '1000', self.cname(node)], check=False)
+            logs = self.run([self.engine, 'logs', '--tail', '1000', self.cname(node)], check=False)
             (out / (node + '.log')).write_text(self.redact(logs.stdout + logs.stderr))
         result = self.client('status', '--json', capture=True, check=False, timeout=60)
         (out / 'topology.json').write_text(self.redact(result.stdout + result.stderr))
@@ -723,7 +764,7 @@ rm -f /restore/state/persistence-fault-active /restore/state/pre-fault.rdb
         self.inspect('lab-client')
         dest = ROOT / 'output' / ('results-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S') + '-' + secrets.token_hex(2))
         dest.mkdir()
-        self.run(['podman', 'cp', self.cname('lab-client') + ':/results/.', dest])
+        self.run([self.engine, 'cp', self.cname('lab-client') + ':/results/.', dest])
         print('Copied client results:', dest.relative_to(ROOT))
 
     def down(self, reset=False, confirmed=False):
@@ -734,7 +775,7 @@ rm -f /restore/state/persistence-fault-active /restore/state/pre-fault.rdb
         for node in self.active_nodes():
             data = self.inspect(node, required=False)
             if not data: continue
-            if data['State'].get('Paused'): self.run(['podman', 'unpause', self.cname(node)])
+            if data['State'].get('Paused'): self.run([self.engine, 'unpause', self.cname(node)])
             if node in self.state() and self.state()[node]['action'] == 'isolate': self.connect_network(node)
         for suffix in self.active_volumes(): self.volume_owned(suffix)
         self.check_network()
@@ -743,7 +784,7 @@ rm -f /restore/state/persistence-fault-active /restore/state/pre-fault.rdb
         if reset:
             # Some providers skip unused profile volumes; remove only exact owned leftovers.
             for suffix in self.active_volumes():
-                if self.volume_owned(suffix): self.run(['podman', 'volume', 'rm', self.name + '-' + suffix])
+                if self.volume_owned(suffix): self.run([self.engine, 'volume', 'rm', self.name + '-' + suffix])
             (ROOT / '.lab' / 'environment.sha256').unlink(missing_ok=True)
             print('Reset complete. .env and exported output/ preserved. Next: ./lab.sh up')
         else: print('Data/runtime configs preserved. Next: ./lab.sh up --no-build')
@@ -918,13 +959,13 @@ def main(argv=None):
     elif args.command == 'cli': lab.cli(lab.resolve(args.node), args.redis_args, capture=False, timeout=None, tty=not args.redis_args and sys.stdin.isatty())
     elif args.command in ('logs', 'log'):
         node = lab.resolve(args.node); lab.inspect(node)
-        lab.run(['podman', 'logs', '--tail', str(args.tail)] + (['--follow'] if args.follow else []) + [lab.cname(node)], capture=False, timeout=None)
+        lab.run([lab.engine, 'logs', '--tail', str(args.tail)] + (['--follow'] if args.follow else []) + [lab.cname(node)], capture=False, timeout=None)
     elif args.command == 'faults': print(json.dumps(lab.state(), indent=2))
     elif args.command == 'fault': lab.fault(args.action, args.node)
     elif args.command == 'recover': lab.recover(args.node)
     elif args.command == 'start':
         if args.node in lab.state(): lab.recover(args.node)
-        else: lab.inspect(args.node); lab.run(['podman', 'start', lab.cname(args.node)], capture=False)
+        else: lab.inspect(args.node); lab.run([lab.engine, 'start', lab.cname(args.node)], capture=False)
     elif args.command == 'sandbox-up': lab.sandbox_up()
     elif args.command == 'sandbox-oom': lab.sandbox_up(); lab.client('sandbox-oom')
     elif args.command == 'sandbox-persistence': lab.sandbox_persistence_fault()

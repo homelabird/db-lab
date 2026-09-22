@@ -18,7 +18,8 @@ import time
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
-DIRS = {'elasticsearch':'elasticsearch','kafka':'kafka-lab','mariadb':'mariadb-ha-lab','redis':'redis-lab'}
+DIRS = {'elasticsearch':'elasticsearch','elasticsearch9':'elasticsearch-9','kafka':'kafka-lab','mariadb':'mariadb-ha-lab','redis':'redis-lab'}
+ES_LIKE = ('elasticsearch', 'elasticsearch9')
 
 def now(): return datetime.now(timezone.utc).isoformat()
 
@@ -36,27 +37,42 @@ def settings(project):
         if len(value)>1 and value[0] in "\"'" and value[-1]==value[0]: value=value[1:-1]
         data[key]=value
     # ES and Kafka support exported overrides. Other labs intentionally own .env.
-    if project in ('elasticsearch','kafka'):
+    if project in (*ES_LIKE, 'kafka'):
         data.update({k:v for k,v in os.environ.items() if k in data or re.fullmatch(r'KAFKA[0-9]+_PORT',k)})
     return data
 
 def engine_for(project,data):
-    if project in ('redis','kafka'): return 'podman'
-    if project=='elasticsearch':
+    if project in ES_LIKE:
         provider=data.get('COMPOSE_PROVIDER','auto')
         if provider.startswith('podman'): return 'podman'
         if provider=='docker': return 'docker'
         if provider!='auto': raise ValueError('Unsupported COMPOSE_PROVIDER')
     else:
         requested=data.get('CONTAINER_ENGINE','auto')
+        if requested not in ('auto','podman','docker'): raise ValueError(f'Unsupported CONTAINER_ENGINE: {requested}')
         if requested!='auto': return requested
     return 'podman' if shutil.which('podman') else 'docker'
+
+def compose_command(project,engine,data):
+    """Mirror the compose provider each lab will actually use."""
+    if project in ES_LIKE:
+        provider=data.get('COMPOSE_PROVIDER','auto')
+        if provider=='podman-compose': return ['podman-compose']
+        if provider=='podman': return ['podman','compose']
+        if provider=='docker': return ['docker','compose']
+        if provider!='auto': raise ValueError('Unsupported COMPOSE_PROVIDER')
+    if engine=='podman' and shutil.which('podman-compose'): return ['podman-compose']
+    return [engine,'compose']
 
 def planned_ports(project,data):
     if project=='elasticsearch':
         bind=data.get('ES_BIND_IP','127.0.0.1')
         keys=('ES_PORT','CEREBRO_PORT','KIBANA_PORT')
         defaults=(9200,9000,5601)
+    elif project=='elasticsearch9':
+        bind=data.get('ES_BIND_IP','127.0.0.1')
+        keys=('ES_PORT','KIBANA_PORT')
+        defaults=(9201,5602)
     elif project=='kafka':
         bind=data.get('BIND_IP','127.0.0.1');count=int(data.get('NODES','3'))
         if not 1<=count<=100: raise ValueError('NODES must be 1..100')
@@ -83,20 +99,20 @@ def preflight(projects):
     for project in projects:
         try:
             data=settings(project)
-            if project=='elasticsearch' and not ipaddress.ip_address(data.get('ES_BIND_IP','127.0.0.1')).is_loopback:
+            if project in ES_LIKE and not ipaddress.ip_address(data.get('ES_BIND_IP','127.0.0.1')).is_loopback:
                 if data.get('ES_ALLOW_PUBLIC_BIND','no')!='yes':
-                    errors.append('elasticsearch: existing public binding requires ES_ALLOW_PUBLIC_BIND=yes; loopback is recommended')
-                else: warnings.append('elasticsearch: explicitly enabled unauthenticated remote binding')
+                    errors.append(f'{project}: existing public binding requires ES_ALLOW_PUBLIC_BIND=yes; loopback is recommended')
+                else: warnings.append(f'{project}: explicitly enabled unauthenticated remote binding')
             engine=engine_for(project,data)
             engines[project]=engine
             if not shutil.which(engine): errors.append(f'{project}: {engine} is missing')
-            provider=data.get('COMPOSE_PROVIDER','auto')
-            standalone=(project in ('redis','kafka') or provider=='podman-compose' or (provider=='auto' and engine=='podman' and shutil.which('podman-compose')))
-            if standalone:
-                if not shutil.which('podman-compose'):errors.append(f'{project}: podman-compose is missing')
-            elif shutil.which(engine):
-                result=subprocess.run([engine,'compose','version'],capture_output=True,text=True,timeout=10)
-                if result.returncode:errors.append(f'{project}: {engine} compose is unavailable')
+            compose=compose_command(project,engine,data)
+            if not shutil.which(compose[0]):
+                errors.append(f'{project}: {compose[0]} is missing')
+            else:
+                version_cmd=['podman-compose','--version'] if compose[0]=='podman-compose' else [*compose,'version']
+                result=subprocess.run(version_cmd,capture_output=True,text=True,timeout=10)
+                if result.returncode:errors.append(f'{project}: {" ".join(compose)} is unavailable')
             for bind,port,key in planned_ports(project,data):
                 for old in plans:
                     if port==old['port'] and (bind==old['bind'] or '0.0.0.0' in (bind,old['bind'])):
@@ -116,7 +132,7 @@ def preflight(projects):
             p=subprocess.run([engine,'info'],capture_output=True,text=True,timeout=15)
             if p.returncode:errors.append(f'{engine}: engine info failed; daemon/rootless environment is not ready')
         except (OSError,subprocess.TimeoutExpired):errors.append(f'{engine}: engine info timed out or failed')
-    if 'elasticsearch' in projects:
+    if 'elasticsearch' in projects or 'elasticsearch9' in projects:
         try:
             if int(Path('/proc/sys/vm/max_map_count').read_text())<262144:errors.append('vm.max_map_count < 262144; no automatic sysctl/firewall changes are performed')
         except (OSError,ValueError):warnings.append('vm.max_map_count could not be verified on this host')
@@ -136,7 +152,7 @@ def health(projects):
         start=time.monotonic();row={'project':project,'ready':False}
         try:
             if not (ROOT/DIRS[project]/'.env').is_file():raise ValueError('not initialized')
-            if project=='elasticsearch':
+            if project in ES_LIKE:
                 data=settings(project);url=data.get('ES_URL','http://127.0.0.1:9200').rstrip('/')
                 opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
                 with opener.open(url+'/_cluster/health',timeout=8) as response: info=json.load(response)

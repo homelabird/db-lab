@@ -1,0 +1,29 @@
+{
+  "size": 10,
+  "track_total_hits": true,
+  "_source": {
+    "excludes": [
+      "payload"
+    ]
+  },
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "term": {
+            "privileged": true
+          }
+        },
+        {
+          "terms": {
+            "action": [
+              "ROLE_CHANGE",
+              "CONFIG_WRITE",
+              "DELETE"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

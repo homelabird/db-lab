@@ -81,25 +81,45 @@ SELECT
   DATE_ADD('2026-09-01', INTERVAL ((p.product_id + w.warehouse_id) % 15) DAY)
 FROM warehouse w CROSS JOIN product p;
 
-INSERT INTO orders
-SELECT
-  n + 1,
-  (n % 50000) + 1,
-  (n % 50000) + 1,
-  CASE
-    WHEN n % 100 < 3 THEN 'CANCELLED'
-    WHEN n % 100 < 5 THEN 'REFUNDED'
-    WHEN n % 100 < 10 THEN 'PENDING'
-    WHEN n % 100 < 18 THEN 'PAID'
-    WHEN n % 100 < 25 THEN 'PACKING'
-    WHEN n % 100 < 45 THEN 'SHIPPED'
-    ELSE 'DELIVERED'
-  END,
-  ELT((n % 3)+1,'WEB','MOBILE','PARTNER'),
-  0,0,0,0,0,
-  DATE_ADD('2024-01-01 00:00:00', INTERVAL (n % 989) DAY) + INTERVAL ((n*97)%86400) SECOND,
-  DATE_ADD('2024-01-01 00:00:00', INTERVAL (n % 989) DAY) + INTERVAL (((n*97)%86400)+120) SECOND
-FROM _numbers WHERE n < 200000;
+-- Orders follow a realistic business lifecycle: status is correlated with order age.
+-- Old orders are terminal (DELIVERED/REFUNDED), recent orders are still in PENDING/PAID/PACKING.
+-- The exact 10% cancelled+refunded+pending (no shipment) share is preserved for verify().
+INSERT INTO orders (order_id, customer_id, shipping_address_id, status, channel,
+                    subtotal, discount_total, tax_total, shipping_fee, grand_total,
+                    ordered_at, updated_at)
+SELECT order_id, customer_id, shipping_address_id, status, channel,
+       0, 0, 0, 0, 0,
+       ordered_at,
+       CASE WHEN status = 'PENDING' THEN ordered_at
+            WHEN status = 'PAID' THEN ordered_at + INTERVAL 3 MINUTE
+            WHEN status = 'PACKING' THEN ordered_at + INTERVAL 12 MINUTE
+            WHEN status = 'SHIPPED' THEN ordered_at + INTERVAL 1 DAY
+            WHEN status = 'CANCELLED' THEN ordered_at + INTERVAL 30 MINUTE
+            WHEN status IN ('DELIVERED','REFUNDED') THEN ordered_at + INTERVAL 3 DAY
+            ELSE ordered_at END
+FROM (
+  SELECT n + 1 AS order_id,
+         (n % 50000) + 1 AS customer_id,
+         (n % 50000) + 1 AS shipping_address_id,
+         CASE
+           WHEN n % 100 < 10 THEN
+             CASE WHEN n < 120000 THEN IF(n % 100 < 4, 'CANCELLED', 'REFUNDED')
+                  WHEN n % 100 < 5 THEN 'CANCELLED'
+                  WHEN n % 100 < 6 THEN 'REFUNDED'
+                  ELSE 'PENDING' END
+           WHEN n < 120000 THEN IF(n % 100 < 13, 'SHIPPED', 'DELIVERED')
+           WHEN n >= 185000 THEN 'PAID'
+           WHEN n >= 165000 THEN 'PACKING'
+           WHEN n >= 140000 THEN 'SHIPPED'
+           ELSE 'DELIVERED'
+         END AS status,
+         ELT((n % 3)+1,'WEB','MOBILE','PARTNER') AS channel,
+         -- Recency-skewed order time: the newest ~40% of orders arrive in the last ~3 weeks.
+         DATE_SUB('2026-09-18 00:00:00', INTERVAL
+           IF(n < 120000, 30 + (119999 - n) DIV 240, (199999 - n) DIV 4000) DAY)
+           + INTERVAL ((n*97)%86400) SECOND AS ordered_at
+  FROM _numbers WHERE n < 200000
+) o;
 
 INSERT INTO order_item(order_item_id, order_id, product_id, quantity, unit_price, discount_amount)
 SELECT
@@ -142,8 +162,8 @@ SELECT
   o.grand_total,
   ELT((o.order_id % 5)+1,'PAYCO','TOSS','KAKAO','NAVER','BANK-GW'),
   CONCAT('TX-', LPAD(o.order_id, 12, '0')),
-  o.ordered_at,
-  IF(o.status IN ('CANCELLED','PENDING'), NULL, o.ordered_at + INTERVAL 3 SECOND)
+  o.ordered_at + INTERVAL (o.order_id % 7) SECOND,
+  IF(o.status IN ('CANCELLED','PENDING'), NULL, o.ordered_at + INTERVAL 3 MINUTE)
 FROM orders o;
 
 INSERT INTO shipment
@@ -174,19 +194,55 @@ INSERT INTO account_balance
 SELECT customer_id, ROUND(((customer_id * 73) % 5000000) / 100, 2), 0, '2026-09-01 00:00:00'
 FROM customer;
 
-INSERT INTO api_request_log
-SELECT
-  n + 1,
-  DATE_ADD('2025-10-01 00:00:00', INTERVAL (n % 350) DAY) + INTERVAL ((n * 29) % 86400) SECOND,
-  IF(n % 12 = 0, NULL, (n % 50000) + 1),
-  ELT((n % 4)+1,'GET','POST','PUT','DELETE'),
-  ELT((n % 8)+1,'/api/products','/api/orders','/api/cart','/api/payments','/api/search','/api/profile','/api/reviews','/api/inventory'),
-  CASE WHEN n % 100 < 88 THEN 200 WHEN n % 100 < 92 THEN 201 WHEN n % 100 < 95 THEN 400 WHEN n % 100 < 98 THEN 404 WHEN n % 100 < 99 THEN 429 ELSE 500 END,
-  5 + ((n * 31) % 2500),
-  CONCAT('10.', (n%250)+1, '.', ((n DIV 250)%250)+1, '.', ((n DIV 62500)%250)+1),
-  ELT((n % 5)+1,'Chrome','Firefox','Safari','MobileApp/1.0','PartnerClient/2.2'),
-  JSON_OBJECT('trace_id', CONCAT('trace-', LPAD(n+1, 12, '0')), 'region', ELT((n%4)+1,'kr-seoul','kr-busan','jp-tokyo','sg'))
-FROM _numbers WHERE n < 500000;
+-- API traffic is realistic per endpoint: method, status mix and latency vary by endpoint,
+-- and the newest ~20% of requests are concentrated in the last ~3 weeks (199k of 500k).
+INSERT INTO api_request_log (log_id, request_at, customer_id, method, endpoint, status_code,
+                             latency_ms, remote_ip, user_agent, request_meta)
+SELECT log_id, request_at, customer_id, method, endpoint, status_code,
+       -- Latency follows endpoint profile + outcome, never a flat uniform draw.
+       CASE
+         WHEN endpoint = '/api/search' THEN 20 + ((log_id * 97) % 9000)
+         WHEN endpoint = '/api/payments' THEN 15 + ((log_id * 41) % 6000)
+         WHEN status_code IN (500, 503) THEN 800 + ((log_id * 13) % 4000)
+         WHEN status_code = 429 THEN 3 + ((log_id * 7) % 400)
+         WHEN status_code IN (400, 404, 422) THEN 2 + ((log_id * 11) % 300)
+         ELSE 4 + ((log_id * 31) % 1500)
+       END AS latency_ms,
+       remote_ip, user_agent,
+       JSON_OBJECT('trace_id', CONCAT('trace-', LPAD(log_id, 12, '0')),
+                   'region', ELT((log_id % 4)+1,'kr-seoul','kr-busan','jp-tokyo','sg'))
+FROM (
+  SELECT n + 1 AS log_id,
+         DATE_SUB('2026-09-18 00:00:00', INTERVAL
+           IF(n < 400000, (399999 - n) DIV 1360, (499999 - n) DIV 3333) DAY)
+           + INTERVAL ((n * 29) % 86400) SECOND AS request_at,
+         IF(n % 12 = 0, NULL, (n % 50000) + 1) AS customer_id,
+         CASE e
+           WHEN 1 THEN IF(n % 10 = 0, 'POST', 'GET')
+           WHEN 2 THEN ELT((n % 4)+1,'GET','POST','PUT','DELETE')
+           WHEN 3 THEN 'POST'
+           WHEN 6 THEN IF(n % 10 < 4, 'POST', 'GET')
+           ELSE 'GET'
+         END AS method,
+         ELT(e + 1, '/api/products','/api/orders','/api/cart','/api/payments',
+                    '/api/search','/api/profile','/api/reviews','/api/inventory') AS endpoint,
+         CASE e
+           WHEN 0 THEN IF(n % 100 < 95, 200, IF(n % 100 < 98, 404, 500))
+           WHEN 1 THEN IF(n % 100 < 80, 200, IF(n % 100 < 88, 201, IF(n % 100 < 95, 400, IF(n % 100 < 98, 404, 500))))
+           WHEN 2 THEN IF(n % 100 < 85, 200, IF(n % 100 < 93, 400, IF(n % 100 < 95, 404, IF(n % 100 < 97, 429, 500))))
+           WHEN 3 THEN IF(n % 100 < 75, 200, IF(n % 100 < 85, 201, IF(n % 100 < 93, 400, IF(n % 100 < 97, 422, 500))))
+           WHEN 4 THEN IF(n % 100 < 90, 200, IF(n % 100 < 94, 404, IF(n % 100 < 97, 429, 500)))
+           WHEN 5 THEN IF(n % 100 < 97, 200, 404)
+           WHEN 6 THEN IF(n % 100 < 80, 200, IF(n % 100 < 90, 201, IF(n % 100 < 96, 400, 500)))
+           ELSE        IF(n % 100 < 70, 200, IF(n % 100 < 90, 404, IF(n % 100 < 97, 500, 503)))
+         END AS status_code,
+         CONCAT('10.', (n%250)+1, '.', ((n DIV 250)%250)+1, '.', ((n DIV 62500)%250)+1) AS remote_ip,
+         ELT((n % 5)+1,'Chrome','Firefox','Safari','MobileApp/1.0','PartnerClient/2.2') AS user_agent,
+         n
+  FROM (
+    SELECT n, n % 8 AS e FROM _numbers WHERE n < 500000
+  ) t
+) api;
 
 DROP TABLE _numbers;
 DROP TABLE _digits;

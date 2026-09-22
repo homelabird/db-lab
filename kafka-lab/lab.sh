@@ -5,6 +5,33 @@ export PYTHONDONTWRITEBYTECODE=1
 
 say() { printf '\n== %s ==\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+any_broker_running() {
+    local i st
+    for ((i=1; i<=NODES; i++)); do
+        exists "kafka$i" || continue
+        st=$(eng inspect --format '{{.State.Running}}' "$LAB_NAME-kafka$i" 2>/dev/null || true)
+        [[ "$st" == true ]] && return 0
+    done
+    return 1
+}
+# ZooKeeper persists ephemeral /brokers/ids registrations. After a restart with
+# retained ZK data, those stale nodes survive until the old sessions expire; Kafka
+# that starts inside that window aborts with NodeExistsException. Wait for them to
+# clear before starting brokers, but only when no broker is currently running.
+wait_zk_broker_ids_clear() {
+    local ids lines deadline=$((SECONDS + STARTUP_TIMEOUT))
+    say "이전 broker 등록 정리 대기 (ZooKeeper 세션 만료, 최대 ${STARTUP_TIMEOUT}s)"
+    while :; do
+        lines=$(eng exec "$LAB_NAME-zk1" zookeeper-shell "zk1:2181" ls /brokers/ids 2>/dev/null || true)
+        ids=$(printf '%s\n' "$lines" | tr -d '\r' | grep -oE '^[[:space:]]*\[.*\][[:space:]]*$' | tail -1)
+        if [[ -z "$ids" || "$ids" == '[]' ]]; then return 0; fi
+        if (( SECONDS >= deadline )); then
+            die "ZooKeeper /brokers/ids에 이전 broker 등록이 남아 있습니다: $ids"
+        fi
+        sleep 2
+    done
+}
+need_compose() { ensure_compose; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 명령이 필요합니다. README.md의 설치 절차를 확인하세요."; }
 help_text() {
 cat <<'HELP'
@@ -120,13 +147,51 @@ BS=$(printf 'kafka%s:9092,' $(seq 1 "$NODES")); BS=${BS%,}
 export BOOTSTRAP_SERVERS="$BS"
 COMPOSE_FILE="$ROOT/.state/compose.generated.yaml"
 VOLUME_PREFIX="$LAB_NAME"
+# Select the container engine and Compose provider once. Podman keeps the
+# proven podman-compose path; Docker uses the Compose v2 plugin.
+resolve_engine() {
+    local requested=${CONTAINER_ENGINE:-auto}
+    case "$requested" in
+      auto)
+        if command -v podman >/dev/null 2>&1; then ENGINE=podman
+        elif command -v docker >/dev/null 2>&1; then ENGINE=docker
+        else die 'Podman 또는 Docker가 필요합니다. README.md의 설치 절차를 확인하세요.'
+        fi;;
+      podman|docker) ENGINE=$requested;;
+      *) die 'CONTAINER_ENGINE은 auto|podman|docker 중 하나여야 합니다.';;
+    esac
+}
+resolve_compose() {
+    ensure_engine
+    if [[ "$ENGINE" == podman ]]; then
+        if command -v podman-compose >/dev/null 2>&1; then
+            COMPOSE=(podman-compose --in-pod=false --env-file "$ROOT/.env" -p "$LAB_NAME")
+        elif podman compose version >/dev/null 2>&1; then
+            COMPOSE=(podman compose --env-file "$ROOT/.env" -p "$LAB_NAME")
+        else
+            die 'podman-compose 또는 podman compose 플러그인이 필요합니다. README.md의 설치 절차를 확인하세요.'
+        fi
+    else
+        docker compose version >/dev/null 2>&1 || die 'Docker Compose v2 플러그인이 필요합니다. README.md의 설치 절차를 확인하세요.'
+        COMPOSE=(docker compose --env-file "$ROOT/.env" -p "$LAB_NAME")
+    fi
+}
+ensure_engine() { [[ -n "${ENGINE:-}" ]] || resolve_engine; }
+has_engine() { [[ -n "${ENGINE:-}" ]] || command -v podman >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; }
+ensure_compose() { [[ -n "${COMPOSE:-}" ]] || resolve_compose; }
+eng() { ensure_engine; "$ENGINE" "$@"; }
+need_engine() { ensure_engine; need "$ENGINE"; }
+need_compose() { ensure_compose; }
+container_exists() { ensure_engine; if [[ "$ENGINE" == docker ]]; then docker container inspect "$1" >/dev/null 2>&1; else podman container exists "$1"; fi; }
+volume_exists() { ensure_engine; if [[ "$ENGINE" == docker ]]; then docker volume inspect "$1" >/dev/null 2>&1; else podman volume exists "$1"; fi; }
+network_exists() { ensure_engine; if [[ "$ENGINE" == docker ]]; then docker network inspect "$1" >/dev/null 2>&1; else podman network exists "$1"; fi; }
 if [[ "$KAFKA_MODE" == kraft ]]; then
     VOLUME_PREFIX="$LAB_NAME-kraft"
     : "${KRAFT_CLUSTER_ID:=}"
     if [[ -z "$KRAFT_CLUSTER_ID" && ! -f "$ROOT/.state/kraft-cluster-id" ]]; then
-        need podman
+        need_engine
         for ((i=1; i<=NODES; i++)); do
-            if podman volume exists "$LAB_NAME-kraft-kafka$i-data"; then
+            if volume_exists "$LAB_NAME-kraft-kafka$i-data"; then
                 die 'Existing KRaft volumes but no cluster ID. Recover it from meta.properties; automatic reinitialization is refused.'
             fi
         done
@@ -147,10 +212,12 @@ done
 python3 "$ROOT/scripts/render-compose.py" "${render_args[@]}" --output "$COMPOSE_FILE"
 
 pc() {
-    (cd "$ROOT" && podman-compose --in-pod=false --env-file "$ROOT/.env" -p "$LAB_NAME" -f "$COMPOSE_FILE" "$@")
+    ensure_compose
+    (cd "$ROOT" && "${COMPOSE[@]}" -f "$COMPOSE_FILE" "$@")
 }
 pc_ui() {
-    (cd "$ROOT" && podman-compose --in-pod=false --env-file "$ROOT/.env" -p "$LAB_NAME" -f "$COMPOSE_FILE" -f "$ROOT/compose.ui.yaml" "$@")
+    ensure_compose
+    (cd "$ROOT" && "${COMPOSE[@]}" -f "$COMPOSE_FILE" -f "$ROOT/compose.ui.yaml" "$@")
 }
 valid_service() {
     case "$1" in tools|ui) return 0;; esac
@@ -160,17 +227,17 @@ valid_service() {
     [[ "$kind" != zk || "$KAFKA_MODE" == zk ]] || die 'ZooKeeper services are unavailable in KRaft mode.'
 }
 valid_id() { [[ "$1" =~ ^[1-9][0-9]*$ && ${#1} -le 3 && "$1" -le "$NODES" ]] || die "노드 번호는 1..$NODES 범위만 허용합니다."; }
-exists() { podman container exists "$LAB_NAME-$1"; }
+exists() { container_exists "$LAB_NAME-$1"; }
 owned() {
     local s=$1 label
     valid_service "$s"
     exists "$s" || { printf '없는 lab 컨테이너: %s\n' "$LAB_NAME-$s" >&2; return 1; }
-    label=$(podman inspect --format '{{ index .Config.Labels "io.kzk.lab" }}' "$LAB_NAME-$s") || return 1
+    label=$(eng inspect --format '{{ index .Config.Labels "io.kzk.lab" }}' "$LAB_NAME-$s") || return 1
     [[ "$label" == "$LAB_NAME" ]] || { printf '다른 소유자의 컨테이너에는 작업하지 않습니다: %s\n' "$LAB_NAME-$s" >&2; return 1; }
 }
 client() {
     owned tools || return 1
-    podman exec "$LAB_NAME-tools" python /opt/lab/client.py "$@"
+    eng exec "$LAB_NAME-tools" python /opt/lab/client.py "$@"
 }
 no_active_demo() {
     [[ ! -d "$ROOT/.state/demo.lock" ]] || die 'demo lock이 있습니다. 다른 터미널의 demo 종료 후 작업하세요. 비정상 종료는 recover → unlock --yes.'
@@ -193,24 +260,34 @@ check_existing() {
     done
     for v in "${volumes[@]}"; do
         local volume_name="$LAB_NAME-$v"
-        if podman volume exists "$volume_name"; then
-            label=$(podman volume inspect --format '{{ index .Labels "io.kzk.lab" }}' "$volume_name") || return 1
+        if volume_exists "$volume_name"; then
+            label=$(eng volume inspect --format '{{ index .Labels "io.kzk.lab" }}' "$volume_name") || return 1
             [[ "$label" == "$LAB_NAME" ]] || die "동일 이름의 다른 볼륨 발견: $volume_name"
         fi
     done
-    if podman network exists "$NETWORK"; then
-        label=$(podman network inspect --format '{{ index .Labels "io.kzk.lab" }}' "$NETWORK") || return 1
+    if network_exists "$NETWORK"; then
+        label=$(eng network inspect --format '{{ index .Labels "io.kzk.lab" }}' "$NETWORK") || return 1
         [[ "$label" == "$LAB_NAME" ]] || die "동일 이름의 다른 네트워크 발견: $NETWORK"
     fi
 }
 doctor() {
-    need podman; need podman-compose; need python3; need tee
-    local usage
-    usage=$(podman-compose --help) || return 1
-    [[ "$usage" == *'--in-pod'* ]] || die '독립 컨테이너 네트워크가 필요합니다. --in-pod를 지원하는 podman-compose 1.x를 설치하세요.'
-    podman --version
-    podman-compose --version
-    podman info --format 'rootless={{.Host.Security.Rootless}} network={{.Host.NetworkBackend}}'
+    ensure_compose; need python3; need tee
+    if [[ "$ENGINE" == podman ]]; then
+        if [[ "${COMPOSE[0]}" == podman-compose ]]; then
+            local usage
+            usage=$(podman-compose --help) || return 1
+            [[ "$usage" == *'--in-pod'* ]] || die '독립 컨테이너 네트워크가 필요합니다. --in-pod를 지원하는 podman-compose 1.x를 설치하세요.'
+            podman-compose --version
+        else
+            podman compose version
+        fi
+        podman --version
+        podman info --format 'rootless={{.Host.Security.Rootless}} network={{.Host.NetworkBackend}}'
+    else
+        docker --version
+        docker compose version
+        docker info >/dev/null
+    fi
     printf 'LAB_NAME=%s MODE=%s NODES=%s CP_VERSION=%s\nBIND_IP=%s ADVERTISED_HOST=%s\n' "$LAB_NAME" "$KAFKA_MODE" "$NODES" "$CP_VERSION" "$BIND_IP" "$ADVERTISED_HOST"
     printf '설계 권장: 4 vCPU / RAM 8GB / 여유 디스크 10GB 이상. 실제 사용량은 데이터와 호스트에 따라 다릅니다.\n'
     if [[ "$BIND_IP" == 0.0.0.0 ]]; then
@@ -229,16 +306,17 @@ kraft_status() {
     [[ "$KAFKA_MODE" == kraft ]] || die 'kraft-status는 KRaft 모드에서만 사용할 수 있습니다.'
     local broker
     broker=$(pick_broker) || return 1
-    podman exec "$broker" kafka-metadata-quorum --bootstrap-server "$BS" describe --status
+    eng exec "$broker" kafka-metadata-quorum --bootstrap-server "$BS" describe --status
 }
 summary() {
     printf 'Lab: %s\nMode: %s\nNodes: %s\nBootstrap: %s\nCompose: %s\n' \
         "$LAB_NAME" "$KAFKA_MODE" "$NODES" "$BS" "$COMPOSE_FILE"
-    if command -v podman >/dev/null 2>&1; then
-        podman ps -a --filter "label=io.kzk.lab=$LAB_NAME" \
+    if has_engine; then
+        ensure_engine
+        "$ENGINE" ps -a --filter "label=io.kzk.lab=$LAB_NAME" \
             --format 'table {{.Names}}\t{{.State}}\t{{.Status}}' || true
     fi
-    if command -v podman >/dev/null 2>&1 && exists tools && owned tools; then
+    if has_engine && exists tools && owned tools; then
         client status || true
     else
         printf '상태: 아직 tools 컨테이너가 없습니다. ./lab.sh start\n'
@@ -304,6 +382,7 @@ start_lab() {
         local nodes=(); for ((i=1; i<=NODES; i++)); do nodes+=("zk$i"); done
         pc up -d "${nodes[@]}" tools
         client zk-status --serving "$NODES" --timeout "$STARTUP_TIMEOUT"
+        if ! any_broker_running; then wait_zk_broker_ids_clear; fi
         say "Kafka ${NODES}개 기동: ZooKeeper 모드"
         local nodes=(); for ((i=1; i<=NODES; i++)); do nodes+=("kafka$i"); done
         pc up -d "${nodes[@]}"
@@ -323,9 +402,9 @@ pick_broker() {
         s="kafka$i"
         exists "$s" || continue
         owned "$s" || return 1
-        running=$(podman inspect --format '{{.State.Running}}' "$LAB_NAME-$s") || return 1
-        paused=$(podman inspect --format '{{.State.Paused}}' "$LAB_NAME-$s") || return 1
-        attached=$(podman inspect --format "{{if index .NetworkSettings.Networks \"$NETWORK\"}}yes{{end}}" "$LAB_NAME-$s") || return 1
+        running=$(eng inspect --format '{{.State.Running}}' "$LAB_NAME-$s") || return 1
+        paused=$(eng inspect --format '{{.State.Paused}}' "$LAB_NAME-$s") || return 1
+        attached=$(eng inspect --format "{{if index .NetworkSettings.Networks \"$NETWORK\"}}yes{{end}}" "$LAB_NAME-$s") || return 1
         if [[ "$running" == true && "$paused" == false && "$attached" == yes ]]; then
             printf '%s\n' "$LAB_NAME-$s"; return 0
         fi
@@ -340,11 +419,11 @@ kcli() {
     case "$binary" in kafka-topics|kafka-configs|kafka-consumer-groups|kafka-console-producer|kafka-console-consumer|kafka-log-dirs|kafka-reassign-partitions|kafka-leader-election|kafka-get-offsets|kafka-broker-api-versions) ;;
       *) die '지원하는 Kafka CLI 이름은 README/HELP를 확인하세요.';; esac
     broker=$(pick_broker) || return 1
-    podman exec -i "$broker" "$binary" --bootstrap-server "$BS" "$@"
+    eng exec -i "$broker" "$binary" --bootstrap-server "$BS" "$@"
 }
 node_stop() {
     owned "$1" || return 1
-    podman stop --time 20 "$LAB_NAME-$1"
+    eng stop --time 20 "$LAB_NAME-$1"
 }
 fault() {
     local kind=${1:-} id=${2:-}
@@ -353,9 +432,9 @@ fault() {
         valid_id "$id"; owned "kafka$id" || return 1
         case "$kind" in
           stop-broker) node_stop "kafka$id";;
-          kill-broker) podman kill --signal KILL "$LAB_NAME-kafka$id";;
-          pause-broker) podman pause "$LAB_NAME-kafka$id";;
-          isolate-broker) podman network disconnect "$NETWORK" "$LAB_NAME-kafka$id";;
+          kill-broker) eng kill --signal KILL "$LAB_NAME-kafka$id";;
+          pause-broker) eng pause "$LAB_NAME-kafka$id";;
+          isolate-broker) eng network disconnect "$NETWORK" "$LAB_NAME-kafka$id";;
         esac;;
       stop-zk) [[ "$KAFKA_MODE" == zk ]] || die 'stop-zk는 ZooKeeper 모드에서만 사용할 수 있습니다.'; valid_id "$id"; node_stop "zk$id";;
       zk-quorum)
@@ -370,14 +449,14 @@ fault() {
 restore_one() {
     local s=$1 paused running attached
     owned "$s" || return 1
-    paused=$(podman inspect --format '{{.State.Paused}}' "$LAB_NAME-$s") || return 1
-    if [[ "$paused" == true ]]; then podman unpause "$LAB_NAME-$s" || return 1; fi
-    attached=$(podman inspect --format "{{if index .NetworkSettings.Networks \"$NETWORK\"}}yes{{end}}" "$LAB_NAME-$s") || return 1
+    paused=$(eng inspect --format '{{.State.Paused}}' "$LAB_NAME-$s") || return 1
+    if [[ "$paused" == true ]]; then eng unpause "$LAB_NAME-$s" || return 1; fi
+    attached=$(eng inspect --format "{{if index .NetworkSettings.Networks \"$NETWORK\"}}yes{{end}}" "$LAB_NAME-$s") || return 1
     if [[ "$attached" != yes ]]; then
-        podman network connect --alias "$s" "$NETWORK" "$LAB_NAME-$s" || return 1
+        eng network connect --alias "$s" "$NETWORK" "$LAB_NAME-$s" || return 1
     fi
-    running=$(podman inspect --format '{{.State.Running}}' "$LAB_NAME-$s") || return 1
-    if [[ "$running" != true ]]; then podman start "$LAB_NAME-$s" || return 1; fi
+    running=$(eng inspect --format '{{.State.Running}}' "$LAB_NAME-$s") || return 1
+    if [[ "$running" != true ]]; then eng start "$LAB_NAME-$s" || return 1; fi
 }
 recover() {
     local s
@@ -389,6 +468,7 @@ recover() {
     for s in "${first[@]}"; do restore_one "$s" || return 1; done
     if [[ "$KAFKA_MODE" == zk ]]; then
         client zk-status --serving "$NODES" --timeout "$STARTUP_TIMEOUT" || return 1
+        if ! any_broker_running; then wait_zk_broker_ids_clear; fi
     fi
     for ((i=1; i<=NODES; i++)); do restore_one "kafka$i" || return 1; done
     client wait --brokers "$NODES" --timeout "$STARTUP_TIMEOUT" || return 1
@@ -531,19 +611,20 @@ demo() {
 }
 
 if [[ "$cmd" != scenarios && "$cmd" != summary ]]; then
-    need podman
+    need_engine
 fi
 case "$cmd" in
   doctor) doctor;;
-  config) need podman-compose; pc config;;
-  up) need podman-compose; start_lab;;
-  quickstart) need podman-compose; doctor; start_lab; health; client smoke;;
+  config) need_compose; pc config;;
+  up) need_compose; start_lab;;
+  quickstart) need_compose; doctor; start_lab; health; client smoke;;
   health) health;;
   smoke) health; client smoke;;
   summary) summary;;
   scenarios) scenarios;;
   status)
-    podman ps -a --filter "label=io.kzk.lab=$LAB_NAME"
+    ensure_engine
+    "$ENGINE" ps -a --filter "label=io.kzk.lab=$LAB_NAME"
     if [[ "$KAFKA_MODE" == zk ]]; then client zk-status; else kraft_status; fi
     client status;;
   topics) kcli kafka-topics --describe "$@";;
@@ -563,22 +644,22 @@ case "$cmd" in
     [[ "$KAFKA_MODE" == zk ]] || die 'zk-shell은 ZooKeeper 모드에서만 사용할 수 있습니다.'
     broker=$(pick_broker)
     zk_connect=$(printf 'zk%s:2181,' $(seq 1 "$NODES")); zk_connect=${zk_connect%,}
-    podman exec -i "$broker" zookeeper-shell "$zk_connect" "$@";;
+    eng exec -i "$broker" zookeeper-shell "$zk_connect" "$@";;
   logs)
     [[ $# -ge 1 ]] || die 'logs kafka1 [--follow]'; service=$1; shift; owned "$service"
-    podman logs --tail 150 "$@" "$LAB_NAME-$service";;
+    eng logs --tail 150 "$@" "$LAB_NAME-$service";;
   fault) no_active_demo; fault "$@";;
   recover) recover;;
   demo) demo "$@";;
   ui)
-    need podman-compose; no_active_demo; check_existing
+    need_compose; no_active_demo; check_existing
     case "${1:-}" in
       up) pc_ui up -d ui; printf 'UI: http://%s:%s (read-only)\n' "$ADVERTISED_HOST" "$UI_PORT";;
-      down) if exists ui; then owned ui; podman rm -f "$LAB_NAME-ui"; fi;;
+      down) if exists ui; then owned ui; eng rm -f "$LAB_NAME-ui"; fi;;
       *) die 'ui up|down';;
     esac;;
   down|reset)
-    need podman-compose; no_active_demo; check_existing
+    need_compose; no_active_demo; check_existing
     if [[ "$cmd" == reset ]]; then
         [[ "${1:-}" == --yes && $# -eq 1 ]] || die '데이터를 삭제하려면 ./lab.sh reset --yes (되돌릴 수 없음)'
     fi
@@ -593,7 +674,7 @@ case "$cmd" in
     for service in "${services[@]}"; do
         if exists "$service"; then
             owned "$service"
-            if [[ $(podman inspect --format '{{.State.Paused}}' "$LAB_NAME-$service") == true ]]; then podman unpause "$LAB_NAME-$service"; fi
+            if [[ $(eng inspect --format '{{.State.Paused}}' "$LAB_NAME-$service") == true ]]; then eng unpause "$LAB_NAME-$service"; fi
         fi
     done
     if [[ "$cmd" == reset ]]; then

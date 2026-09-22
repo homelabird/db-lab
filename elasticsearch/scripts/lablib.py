@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
-"""Python 3.9+ standard-library helpers; no pip dependency."""
+"""Python 3.9+ helpers for the legacy 7.x lab; no pip dependency.
+
+The version-neutral Elasticsearch core (ESClient, wait/guard/snapshot-repository
+CLI) lives in ../../lib/es-lab/lablib_core.py and is re-exported here so the
+data, query and fault scripts keep `from lablib import ...` working.
+"""
 import json
-import os
 import time
 import urllib.error
-import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+import sys
+sys.path.insert(0, str(ROOT.parent / 'lib' / 'es-lab'))
+from lablib_core import APIError, ESClient, RETRYABLE, compact, write_json  # noqa: E402,F401
+from lablib_core import cli_main  # noqa: E402,F401
+
 INDICES = ('lab-transactions-v1', 'lab-web-logs-v1', 'lab-audit-v1',
            'lab-commerce-v1', 'lab-observability-v1')
 LAYOUT = {
@@ -17,77 +25,6 @@ LAYOUT = {
     INDICES[3]: (16, 2, 12),
     INDICES[4]: (24, 1, 8),
 }
-RETRYABLE = {429, 502, 503, 504}
-
-
-def compact(value):
-    return json.dumps(value, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode('utf-8')
-
-
-class APIError(RuntimeError):
-    def __init__(self, status, method, path, detail):
-        self.status, self.detail = status, detail
-        super().__init__(f'HTTP {status} {method} {path}: {detail}')
-
-
-class ESClient:
-    def __init__(self, url=None, timeout=120):
-        self.url = (url or os.getenv('ES_URL', 'http://127.0.0.1:9200')).rstrip('/')
-        if not self.url.startswith(('http://', 'https://')):
-            raise ValueError('ES_URL must begin with http:// or https://')
-        self.timeout = timeout
-
-    def request(self, method, path, body=None, content_type='application/json', timeout=None):
-        data = body if isinstance(body, bytes) else (compact(body) if body is not None else None)
-        request = urllib.request.Request(self.url + path, data=data, method=method,
-                                         headers={'Content-Type': content_type})
-        try:
-            with urllib.request.urlopen(request, timeout=timeout or self.timeout) as response:
-                raw = response.read()
-                if not raw:
-                    return None
-                try:
-                    return json.loads(raw)
-                except json.JSONDecodeError:
-                    return raw.decode('utf-8', errors='replace')
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode('utf-8', errors='replace')[:8000]
-            raise APIError(exc.code, method, path, detail) from exc
-
-    def assert_lab(self):
-        info = self.request('GET', '/')
-        expected = os.getenv('LAB_CLUSTER_NAME', 'cerebro-shard-lab')
-        if info.get('cluster_name') != expected:
-            raise RuntimeError(f'Wrong cluster: {info.get("cluster_name")!r}; expected {expected!r}. No writes allowed.')
-        if info.get('cluster_uuid') in (None, '_na_'):
-            raise RuntimeError('Cluster is not bootstrapped (cluster_uuid is _na_). Inspect discovery/master logs.')
-        return info
-
-    def wait(self, min_nodes=1, seconds=300, require_yellow=False):
-        deadline, last = time.monotonic() + seconds, 'No response'
-        while time.monotonic() < deadline:
-            try:
-                info = self.request('GET', '/', timeout=5)
-                health = self.request('GET', '/_cluster/health?timeout=3s', timeout=5)
-                ready = (info.get('cluster_uuid') not in (None, '_na_')
-                         and health.get('number_of_nodes', 0) >= min_nodes
-                         and not health.get('timed_out', False))
-                if ready and (not require_yellow or health.get('status') in ('yellow', 'green')):
-                    return health
-                last = json.dumps(health)
-            except (APIError, urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-                last = str(exc)
-            time.sleep(min(2, max(0, deadline - time.monotonic())))
-        raise RuntimeError(f'Cluster not ready after {seconds}s: {last}\n'
-                           'Check: compose logs es01 es02 es03; vm.max_map_count; free memory; cluster UUIDs.')
-
-
-def write_json(path, value):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + '.tmp')
-    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-    temp.replace(path)
 
 
 def bulk_send(client, records, retries=4, backoff=0.5):
@@ -147,19 +84,4 @@ def execute_example(client, entry):
 
 
 if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['wait', 'guard'])
-    parser.add_argument('--nodes', type=int, default=1)
-    parser.add_argument('--seconds', type=float, default=300)
-    parser.add_argument('--yellow', action='store_true')
-    args = parser.parse_args()
-    try:
-        client = ESClient()
-        if args.command == 'guard':
-            client.assert_lab()
-        else:
-            health = client.wait(args.nodes, args.seconds, args.yellow)
-            print(f'[ready] nodes={health["number_of_nodes"]} status={health["status"]}')
-    except (RuntimeError, ValueError, OSError, urllib.error.URLError) as exc:
-        parser.exit(1, f'[error] {exc}\n')
+    cli_main()

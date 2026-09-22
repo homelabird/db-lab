@@ -10,7 +10,7 @@
 - R6. Persistence: https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/
 - R7. WAIT: https://redis.io/docs/latest/commands/wait/
 - R8. Sentinel client protocol: https://redis.io/docs/latest/develop/reference/sentinel-clients/
-- R9. redis-py Sentinel 구현(v6.4.0): https://raw.githubusercontent.com/redis/redis-py/v6.4.0/redis/sentinel.py
+- R9. redis-py Sentinel 구현(v7.4.1): https://raw.githubusercontent.com/redis/redis-py/v7.4.1/redis/sentinel.py
 - R10. Key eviction: https://redis.io/docs/latest/develop/reference/eviction/
 - R11. SLOWLOG: https://redis.io/docs/latest/commands/slowlog/
 - R12. redis-cli RDB backup: https://redis.io/docs/latest/develop/tools/cli/

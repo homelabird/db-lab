@@ -12,7 +12,7 @@
 
 기존 21개 테스트와 네트워크 기본값 회귀 테스트 4개를 합친 **25개 테스트를 다시 실행해 모두 통과**했습니다. Bash 문법, Python 문법, Compose YAML 파싱, 기본값·loopback override·변경 포트의 문자열 치환 정적 검사도 통과했습니다. Compose provider를 실제로 실행한 검사는 아닙니다.
 
-**Podman/Docker 실행 파일이 없어 실제 포트 공개와 다른 PC에서의 접속은 검증하지 못했습니다.** 방화벽·보안그룹·라우팅 확인은 사용자 환경에서 필요합니다. 아래 100MiB 전체 생성 수치는 이전 시드 버전에서 기록한 결과이며, 이번 바인딩 수정에서는 대용량 전체 생성을 다시 실행하지 않았습니다.
+**Podman/Docker 실행 파일이 없어 실제 포트 공개와 다른 PC에서의 접속은 검증하지 못했습니다.** 방화벽·보안그룹·라우팅 확인은 사용자 환경에서 필요합니다. 아래 100MiB 전체 생성 수치는 최신 현실적 생성기(`seed-v4-real`)를 실제 7.x 클러스터에 적재한 결과입니다.
 
 ## 실제로 수행한 검사
 
@@ -26,7 +26,7 @@
 | 대상 클러스터 확인 | PASS | 다른 cluster.name에 쓰기 요청 없음 |
 | 실패 시 refresh 복원 | PASS | Bulk 오류 주입 후 원래 refresh_interval 복원 |
 | PIT 페이지 처리 | PASS | 최신 PIT ID·전체 sort 커서 유지, 정상/오류 시 PIT 닫기 |
-| 전체 기본 데이터 생성 | **142,640건 / 104,858,904 bytes** | 실제 100MiB 생성 모드를 실행하고 생성된 NDJSON 전체를 다시 읽어 검사 |
+| 전체 기본 데이터 생성 | **120,141건 / 108,005,594 bytes** | 실제 100MiB 생성 모드를 실행하고 생성된 NDJSON 전체를 다시 읽어 검사 |
 | NDJSON 전수 검사 | PASS | action/source 짝, JSON 파싱, ID 순서, 매핑 필드명, 건수·바이트 합계 |
 | Bash 스크립트 문법 | PASS | 모든 `.sh`에 `bash -n` |
 | Python 문법 | PASS | Python 컴파일 검사 |
@@ -38,10 +38,14 @@ Python 실행 환경에서 기본 seed=42, 시작일=2026-08-01 UTC, 31일, payl
 
 | 인덱스 | 문서 수 | source bytes | 생성된 주요 이상 사례 |
 |---|---:|---:|---|
-| lab-transactions-v1 | 66,796 | 52,429,469 | high-risk-payment 3,340건 |
-| lab-web-logs-v1 | 47,956 | 33,554,984 | payment-timeout 2,400건 |
-| lab-audit-v1 | 27,888 | 18,874,451 | failed-login 1,395건, privileged-change 1,395건 |
-| **합계** | **142,640** | **104,858,904** | — |
+| lab-transactions-v1 | 47,157 | 41,943,494 | high-risk-payment(is_fraud·risk≥850·BLOCK) 2,360건 |
+| lab-web-logs-v1 | 28,021 | 26,214,893 | payment-timeout(502·payment timeout) 1,405건 |
+| lab-audit-v1 | 25,411 | 18,875,069 | failed-login(LOGIN/FAIL) 1,621건, privileged=true 5,409건 |
+| lab-commerce-v1 | 10,623 | 12,583,024 | — |
+| lab-observability-v1 | 8,929 | 8,389,114 | — |
+| **합계** | **120,141** | **108,005,594** | — |
+
+실측 카운트는 `reports/seed-manifest.json`과 `./lab.sh verify`(쿼리 예제 26종) 기준입니다.
 
 검사에 사용한 대용량 NDJSON은 최종 ZIP에 넣지 않았습니다. 사용자가 스크립트로 생성하게 되어 있습니다. 설정이나 실행 환경이 달라지면 실제 manifest를 기준으로 확인하세요.
 

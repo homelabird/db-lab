@@ -1,0 +1,34 @@
+{
+  "size": 10,
+  "track_total_hits": true,
+  "_source": {
+    "excludes": [
+      "payload"
+    ]
+  },
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "term": {
+            "channel": "APP"
+          }
+        },
+        {
+          "range": {
+            "risk_score": {
+              "gte": 800
+            }
+          }
+        }
+      ],
+      "must_not": [
+        {
+          "term": {
+            "country": "KR"
+          }
+        }
+      ]
+    }
+  }
+}

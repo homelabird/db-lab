@@ -1,0 +1,25 @@
+{
+  "size": 10,
+  "track_total_hits": true,
+  "_source": {
+    "excludes": [
+      "payload"
+    ]
+  },
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "term": {
+            "is_fraud": true
+          }
+        },
+        {
+          "term": {
+            "currency": "KRW"
+          }
+        }
+      ]
+    }
+  }
+}

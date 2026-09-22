@@ -1,4 +1,4 @@
-"""Real Podman acceptance suite. No mocks or alternate in-process Redis backend.
+"""Real container acceptance suite. No mocks or alternate in-process Redis backend.
 Missing runtime -> BLOCKED (exit 2), never PASS. Logs are written per phase.
 """
 from __future__ import annotations
@@ -23,7 +23,7 @@ class Suite:
         self.out.mkdir(parents=True)
         self.report = {'run_id': self.run_id, 'status': 'RUNNING', 'passed': False,
             'time_utc': datetime.now(timezone.utc).isoformat(), 'steps': [],
-            'engine': 'actual podman containers only', 'logs': str(self.out.relative_to(self.root)),
+            'engine': f'actual {lab.engine} containers only', 'logs': str(self.out.relative_to(self.root)),
             'note': 'One host, one observed run; PASS is not a production HA or zero-data-loss guarantee.'}
         self.sequence = 0
         self.save()
@@ -98,7 +98,7 @@ class Suite:
         proc = None
         with log.open('w') as stream:
             try:
-                proc = subprocess.Popen(['podman', 'exec', self.lab.cname('lab-client'),
+                proc = subprocess.Popen([self.lab.engine, 'exec', self.lab.cname('lab-client'),
                     'python', '/app/client.py', 'workload', '--seconds', '3600', '--rate', '2',
                     '--wait-replicas', '1', '--run-id', run_id], cwd=self.root,
                     env=self.lab.proc_env, text=True, stdout=stream, stderr=subprocess.STDOUT)
@@ -118,7 +118,7 @@ class Suite:
             finally:
                 primary_error = sys.exc_info()[1]
                 if proc is not None:
-                    # Terminating podman exec alone does not reliably terminate its in-container process.
+                    # Terminating the exec client alone does not reliably terminate its in-container process.
                     # A per-run stop file lets the client finish its JSONL journal cleanly.
                     try:
                         stop = 'from pathlib import Path; import sys; Path("/results",sys.argv[1]+".stop").touch()'
@@ -204,7 +204,7 @@ class Suite:
         self.report['restart_primary'] = master
 
     def execute(self):
-        missing = [n for n in ('podman', 'podman-compose') if not shutil.which(n)]
+        missing = [name for name in (self.lab.engine, self.lab.compose_cmd[0]) if not shutil.which(name)]
         if missing:
             self.report.update(status='BLOCKED', error='Missing executable(s): ' + ', '.join(missing))
             self.report['steps'].append({'name': 'runtime availability', 'status': 'BLOCKED'})

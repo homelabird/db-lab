@@ -4,7 +4,7 @@
 
 > **먼저 실행 대상을 구분하세요.** `bash all.sh mvp up`은 6개 컨테이너 통합 주문 실습이며,
 > `bash all.sh up`은 별도의 4개 HA 실습을 모두 시작합니다. 두 명령은 같은 시스템이 아닙니다.
-> Kafka/Redis의 기존 HA 실습은 **Podman + podman-compose**가 필요합니다. Docker만 설치했다면 공통 `up`이 성공하지 않습니다.
+> Kafka/Redis의 기존 HA 실습은 **Podman(+podman-compose) 또는 Docker(+Compose v2)** 로 실행할 수 있습니다. `.env`의 `CONTAINER_ENGINE`으로 선택하며(`auto`는 Podman 우선), 두 엔진 모두에서 실제 기동을 검증했습니다. Podman으로 검증된 기본 경로가 우선입니다.
 > v12는 MVP의 HTTP 대상 확인, API/worker 준비 상태, 초기화 실패 증적, 진단 종료 코드와 실제 Helm CI 경로를 보강했습니다. v11의 Redis/Kafka 수정은 유지합니다.
 > 실제 수정 근거와 실행한 검사/실행하지 못한 검사는 위의 **이번 수정·실행 가이드**에서 확인하세요.
 > 이전 보고서와 하위 디렉터리의 과거 테스트 수치는 당시 기록이며 이번 실기동 증거가 아닙니다. Docker/Podman·Helm·Ansible 실제 실행은 검증하지 못했습니다.
@@ -91,6 +91,8 @@ Python·컨테이너 런타임 등 실제 요구사항은 각 실습의 README�
 | `logs <프로젝트> [인자...]` | 한 프로젝트의 기존 로그 명령에 전달 |
 
 공통 명령의 기본 대상은 `elasticsearch → kafka → mariadb → redis`입니다.
+`elasticsearch-9`(`es9`)는 기본 배치에서 **제외**된 별도 9.x 랩이라 항상 이름을 명시해야 합니다.
+legacy 7.x 랩(9200/9000/5601)과 포트가 달라(9201/5602) 두 랩을 동시에 기동할 수 있습니다.
 `down`과 `reset`은 역순이며, `restart`는 프로젝트 하나씩 종료한 뒤 다시 시작합니다.
 직접 대상을 나열하면 입력한 순서를 사용하며 중복 별칭은 한 번만 처리합니다.
 `all`은 다른 프로젝트 이름과 함께 쓰지 않습니다.
@@ -143,6 +145,27 @@ MariaDB와 Redis는 **기존 `lab.sh init`**을 이용해 비밀번호 생성과
 이 스크립트가 모든 실습을 Docker로 변환하거나 패키지를 자동 설치하지 않습니다.
 환경 변경 전에는 각 프로젝트 README와 기존 데이터를 확인하세요.
 
+### Elasticsearch 공용 코어와 9.x 랩
+
+legacy 7.x(`elasticsearch/`)와 9.x(`elasticsearch-9/`) 랩은 `lib/es-lab/`의 공용 코어
+(`common.sh` + `lablib_core.py` + `datagen/realistic.py`)를 공유합니다. 랩별 `scripts/common.sh`는
+코어 로더이며, 노드·네트워크·스냅샷·진단 공통 로직은 코어에, 버전별 헬퍼는 각 랩
+`scripts/lablib.py`에 있습니다. **시드 데이터 생성기**(`datagen/realistic.py`)는 양 랩이 공유하므로
+같은 seed·설정이면 동일 문서를 만듭니다. ES9의 범위는 코어 스택 + 스냅샷 + 시드 + 쿼리 검증이며
+장애 시나리오/샤드 드릴은 legacy 전용입니다. 사용법·설계·한계는
+[elasticsearch-9/README.md](elasticsearch-9/README.md)를 확인하세요.
+
+```bash
+# ES9 랩 (opt-in — 기본 배치에 포함되지 않음)
+./all.sh es9 doctor
+./all.sh es9 up
+./all.sh es9 seed --size-mb 5
+./all.sh es9 verify
+./all.sh es9 status
+./all.sh es9 snapshot
+./all.sh es9 down
+```
+
 ### 개별 프로젝트 기능 그대로 사용
 
 `./all.sh <프로젝트> <기존 명령> [인자...]` 형식은 네 실습의 전체 기능을 그대로
@@ -151,7 +174,8 @@ MariaDB와 Redis는 **기존 `lab.sh init`**을 이용해 비밀번호 생성과
 
 | 프로젝트 | 사용 가능한 이름 |
 | --- | --- |
-| Elasticsearch | `elasticsearch`, `es`, `elastic` |
+| Elasticsearch 7.x | `elasticsearch`, `es`, `elastic` |
+| Elasticsearch 9.x (opt-in, Cerebro 없음·Kibana만) | `es9`, `elasticsearch9`, `elasticsearch-9` |
 | Kafka | `kafka`, `kafka-lab` |
 | MariaDB HA | `mariadb`, `maria`, `mariadb-ha-lab` |
 | Redis | `redis`, `redis-lab` |

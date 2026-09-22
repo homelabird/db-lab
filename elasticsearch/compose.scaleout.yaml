@@ -7,7 +7,10 @@ services:
     - cluster.name=${LAB_CLUSTER_NAME:-cerebro-shard-lab}
     - discovery.seed_hosts=es01,es02,es03,es04,es05
     - node.attr.zone=zone-c
-    - xpack.security.enabled=false
+    - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - path.repo=/usr/share/elasticsearch/snapshots
+    - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
+    - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
     - xpack.ml.enabled=false
     - ES_JAVA_OPTS=-Xms${ES_HEAP:-512m} -Xmx${ES_HEAP:-512m}
     - node.roles=master,data,ingest
@@ -19,8 +22,17 @@ services:
         hard: 65536
     volumes:
     - es06-data:/usr/share/elasticsearch/data
+    - es-snapshots:/usr/share/elasticsearch/snapshots
     networks:
     - es-lab
+    entrypoint:
+    - /bin/bash
+    - -c
+    - |
+      mkdir -p /usr/share/elasticsearch/snapshots
+      chown -R 1000:0 /usr/share/elasticsearch/snapshots
+      exec /usr/local/bin/docker-entrypoint.sh "$@"
+    - lab-bootstrap
     healthcheck:
       test:
       - CMD-SHELL

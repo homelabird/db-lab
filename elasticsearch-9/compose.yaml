@@ -1,0 +1,195 @@
+x-es9-node: &es9-node
+  image: docker.elastic.co/elasticsearch/elasticsearch:9.5.3
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+  # Bootstrap shim: inject cluster.initial_master_nodes ONLY on first bootstrap
+  # (empty data dir). ES 8/9 reject configuring initial_master_nodes on an
+  # already-bootstrapped or restarted node, so restarts join through
+  # discovery.seed_hosts instead. The shared snapshot volume is chowned to the
+  # image's elasticsearch user by the one-shot snapshot-init service below.
+  entrypoint:
+  - /bin/bash
+  - -c
+  - |
+    set -e
+    if [ ! -d /usr/share/elasticsearch/data/nodes ]; then
+      exec env 'cluster.initial_master_nodes=es01,es02,es03' /usr/local/bin/docker-entrypoint.sh "$@"
+    fi
+    exec /usr/local/bin/docker-entrypoint.sh "$@"
+  - lab-bootstrap
+  depends_on:
+    snapshot-init:
+      condition: service_completed_successfully
+  healthcheck:
+    test:
+    - CMD-SHELL
+    - curl -fsS --max-time 5 http://localhost:9200/_cluster/health >/dev/null
+    interval: 10s
+    timeout: 6s
+    retries: 30
+    start_period: 60s
+  networks:
+  - es-lab
+
+services:
+  # One-shot helper: freshly-created named volumes start root-owned, but the
+  # elasticsearch user (uid 1000) needs write access to the shared snapshot
+  # volume. Runs once as root before any ES node starts; alpine/bash keeps the
+  # local ES image as the base so no extra image pull is needed.
+  snapshot-init:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.3
+    user: "0:0"
+    entrypoint:
+    - /bin/bash
+    - -c
+    - chown -R 1000:0 /usr/share/elasticsearch/snapshots
+    networks:
+    - es-lab
+    volumes:
+    - es-snapshots:/usr/share/elasticsearch/snapshots
+    restart: "no"
+  es01:
+    <<: *es9-node
+    container_name: es9-lab-es01
+    environment:
+    - node.name=es01
+    - cluster.name=${LAB_CLUSTER_NAME:-es9-lab}
+    - discovery.seed_hosts=es01,es02,es03,es04,es05
+    - node.attr.zone=zone-a
+    - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - xpack.security.autoconfiguration.enabled=false
+    - path.repo=/usr/share/elasticsearch/snapshots
+    - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
+    - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
+    - xpack.ml.enabled=false
+    - ingest.geoip.downloader.enabled=false
+    - node.roles=master,data,ingest
+    - node.processors=2
+    - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
+    volumes:
+    - es01-data:/usr/share/elasticsearch/data
+    - es-snapshots:/usr/share/elasticsearch/snapshots
+    ports:
+    - ${ES_BIND_IP:-127.0.0.1}:${ES_PORT:-9201}:9200
+  es02:
+    <<: *es9-node
+    container_name: es9-lab-es02
+    environment:
+    - node.name=es02
+    - cluster.name=${LAB_CLUSTER_NAME:-es9-lab}
+    - discovery.seed_hosts=es01,es02,es03,es04,es05
+    - node.attr.zone=zone-b
+    - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - xpack.security.autoconfiguration.enabled=false
+    - path.repo=/usr/share/elasticsearch/snapshots
+    - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
+    - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
+    - xpack.ml.enabled=false
+    - ingest.geoip.downloader.enabled=false
+    - node.roles=master,data,ingest
+    - node.processors=2
+    - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
+    volumes:
+    - es02-data:/usr/share/elasticsearch/data
+    - es-snapshots:/usr/share/elasticsearch/snapshots
+  es03:
+    <<: *es9-node
+    container_name: es9-lab-es03
+    environment:
+    - node.name=es03
+    - cluster.name=${LAB_CLUSTER_NAME:-es9-lab}
+    - discovery.seed_hosts=es01,es02,es03,es04,es05
+    - node.attr.zone=zone-c
+    - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - xpack.security.autoconfiguration.enabled=false
+    - path.repo=/usr/share/elasticsearch/snapshots
+    - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
+    - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
+    - xpack.ml.enabled=false
+    - ingest.geoip.downloader.enabled=false
+    - node.roles=master,data,ingest
+    - node.processors=2
+    - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
+    volumes:
+    - es03-data:/usr/share/elasticsearch/data
+    - es-snapshots:/usr/share/elasticsearch/snapshots
+  es04:
+    <<: *es9-node
+    container_name: es9-lab-es04
+    environment:
+    - node.name=es04
+    - cluster.name=${LAB_CLUSTER_NAME:-es9-lab}
+    - discovery.seed_hosts=es01,es02,es03,es04,es05
+    - node.attr.zone=zone-a
+    - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - xpack.security.autoconfiguration.enabled=false
+    - path.repo=/usr/share/elasticsearch/snapshots
+    - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
+    - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
+    - xpack.ml.enabled=false
+    - ingest.geoip.downloader.enabled=false
+    - node.roles=master,data,ingest
+    - node.processors=2
+    - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
+    volumes:
+    - es04-data:/usr/share/elasticsearch/data
+    - es-snapshots:/usr/share/elasticsearch/snapshots
+  es05:
+    <<: *es9-node
+    container_name: es9-lab-es05
+    environment:
+    - node.name=es05
+    - cluster.name=${LAB_CLUSTER_NAME:-es9-lab}
+    - discovery.seed_hosts=es01,es02,es03,es04,es05
+    - node.attr.zone=zone-b
+    - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - xpack.security.autoconfiguration.enabled=false
+    - path.repo=/usr/share/elasticsearch/snapshots
+    - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
+    - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
+    - xpack.ml.enabled=false
+    - ingest.geoip.downloader.enabled=false
+    - node.roles=master,data,ingest
+    - node.processors=2
+    - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
+    volumes:
+    - es05-data:/usr/share/elasticsearch/data
+    - es-snapshots:/usr/share/elasticsearch/snapshots
+  kibana:
+    image: docker.elastic.co/kibana/kibana:9.5.3
+    container_name: es9-lab-kibana
+    depends_on:
+    - es01
+    - es02
+    - es03
+    - es04
+    - es05
+    ports:
+    - ${ES_BIND_IP:-127.0.0.1}:${KIBANA_PORT:-5602}:5601
+    networks:
+    - es-lab
+    environment:
+    - SERVER_NAME=kibana
+    - SERVER_HOST=0.0.0.0
+    - ELASTICSEARCH_HOSTS=["http://es01:9200","http://es02:9200","http://es03:9200","http://es04:9200","http://es05:9200"]
+    - XPACK_SECURITY_ENABLED=${XPACK_SECURITY_ENABLED:-false}
+    - ELASTICSEARCH_USERNAME=${KIBANA_USERNAME:-kibana_system}
+    - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD:-}
+    - TELEMETRY_ENABLED=false
+
+networks:
+  # Plain bridge only: no runtime-specific options, so this file stays
+  # readable by Docker Compose and podman-compose alike.
+  es-lab:
+    driver: bridge
+
+volumes:
+  es01-data: null
+  es02-data: null
+  es03-data: null
+  es04-data: null
+  es05-data: null
+  # One shared filesystem for the snapshot repository on every node.
+  es-snapshots: null

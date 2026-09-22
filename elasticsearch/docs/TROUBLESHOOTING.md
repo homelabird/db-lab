@@ -135,3 +135,32 @@ live_load 또는 직접 추가·삭제한 문서가 있는지 확인하세요. �
 ```
 
 두 명령 모두 데이터 손실이 발생합니다. 단순 장애 원복은 데이터 삭제 없는 `05-reset-cluster-settings.sh`부터 검토하세요.
+
+## 13. up에서 클러스터가 준비되지 않음 (컨테이너 vs 네트워크 구분)
+
+컨테이너는 생성됐는데 `wait`가 계속 실패하면 `./lab.sh up`이 단계별 진단을 출력합니다.
+
+1. **컨테이너가 not running** → Elasticsearch 기동/로그 문제. `./lab.sh compose logs --tail=200 es01..es05`, `./lab.sh doctor`를 확인합니다.
+2. **컨테이너 내부 localhost:9200이 안 열림** → ES가 아직 bootstrap 중이거나 종료된 것입니다. 방화벽 문제가 아니라 ES 로그(discovery, bootstrap check, OOM)를 봅니다.
+3. **localhost:9200은 응답하는데 es01→es02:9200만 실패** → 컨테이너 간 통신이 호스트 방화벽/FORWARD 정책에 막혔습니다. 진단이 실제 서브넷을 포함한 실행 가능한 규칙을 출력합니다.
+
+```bash
+# 출력되는 실제 값(예: podman)로 실행. placeholder가 아니라 실제 서브넷이 들어갑니다.
+sudo iptables-legacy -I FORWARD 1 -s 172.26.0.0/16 -d 172.26.0.0/16 -j ACCEPT
+```
+
+환경이 nftables/firewalld를 쓰면 `sudo iptables -t filter -L FORWARD -n`으로 현재 구현을 먼저 확인하세요. 런타임 이름과 서브넷은 `./lab.sh doctor`로도 볼 수 있습니다. `compose.yaml` 네트워크는 Docker 전용 옵션이 없어 Docker Compose와 podman-compose 모두에서 생성됩니다. 일반 `up`은 호스트 방화벽을 변경하지 않습니다.
+
+## 14. Snapshot Repository 오류
+
+`./lab.sh up`이 저장소 등록/verify까지 수행하며 실패하면 종료합니다.
+
+- **`path.repo` 설정 오류** — 노드 환경 변수는 값이 그대로 설정으로 전달됩니다. `path.repo`는 리스트 괄호 없이 단일 경로(`path.repo=/usr/share/elasticsearch/snapshots`)로만 지정합니다.
+- **`access denied` (blob container 생성 실패)** — 공유 `es-snapshots` 볼륨이 컨테이너 유저(uid 1000) 소유가 아니면 발생합니다. `compose.yaml`의 entrypoint 래퍼가 시작 시 `chown -R 1000:0 /usr/share/elasticsearch/snapshots`를 수행하므로 컨테이너를 재생성하세요. 수동 수정 시 데이터 볼륨처럼 소유자를 1000:0으로 맞춥니다.
+- **삭제할 수 없는 저장소** — 저장소를 먼저 등록한 뒤 사용해야 합니다. 저장소 상태는:
+  `curl -fsS http://127.0.0.1:9200/_snapshot/lab-snapshots` (재등록/verify: `./lab.sh snapshot`)
+- 406 `concurrent snapshot operations` — 동시 실행하지 마세요. `wait_for_completion=` 로직을 기본 polyfills면 결과 확인까지 대기합니다.
+
+## 15. X-Pack Security 옵트인
+
+`.env`에서 `XPACK_SECURITY_ENABLED=true`로 켜면 모든 `./lab.sh` 요청과 Python 스크립트가 `ELASTIC_USERNAME`/`ELASTIC_PASSWORD` Basic 인증을 자동 첨부합니다. ES 7.17은 Security 활성화 시 Transport TLS가 필수입니다. `compose.yaml`에 transport.ssl 설정과 인증서 볼륨을 추가하기 전에는 켜지 마세요. 인증이 필요한 상태에서 켜고 비밀번호를 누락하면 401 응답이 나옵니다.
