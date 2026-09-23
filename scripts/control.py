@@ -19,6 +19,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 DIRS = {'elasticsearch':'elasticsearch','elasticsearch9':'elasticsearch-9','kafka':'kafka-lab','mariadb':'mariadb-ha-lab','redis':'redis-lab'}
+DEFAULT_PROJECTS = ('elasticsearch','kafka','mariadb','redis')
 ES_LIKE = ('elasticsearch', 'elasticsearch9')
 
 def now(): return datetime.now(timezone.utc).isoformat()
@@ -189,7 +190,7 @@ def main():
         record(Path(sys.argv[2]),sys.argv[3],sys.argv[4],int(sys.argv[5]));return
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=('preflight','health'));p.add_argument('--json',action='store_true');p.add_argument('projects',nargs='*');a=p.parse_args()
     if any(x not in DIRS for x in a.projects):p.error('projects must be one of: '+', '.join(DIRS))
-    result=(preflight if a.command=='preflight' else health)(a.projects or list(DIRS))
+    result=(preflight if a.command=='preflight' else health)(a.projects or list(DEFAULT_PROJECTS))
     if a.json:print(json.dumps(result,indent=2))
     elif a.command=='preflight':
         for text in result['errors']:print('ERROR:',text)

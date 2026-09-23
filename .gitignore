@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
 .env
+elasticsearch/certs/
+elasticsearch-9/certs/
 .state/
 reports/
 .venv/

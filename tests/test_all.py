@@ -31,8 +31,15 @@ class AllControllerTests(unittest.TestCase):
         self.root.mkdir()
         shutil.copy2(SOURCE, self.root / 'all.sh')
         (self.root / 'scripts').mkdir()
+        (self.root / 'scripts/benchmarks.py').write_text('''import json, os, sys
+from pathlib import Path
+with Path(os.environ['ALL_TEST_LOG']).open('a') as stream:
+    stream.write(json.dumps({'name': 'benchmark', 'args': sys.argv[1:], 'cwd': os.getcwd()}) + '\\n')
+''')
         # Controller tests isolate prerequisite/cluster checks; real guards are tested separately.
-        (self.root / 'scripts/control.py').write_text('import sys\n')
+        (self.root / 'scripts/control.py').write_text(
+            'import sys\nfrom pathlib import Path\n'
+            "if len(sys.argv) > 2 and sys.argv[1] == 'record': Path(sys.argv[2]).touch()\n")
         (self.root / 'scripts/k8s_guard.py').write_text('print(\'{"seal_needed": false}\')\n')
         self.log = self.base / 'calls.jsonl'
         # A JSON recorder preserves argument boundaries, including SQL and spaces.
@@ -107,6 +114,27 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
         self.assertIn('db-lab root controller', self.run_all().stdout)
         self.assertEqual(self.calls(), [])
         self.assertEqual(list(self.root.glob('*/.env')), [])
+
+    def test_common_benchmark_targets_one_lab_runner_and_records_receipt(self):
+        self.run_all('benchmark', 'redis', '--seconds', '12', '--rate', '20')
+        self.assertEqual(self.names(), ['benchmark'])
+        self.assertEqual(self.calls()[0]['args'], ['run', 'redis', '--seconds', '12', '--rate', '20'])
+        receipts = list((self.root / 'reports').glob('all-*.json'))
+        self.assertEqual(len(receipts), 1)
+
+    def test_common_benchmark_dry_run_has_no_receipt_or_child_database_call(self):
+        result = self.run_all('--dry-run', 'benchmark', 'es9', '--seconds', '10')
+        self.assertEqual(self.names(), [])
+        self.assertIn('benchmarks.py run es9 --seconds 10 --dry-run', result.stdout)
+        self.assertFalse((self.root / '.state').exists())
+        self.assertFalse((self.root / 'reports').exists())
+
+    def test_common_benchmark_help_does_not_create_run_receipt(self):
+        self.run_all('benchmark', '--help')
+        self.run_all('benchmark', 'es9', '--help')
+        self.assertEqual([call['args'] for call in self.calls()],
+                         [['run', '--help'], ['run', 'es9', '--help']])
+        self.assertFalse((self.root / 'reports').exists())
 
     def test_help_and_list_require_no_runtime(self):
         for command in ('--help', 'help', 'list'):
@@ -390,6 +418,10 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
         (self.root/'scripts/control.py').write_text('print(\'{"ready": false}\')\nraise SystemExit(1)\n')
         p=self.run_all('health','es','--json',code=1)
         self.assertFalse(json.loads(p.stdout)['ready'])
+    def test_health_json_keeps_projects_before_option_for_python_argparse(self):
+        (self.root/'scripts/control.py').write_text('import json,sys\nprint(json.dumps(sys.argv[1:]))\n')
+        p=self.run_all('health','redis','--json')
+        self.assertEqual(json.loads(p.stdout),['health','redis','--json'])
     def test_lock_rejects_competing_lifecycle(self):
         import fcntl
         (self.root/'.state').mkdir()

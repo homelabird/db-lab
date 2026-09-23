@@ -1,13 +1,15 @@
 # DB Lab — v12 MVP 시작·진단 후속 수정
 
-[이번 수정·실행 가이드](docs/FOLLOWUP-REPAIR-2026-09-21.md) · [v11 Redis/Kafka 수정](docs/STARTUP-REPAIR-2026-09-21.md) · [기존 품질 검사 명령](docs/QUALITY-GUIDE.md) · [Ansible](ansible/README.md)
+[시나리오별 dev/staging/prod 대응 쿼리](docs/SCENARIO-RESPONSE-QUERIES.md) · [이번 수정·실행 가이드](docs/FOLLOWUP-REPAIR-2026-09-21.md) · [v11 Redis/Kafka 수정](docs/STARTUP-REPAIR-2026-09-21.md) · [기존 품질 검사 명령](docs/QUALITY-GUIDE.md) · [Ansible](ansible/README.md)
+
+[로컬 운영 자동화 목표와 단계별 로드맵](docs/LOCAL-OPS-AUTOMATION-ROADMAP.md)
 
 > **먼저 실행 대상을 구분하세요.** `bash all.sh mvp up`은 6개 컨테이너 통합 주문 실습이며,
 > `bash all.sh up`은 별도의 4개 HA 실습을 모두 시작합니다. 두 명령은 같은 시스템이 아닙니다.
-> Kafka/Redis의 기존 HA 실습은 **Podman(+podman-compose) 또는 Docker(+Compose v2)** 로 실행할 수 있습니다. `.env`의 `CONTAINER_ENGINE`으로 선택하며(`auto`는 Podman 우선), 두 엔진 모두에서 실제 기동을 검증했습니다. Podman으로 검증된 기본 경로가 우선입니다.
+> 컨테이너 엔진 지원과 실기동 검증은 실습별로 다릅니다. Elasticsearch 9의 최신 Podman 검증은 [ES9 README](elasticsearch-9/README.md)에, Kafka/Redis의 범위는 [수정·검증 기록](docs/STARTUP-REPAIR-2026-09-21.md)에 있습니다. 한 실습의 결과를 전체 프로젝트의 지원 보증으로 간주하지 마세요.
 > v12는 MVP의 HTTP 대상 확인, API/worker 준비 상태, 초기화 실패 증적, 진단 종료 코드와 실제 Helm CI 경로를 보강했습니다. v11의 Redis/Kafka 수정은 유지합니다.
 > 실제 수정 근거와 실행한 검사/실행하지 못한 검사는 위의 **이번 수정·실행 가이드**에서 확인하세요.
-> 이전 보고서와 하위 디렉터리의 과거 테스트 수치는 당시 기록이며 이번 실기동 증거가 아닙니다. Docker/Podman·Helm·Ansible 실제 실행은 검증하지 못했습니다.
+> 오프라인 테스트는 실제 클러스터 기동·장애 복구를 증명하지 않습니다. 프로젝트별 문서에서 검증 날짜/provider를 확인하고, 전체 조합의 잔여 인수 항목은 [런타임 인수 가이드](docs/RUNTIME-ACCEPTANCE.md)를 따르세요.
 
 Elasticsearch, Kafka, MariaDB HA, Redis 실습을 모아 놓은 프로젝트입니다.
 프로젝트 루트의 `all.sh`에서 각 실습의 기존 `lab.sh`를 호출하거나,
@@ -250,6 +252,47 @@ bash -n all.sh
 전체 신규 보호 장치와 Go-template 부분 계약 검사는 `bash scripts/test-offline.sh`,
 실제 Helm 검사는 `bash scripts/test-helm.sh`로 분리했습니다. 후자는 Helm이 없으면 실패하며 모의 도구로 대체하지 않습니다.
 
+### 반복 벤치마크 비교
+
+공통 runner로 선택한 기존 lab의 bounded workload를 실행할 수도 있습니다.
+
+```bash
+./all.sh benchmark redis --seconds 30 --rate 300 --workers 8
+./all.sh benchmark es7 --seconds 30 --rate 100 --batch 100
+./all.sh benchmark kafka --seconds 30 --rate 1000 --payload 256
+./all.sh benchmark mariadb --seconds 30 --workers 4
+./all.sh benchmark es9 --seconds 30 --repeat 3
+./all.sh --dry-run benchmark es9 --seconds 10 --rate 5 --batch 5
+```
+
+`--repeat 3`은 같은 설정을 순차 실행하고 새 PASS report만 모아 comparison JSON을
+저장합니다. 성능 비교 준비가 안 된 경우에도 blockers와 통계는 남기고 종료 코드 2를
+반환합니다. 반복 비교는 최소 30초 workload만 허용합니다.
+
+대상 lab은 미리 실행·준비되어 있어야 합니다. runner는 선택된 workload만 실행하고 lab을
+기동·초기화·정리하지 않습니다. 각 DB의 rate/worker 의미와 기본값은 다르며, 비교기는
+서로 다른 workload 설정을 거부합니다. 선택한 DB에 적용되지 않는 옵션은 오류로 처리합니다.
+
+MariaDB `./lab.sh load`와 Kafka `./lab.sh seed`는 PASS 실행마다 versioned JSON을 각각
+`mariadb-ha-lab/reports/benchmarks/`, `kafka-lab/reports/benchmarks/`에 저장합니다.
+동일한 DB 설정과 workload의 반복 실행은 공통 비교기로 요약할 수 있습니다.
+
+```bash
+python3 scripts/benchmarks.py mariadb-ha-lab/reports/benchmarks/RUN-1.json mariadb-ha-lab/reports/benchmarks/RUN-2.json
+python3 scripts/benchmarks.py kafka-lab/reports/benchmarks/RUN-1.json kafka-lab/reports/benchmarks/RUN-2.json kafka-lab/reports/benchmarks/RUN-3.json
+```
+
+서로 다른 DB/workload/status의 보고서는 거부합니다. 최소 2회 통계를 내고 3회 미만은
+분산 해석이 약하다고 표시합니다. container engine/version, host fingerprint/CPU/RAM,
+container limits와 실행 중
+container image ID(가능한 경우 registry digest 포함)가 같으면 `environment_confirmed: true`가
+됩니다. `performance_comparison_ready`에는 세 번 이상 반복, 각 workload 30초 이상, 전체 구간
+host 관측, 데이터셋 postcondition도 필요합니다. run별 host 압력 차이는 별도로 공개합니다.
+비교 준비가 되어도 승자, capacity 또는 production SLO를 판정하지 않습니다. 같은 경로의 보고서를
+한꺼번에 넣지 말고 실행 묶음을 직접 선택하세요. Redis `./ops.sh results` export에는 실행별
+`benchmark.json`이 포함되며 같은 비교기에 전달할 수 있습니다. 기존 Redis 전용 `compare`도
+상세 report 호환 경로로 유지합니다.
+
 ## Kubernetes 통합 Helm 관리
 
 일반 `up/down`에는 Kubernetes를 포함하지 않습니다. 새 기본 profile은 **Redis 3 + Sentinel 3**이며
@@ -316,7 +359,7 @@ bash ./all.sh mvp messages run poison-schema --yes
 bash ./scripts/test-runtime-messages.sh --yes
 ```
 
-[실행·정리·검증 경계](mvp-lab/docs/MESSAGE-DRILLS.md)와 [v4 구현 보고서](mvp-lab/docs/SIMULATION-V4-REPORT.md)를 확인하세요. 기존 `.env`/`.state`/볼륨을 보존하고 전체 소스로 API/worker를 다시 빌드합니다. `--keep` 자원은 API 교체 전에 먼저 정리해야 합니다. 실제 Kafka/DB 인수 시험은 호스트 단위 검사와 별개입니다.
+[실행·정리·검증 경계](mvp-lab/docs/MESSAGE-DRILLS.md), [통합 사고 대응 훈련](mvp-lab/docs/INCIDENT-EXERCISE.md), [v4 구현 보고서](mvp-lab/docs/SIMULATION-V4-REPORT.md)를 확인하세요. 기존 `.env`/`.state`/볼륨을 보존하고 전체 소스로 API/worker를 다시 빌드합니다. `--keep` 자원은 API 교체 전에 먼저 정리해야 합니다. 실제 Kafka/DB 인수 시험은 호스트 단위 검사와 별개입니다.
 
 ## 트랜잭션 정합성 실습 v5
 
@@ -358,6 +401,6 @@ ansible-playbook control.yml --check -e @examples/mvp-up.yml
 ansible-playbook control.yml -e @examples/mvp-up.yml
 ```
 
-전체 프로젝트와 기존 `.env/.state/volumes`를 보존하세요. 제작 환경의 Ansible/SSH/실DB
-실기동 미검증을 호스트 테스트 통과와 혼동하지 않습니다. 실제 Ansible 자체 인수는
-프로젝트 루트의 `bash scripts/test-ansible.sh`입니다.
+선택형 `deploy.yml`과 `bootstrap.yml`은 각각 새 source release 배치와 Ubuntu 24.04/Debian 12 package 설치를 지원합니다. `ansible/README.md`의 단일 호스트·check mode·정확한 설치 동의 예시를 확인하세요. 별도 원격 OS/DB 실기동 검증 범위도 함께 구분합니다.
+
+전체 프로젝트와 기존 `.env/.state/volumes`를 보존하세요. `bash scripts/test-ansible.sh`는 실제 Ansible 로컬 fixture, `bash scripts/test-ansible-ssh.sh`는 임시 loopback `sshd`의 실제 SSH 인증과 모듈 전송을 확인합니다. 두 검사는 별도 원격 서버의 OS/runtime 배치나 실제 DB 기동·복구를 증명하지 않습니다.
