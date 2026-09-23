@@ -1,0 +1,9 @@
+---
+db_lab_target: kafka
+db_lab_request:
+  action: benchmark
+  options:
+    seconds: 30
+    rate: 1000
+    payload: 256
+db_lab_allow_changes: true

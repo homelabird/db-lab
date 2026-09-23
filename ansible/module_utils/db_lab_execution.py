@@ -45,7 +45,7 @@ def write_json(path, value):
 
 
 def environment_fingerprint(root, target):
-    targets = [k for k in DIRS if k != 'mvp'] if target == 'all' else [target]
+    targets = [k for k in DIRS if k not in ('mvp', 'elasticsearch9')] if target == 'all' else [target]
     result = {}
     for t in targets:
         if t not in DIRS:

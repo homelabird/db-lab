@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import re
 
-TARGETS = ('mvp', 'all', 'elasticsearch', 'kafka', 'mariadb', 'redis', 'k8s')
+TARGETS = ('mvp', 'all', 'elasticsearch', 'elasticsearch9', 'kafka', 'mariadb', 'redis', 'k8s')
 SIMULATIONS = ('baseline', 'kafka-outage', 'es-outage', 'redis-outage', 'db-freeze',
                'worker-freeze', 'redis-recreate', 'redis-switch', 'row-lock',
                'duplicate-retry', 'version-race', 'db-network-delay', 'db-network-loss')
@@ -30,7 +30,7 @@ NUMERIC = {'seed': (0, 2**32 - 1), 'seconds': (15, 180), 'workers': (1, 8),
            'fault_at': (1, 179), 'fault_for': (1, 30), 'recovery_timeout': (5, 300),
            'clients': (2, 8), 'step_timeout': (120, 1200)}
 SIM_KEYS = {'seed', 'seconds', 'rate', 'workers', 'fault_at', 'fault_for', 'recovery_timeout', 'workload'}
-DIRS = {'elasticsearch': 'elasticsearch', 'kafka': 'kafka-lab',
+DIRS = {'elasticsearch': 'elasticsearch', 'elasticsearch9': 'elasticsearch-9', 'kafka': 'kafka-lab',
         'mariadb': 'mariadb-ha-lab', 'redis': 'redis-lab', 'mvp': 'mvp-lab'}
 
 
@@ -146,6 +146,26 @@ def kube_plan(action, config):
     return env, args, namespace + '/' + release
 
 
+def benchmark_plan(target, options, prefix):
+    databases = {'elasticsearch': ('es7', {'rate', 'batch'}),
+                 'elasticsearch9': ('es9', {'rate', 'batch'}),
+                 'kafka': ('kafka', {'rate', 'payload'}),
+                 'mariadb': ('mariadb', {'workers'}),
+                 'redis': ('redis', {'rate', 'workers', 'keys', 'payload'})}
+    require(target in databases, 'benchmark_requires_one_supported_database')
+    database, accepted = databases[target]
+    ranges = {'seconds': (5, 600), 'rate': (1, 10000), 'workers': (1, 64),
+              'batch': (1, 1000), 'keys': (1, 50000), 'payload': (32, 8192)}
+    require(set(options) <= accepted | {'seconds'}, 'unsupported_benchmark_option')
+    args = ['benchmark', database]
+    for key in sorted(options):
+        value = options[key]
+        low, high = ranges[key]
+        require(type(value) is int and low <= value <= high, 'benchmark_option_out_of_range_' + key)
+        args.extend(['--' + key, str(value)])
+    return [prefix + args]
+
+
 def build_plan(params, check_mode=False):
     """Return only argv lists; runtime execution cannot add arbitrary CLI flags."""
     root = absolute(params.get('project_root'))
@@ -168,16 +188,20 @@ def build_plan(params, check_mode=False):
 
     if target not in ('mvp', 'k8s'):
         require(verb is None and name is None, 'unused_verb_or_name')
-        require(action in ('help', 'list', 'init', 'doctor', 'preflight', 'health', 'status', 'up', 'down', 'restart', 'test', 'reset'), 'unsupported_lab_action')
-        args = [action] if action in ('help', 'list') else [action, target]
-        if action in ('health', 'preflight'):
-            args.append('--json')
-        if action in ('init', 'up', 'down', 'restart'):
+        require(action in ('help', 'list', 'init', 'doctor', 'preflight', 'health', 'status', 'up', 'down', 'restart', 'test', 'reset', 'benchmark'), 'unsupported_lab_action')
+        if action == 'benchmark':
+            commands = benchmark_plan(target, opts, prefix)
             category = 'change'
-        if action == 'reset':
-            category, destructive_phrase = 'destroy', 'DELETE:' + target
-            args.append('--yes')
-        commands.append(prefix + args)
+        else:
+            args = [action] if action in ('help', 'list') else [action, target]
+            if action in ('health', 'preflight'):
+                args.append('--json')
+            if action in ('init', 'up', 'down', 'restart'):
+                category = 'change'
+            if action == 'reset':
+                category, destructive_phrase = 'destroy', 'DELETE:' + target
+                args.append('--yes')
+            commands.append(prefix + args)
     elif target == 'k8s':
         require(verb is None and name is None, 'unused_verb_or_name')
         require(action in ('init', 'preflight', 'lint', 'template', 'up', 'status', 'history', 'values', 'down'), 'unsupported_k8s_action')
@@ -276,7 +300,7 @@ def build_plan(params, check_mode=False):
             bounded_plan(name, opts)
         if not commands:
             commands.append(prefix + args)
-    if target != 'mvp':
+    if target != 'mvp' and action != 'benchmark':
         require(not opts, 'unused_options')
     if target != 'k8s':
         require(not params.get('k8s'), 'k8s_options_for_non_k8s_target')

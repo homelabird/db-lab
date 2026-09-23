@@ -18,7 +18,7 @@ options:
   target:
     description: MVP, one standalone lab, four standalone labs, or Helm.
     type: str
-    choices: [mvp, all, elasticsearch, kafka, mariadb, redis, k8s]
+    choices: [mvp, all, elasticsearch, elasticsearch9, kafka, mariadb, redis, k8s]
     default: mvp
   request:
     description: Finite action/verb/name/options mapping documented in ansible/README.md.
@@ -105,7 +105,7 @@ def main():
     module = AnsibleModule(
         argument_spec=dict(
             project_root=dict(type='path', required=True),
-            target=dict(type='str', choices=['mvp', 'all', 'elasticsearch', 'kafka', 'mariadb', 'redis', 'k8s'], default='mvp'),
+            target=dict(type='str', choices=['mvp', 'all', 'elasticsearch', 'elasticsearch9', 'kafka', 'mariadb', 'redis', 'k8s'], default='mvp'),
             request=dict(type='dict', default={'action': 'status'}),
             allow_changes=dict(type='bool', default=False),
             allow_faults=dict(type='bool', default=False),

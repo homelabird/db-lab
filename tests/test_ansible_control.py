@@ -54,11 +54,52 @@ class PlanTests(unittest.TestCase):
     def test_root_common_up_keeps_initialization_and_preflight(self):
         self.assertEqual(argv(params('up', 'kafka')), ['up', 'kafka'])
 
+    def test_es9_is_an_explicit_opt_in_target(self):
+        self.assertEqual(argv(params('up', 'elasticsearch9')), ['up', 'elasticsearch9'])
+        self.assertEqual(policy.DIRS['elasticsearch9'], 'elasticsearch-9')
+        self.assertEqual(argv(params('up', 'all')), ['up', 'all'])
+
     def test_all_does_not_mix_mvp_and_helm(self):
         self.assertEqual(argv(params('down', 'all')), ['down', 'all'])
 
     def test_common_health_is_json_not_status_alias(self):
         self.assertEqual(argv(params('health', 'mariadb')), ['health', 'mariadb', '--json'])
+
+    def test_benchmark_routes_only_one_lab_through_root_runner(self):
+        cases={'elasticsearch':('es7',{'rate':500,'batch':50}),
+               'elasticsearch9':('es9',{'seconds':60,'rate':500,'batch':50}),
+               'kafka':('kafka',{'rate':2000,'payload':512}),
+               'mariadb':('mariadb',{'workers':4}),
+               'redis':('redis',{'rate':300,'workers':8,'keys':2000,'payload':256})}
+        for target,(database,options) in cases.items():
+            with self.subTest(target=target):
+                plan=policy.build_plan(params('benchmark',target,options=options))
+                self.assertEqual(plan['commands'][0][3:],
+                    ['benchmark',database]+[item for key,value in sorted(options.items())
+                                             for item in ('--'+key,str(value))])
+                self.assertEqual(plan['category'],'change')
+                self.assertEqual(plan['required_consent'],['allow_changes'])
+
+    def test_benchmark_check_mode_plans_without_change_consent(self):
+        p=params('benchmark','kafka',options={'seconds':30})
+        p['allow_changes']=False
+        plan=policy.build_plan(p,check_mode=True)
+        self.assertEqual(plan['commands'][0][3:],['benchmark','kafka','--seconds','30'])
+        self.assertEqual(plan['required_consent'],['allow_changes'])
+
+    def test_benchmark_rejects_all_target_wrong_options_and_unbounded_values(self):
+        invalid=(params('benchmark','all'),
+                 params('benchmark','kafka',options={'workers':2}),
+                 params('benchmark','redis',options={'rate':10001}),
+                 params('benchmark','mariadb',options={'seconds':601}))
+        for p in invalid:
+            with self.subTest(request=p['request']),self.assertRaises(policy.PolicyError):
+                policy.build_plan(p)
+
+    def test_benchmark_requires_explicit_change_consent(self):
+        p=params('benchmark','redis');p['allow_changes']=False
+        with self.assertRaisesRegex(policy.PolicyError,'allow_changes'):
+            policy.build_plan(p)
 
     def test_restart_is_down_then_up(self):
         cmds = policy.build_plan(params('restart'))['commands']
@@ -319,6 +360,15 @@ printf 'PRIVATE-NATIVE-ERROR' >&2
     def plan(self,action='status',**kwargs):
         p=params(action,**kwargs);p['project_root']=str(self.root)
         return policy.build_plan(p)
+
+    def test_all_environment_fingerprint_keeps_es9_opt_in(self):
+        for target in policy.DIRS:
+            path = self.root / policy.DIRS[target] / '.env'
+            path.write_text('LAB_TEST=value\n')
+        all_envs = execution.environment_fingerprint(self.root, 'all')
+        es9_env = execution.environment_fingerprint(self.root, 'elasticsearch9')
+        self.assertNotIn('elasticsearch9', all_envs)
+        self.assertIn('elasticsearch9', es9_env)
 
     def test_project_requires_expected_layout(self):
         policy.validate_project(str(self.root),'mvp')

@@ -25,6 +25,7 @@ class RealAnsibleTests(unittest.TestCase):
         self.base=Path(self.tmp.name);self.project=self.base/'project';self.project.mkdir()
         (self.project/'scripts').mkdir();(self.project/'scripts/control.py').write_text('')
         (self.project/'mvp-lab').mkdir();(self.project/'mvp-lab/lab.sh').write_text('#!/bin/bash\n')
+        (self.project/'kafka-lab').mkdir();(self.project/'kafka-lab/lab.sh').write_text('#!/bin/bash\n')
         (self.project/'all.sh').write_text('''#!/bin/bash
 set -eu
 printf '%s\\n' "$*" >> called.txt
@@ -42,14 +43,14 @@ printf 'NATIVE-PRIVATE-SENTINEL'
                       ANSIBLE_LOCAL_TEMP=str(self.base/'ansible-tmp'),
                       ANSIBLE_NOCOLOR='1',ANSIBLE_HOST_KEY_CHECKING='True')
 
-    def run_play(self, request=None, *, consent=False, check=False, filename='control.yml'):
-        extra={'db_lab_request':request or {'action':'status'},'db_lab_allow_changes':consent}
+    def run_play(self, request=None, *, target='mvp', consent=False, check=False, filename='control.yml'):
+        extra={'db_lab_target':target,'db_lab_request':request or {'action':'status'},'db_lab_allow_changes':consent}
         args=[PLAYBOOK,'-i',str(self.inv),str(ROOT/'ansible'/filename),'-e',json.dumps(extra)]
         if check:args.append('--check')
         return subprocess.run(args,cwd=ROOT/'ansible',env=self.env,text=True,capture_output=True,timeout=60)
 
     def test_real_ansible_syntax_of_both_playbooks(self):
-        for name in ('control.yml','collect.yml'):
+        for name in ('control.yml','collect.yml','deploy.yml','bootstrap.yml'):
             p=subprocess.run([PLAYBOOK,'-i',str(self.inv),str(ROOT/'ansible'/name),'--syntax-check'],cwd=ROOT/'ansible',env=self.env,text=True,capture_output=True,timeout=60)
             self.assertEqual(p.returncode,0,p.stdout+p.stderr)
 
@@ -66,6 +67,19 @@ printf 'NATIVE-PRIVATE-SENTINEL'
     def test_real_consent_failure_before_execution(self):
         p=self.run_play({'action':'up'})
         self.assertNotEqual(p.returncode,0);self.assertFalse((self.project/'called.txt').exists())
+
+    def test_real_benchmark_dispatch_requires_consent_and_preserves_bounded_args(self):
+        request={'action':'benchmark','options':{'seconds':15,'rate':100}}
+        refused=self.run_play(request,target='kafka')
+        self.assertNotEqual(refused.returncode,0)
+        self.assertFalse((self.project/'called.txt').exists())
+        planned=self.run_play(request,target='kafka',check=True)
+        self.assertEqual(planned.returncode,0,planned.stdout+planned.stderr)
+        self.assertFalse((self.project/'called.txt').exists())
+        applied=self.run_play(request,target='kafka',consent=True)
+        self.assertEqual(applied.returncode,0,applied.stdout+applied.stderr)
+        self.assertEqual((self.project/'called.txt').read_text().strip(),
+                         '--fail-fast benchmark kafka --rate 100 --seconds 15')
 
     def test_real_failure_is_not_ignored(self):
         p=self.run_play({'action':'doctor'})
@@ -125,6 +139,38 @@ printf 'NATIVE-PRIVATE-SENTINEL'
         self.inv.write_text(json.dumps(inv))
         p=self.run_play({'action':'up'},consent=True)
         self.assertNotEqual(p.returncode,0);self.assertFalse((self.project/'called.txt').exists())
+
+    def run_bootstrap(self, vars, *, check=False):
+        args=[PLAYBOOK,'-i',str(self.inv),str(ROOT/'ansible/bootstrap.yml'),'-e',json.dumps(vars)]
+        if check: args.append('--check')
+        return subprocess.run(args,cwd=ROOT/'ansible',env=self.env,text=True,capture_output=True,timeout=60)
+
+    def test_bootstrap_requires_explicit_install_confirmation(self):
+        p=self.run_bootstrap({'db_lab_engine':'podman','db_lab_allow_changes':True,
+                              'ansible_distribution':'Debian','ansible_distribution_major_version':'12'})
+        self.assertNotEqual(p.returncode,0)
+        self.assertIn('explicitly confirm the selected package source',p.stdout+p.stderr)
+
+    def test_bootstrap_check_mode_only_plans_supported_package_set(self):
+        inventory=json.loads(self.inv.read_text())
+        inventory['all']['children']['db_lab']['hosts']['local_a']['ansible_become_method']='sudo'
+        self.inv.write_text(json.dumps(inventory))
+        p=self.run_bootstrap({'db_lab_engine':'docker','ansible_distribution':'Ubuntu',
+                              'ansible_distribution_version':'24.04',
+                              'ansible_distribution_major_version':'24'},check=True)
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertIn('docker-compose-v2',p.stdout)
+        self.assertIn('Check mode makes no package, service, group, firewall, or repository changes',p.stdout)
+
+    def test_debian_podman_plan_selects_signed_backports_compose(self):
+        inventory=json.loads(self.inv.read_text())
+        inventory['all']['children']['db_lab']['hosts']['local_a']['ansible_become_method']='sudo'
+        self.inv.write_text(json.dumps(inventory))
+        p=self.run_bootstrap({'db_lab_engine':'podman','ansible_distribution':'Debian',
+                              'ansible_distribution_version':'12.11','ansible_distribution_major_version':'12'},check=True)
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertIn('podman-compose from bookworm-backports',p.stdout)
+        self.assertIn('signed official Bookworm Backports source',p.stdout)
 
 
 if __name__=='__main__':unittest.main()

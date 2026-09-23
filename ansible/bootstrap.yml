@@ -1,0 +1,104 @@
+---
+- name: Install explicitly approved DB Lab host prerequisites
+  hosts: db_lab
+  gather_facts: true
+  become: false
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    db_lab_bootstrap_confirmation_required: "{{ 'INSTALL:podman:bookworm-backports' if ansible_distribution == 'Debian' and ansible_distribution_major_version == '12' and db_lab_engine == 'podman' else 'INSTALL:' ~ db_lab_engine }}"
+    db_lab_bootstrap_base_packages:
+      - bash
+      - ca-certificates
+      - curl
+      - git
+      - iproute2
+      - iptables
+      - jq
+      - python3
+      - util-linux
+  pre_tasks:
+    - name: Validate the single-target bootstrap request and explicit consent
+      ansible.builtin.assert:
+        that:
+          - db_lab_engine is defined
+          - db_lab_engine in ['docker', 'podman']
+          - (ansible_play_hosts_all | length == 1) or ansible_check_mode
+          - ansible_become is not defined
+          - ansible_distribution in ['Debian', 'Ubuntu']
+          - (ansible_distribution == 'Ubuntu' and ansible_distribution_version == '24.04') or (ansible_distribution == 'Debian' and ansible_distribution_major_version == '12')
+          - db_lab_engine != 'docker' or ansible_distribution == 'Ubuntu'
+          - db_lab_engine != 'docker' or ansible_distribution_version == '24.04'
+          - (db_lab_allow_changes | default(false) | bool) or ansible_check_mode
+          - ansible_check_mode or db_lab_bootstrap_confirmation | default('') == db_lab_bootstrap_confirmation_required
+        fail_msg: Supported targets are Ubuntu 24.04 (Docker or Podman) and Debian 12 (Podman with official Bookworm Backports); use one host, omit ansible_become inventory vars, and explicitly confirm the selected package source.
+
+    - name: Select only packages available for the supported OS and engine pair
+      ansible.builtin.set_fact:
+        db_lab_bootstrap_packages: "{{ db_lab_bootstrap_base_packages + (['docker.io', 'docker-compose-v2'] if db_lab_engine == 'docker' else ['podman', 'fuse-overlayfs', 'slirp4netns', 'uidmap'] + (['podman-compose'] if ansible_distribution != 'Debian' else ['debian-archive-keyring'])) }}"
+
+    - name: Add the signed Debian Bookworm Backports source for Podman Compose
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/db-lab-bookworm-backports.list
+        content: "deb http://deb.debian.org/debian bookworm-backports main\n"
+        owner: root
+        group: root
+        mode: '0644'
+        force: false
+      become: true
+      when: not ansible_check_mode and ansible_distribution == 'Debian' and ansible_distribution_major_version == '12' and db_lab_engine == 'podman'
+
+    - name: Show package plan in check mode
+      ansible.builtin.debug:
+        msg: "Would install {{ db_lab_bootstrap_packages | join(', ') }} and {{ 'podman-compose from bookworm-backports' if ansible_distribution == 'Debian' and ansible_distribution_major_version == '12' and db_lab_engine == 'podman' else 'the OS Compose frontend' }} on {{ ansible_distribution }} {{ ansible_distribution_version }}. Debian 12 Podman adds the signed official Bookworm Backports source. Check mode makes no package, service, group, firewall, or repository changes."
+      when: ansible_check_mode
+
+  tasks:
+    - name: Install the approved packages from the OS configured repositories
+      ansible.builtin.apt:
+        name: "{{ db_lab_bootstrap_packages }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      become: true
+      when: not ansible_check_mode
+
+    - name: Install the supported Podman Compose from Debian Backports
+      ansible.builtin.apt:
+        name: podman-compose
+        state: present
+        default_release: bookworm-backports
+      become: true
+      when: not ansible_check_mode and ansible_distribution == 'Debian' and ansible_distribution_major_version == '12' and db_lab_engine == 'podman'
+
+    - name: Verify Debian Backports Compose capabilities required by the labs
+      ansible.builtin.command:
+        argv: ['podman-compose', '--help']
+      register: db_lab_podman_compose_help
+      changed_when: false
+      failed_when: "'--in-pod' not in db_lab_podman_compose_help.stdout or 'config' not in db_lab_podman_compose_help.stdout"
+      when: not ansible_check_mode and ansible_distribution == 'Debian' and ansible_distribution_major_version == '12' and db_lab_engine == 'podman'
+
+    - name: Verify the selected engine and Compose frontend are installed
+      ansible.builtin.command:
+        argv: "{{ ['docker', 'compose', 'version'] if db_lab_engine == 'docker' else ['podman-compose', '--version'] }}"
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Verify baseline host tools are available
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      loop:
+        - ['bash', '--version']
+        - ['curl', '--version']
+        - ['git', '--version']
+        - ['jq', '--version']
+        - ['flock', '--version']
+        - ['/usr/sbin/iptables', '--version']
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Report completion and next validation step
+      ansible.builtin.debug:
+        msg: "Host packages are present. This does not verify engine access or lab startup: run the selected lab's doctor, then its documented up/smoke workflow. Doctor success alone is not runtime acceptance."
+      when: not ansible_check_mode

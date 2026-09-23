@@ -1,0 +1,231 @@
+---
+- name: Package and deploy DB Lab as a versioned user-owned release
+  hosts: db_lab
+  gather_facts: true
+  become: false
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    db_lab_release_package_script: "{{ playbook_dir }}/package_artifact.py"
+  pre_tasks:
+    - name: Validate explicit single-host deployment request
+      ansible.builtin.assert:
+        that:
+          - db_lab_source_root is defined
+          - db_lab_source_root is string
+          - db_lab_source_root.startswith('/')
+          - db_lab_deploy_root is defined
+          - db_lab_deploy_root is string
+          - db_lab_deploy_root.startswith(ansible_user_dir + '/')
+          - db_lab_deploy_root | dirname == ansible_user_dir
+          - "'..' not in db_lab_deploy_root.split('/')"
+          - db_lab_deploy_root != ansible_user_dir
+          - (db_lab_allow_changes | default(false) | bool) or ansible_check_mode
+          - (ansible_play_hosts_all | length == 1) or ansible_check_mode
+          - not (ansible_become | default(false) | bool)
+        fail_msg: Use one SSH target, a canonical local source, a deploy directory below that user's home, and db_lab_allow_changes=true.
+
+    - name: Inspect the target account home without following links
+      ansible.builtin.stat:
+        path: "{{ ansible_user_dir }}"
+        follow: false
+      register: db_lab_home_stat
+
+    - name: Require a real target home directory
+      ansible.builtin.assert:
+        that:
+          - db_lab_home_stat.stat.isdir
+          - not db_lab_home_stat.stat.islnk
+
+    - name: Validate source root on the controller
+      ansible.builtin.stat:
+        path: "{{ db_lab_source_root }}"
+        follow: false
+      delegate_to: localhost
+      register: db_lab_source_stat
+
+    - name: Require a real source directory
+      ansible.builtin.assert:
+        that:
+          - db_lab_source_stat.stat.exists
+          - db_lab_source_stat.stat.isdir
+          - not db_lab_source_stat.stat.islnk
+
+    - name: Show deployment plan in check mode
+      ansible.builtin.debug:
+        msg: "Would package {{ db_lab_source_root }} and deploy a content-addressed release below {{ db_lab_deploy_root }}; no source or target files are changed in check mode."
+      when: ansible_check_mode
+
+  tasks:
+  - name: Deploy versioned release with private temporary cleanup
+    block:
+      - name: Create controller-private temporary artifact directory
+        ansible.builtin.tempfile:
+          state: directory
+          prefix: db-lab-release-
+        delegate_to: localhost
+        register: db_lab_artifact_tmp
+        changed_when: false
+        when: not ansible_check_mode
+
+      - name: Build source-only deterministic release archive
+        ansible.builtin.command:
+          argv:
+            - "{{ ansible_playbook_python }}"
+            - "{{ db_lab_release_package_script }}"
+            - "{{ db_lab_source_root }}"
+            - "{{ db_lab_artifact_tmp.path }}"
+        delegate_to: localhost
+        register: db_lab_package_result
+        changed_when: false
+        when: not ansible_check_mode
+
+      - name: Read package metadata
+        ansible.builtin.set_fact:
+          db_lab_package: "{{ db_lab_package_result.stdout | from_json }}"
+        when: not ansible_check_mode
+
+      - name: Inspect deploy root without following a symlink
+        ansible.builtin.stat:
+          path: "{{ db_lab_deploy_root }}"
+          follow: false
+        register: db_lab_deploy_root_stat
+        when: not ansible_check_mode
+
+      - name: Inspect releases directory without following a symlink
+        ansible.builtin.stat:
+          path: "{{ db_lab_deploy_root }}/releases"
+          follow: false
+        register: db_lab_releases_stat
+        when: not ansible_check_mode
+
+      - name: Refuse symlinked or non-directory deployment paths
+        ansible.builtin.assert:
+          that:
+            - not db_lab_deploy_root_stat.stat.exists or (db_lab_deploy_root_stat.stat.isdir and not db_lab_deploy_root_stat.stat.islnk)
+            - not db_lab_releases_stat.stat.exists or (db_lab_releases_stat.stat.isdir and not db_lab_releases_stat.stat.islnk)
+        when: not ansible_check_mode
+
+      - name: Inspect selected release path without following a symlink
+        ansible.builtin.stat:
+          path: "{{ db_lab_deploy_root }}/releases/{{ db_lab_package.release_id }}"
+          follow: false
+        register: db_lab_release_stat
+        when: not ansible_check_mode
+
+      - name: Inspect release marker without following a symlink
+        ansible.builtin.stat:
+          path: "{{ db_lab_deploy_root }}/releases/{{ db_lab_package.release_id }}/DEPLOYMENT.json"
+          follow: false
+        register: db_lab_marker_stat
+        when: not ansible_check_mode and db_lab_release_stat.stat.exists
+
+      - name: Inspect the release marker when the selected release exists
+        ansible.builtin.slurp:
+          src: "{{ db_lab_deploy_root }}/releases/{{ db_lab_package.release_id }}/DEPLOYMENT.json"
+        register: db_lab_release_marker
+        when: not ansible_check_mode and db_lab_release_stat.stat.exists
+        failed_when: false
+
+      - name: Refuse a non-matching or incomplete existing release
+        ansible.builtin.assert:
+          that:
+            - not db_lab_release_stat.stat.exists or (db_lab_release_stat.stat.isdir and not db_lab_release_stat.stat.islnk)
+            - not db_lab_release_stat.stat.exists or (db_lab_marker_stat.stat.isreg and not db_lab_marker_stat.stat.islnk)
+            - not db_lab_release_stat.stat.exists or (db_lab_release_marker.content is defined and (db_lab_release_marker.content | b64decode | from_json).sha256 == db_lab_package.sha256)
+          fail_msg: The content-addressed release path exists but is incomplete or has a different digest; inspect it before manual cleanup.
+        when: not ansible_check_mode
+
+      - name: Create deploy and release directories
+        ansible.builtin.file:
+          path: "{{ item }}"
+          state: directory
+          mode: '0750'
+        loop:
+          - "{{ db_lab_deploy_root }}"
+          - "{{ db_lab_deploy_root }}/releases"
+        when: not ansible_check_mode
+
+      - name: Create unique extraction staging directory
+        ansible.builtin.tempfile:
+          state: directory
+          path: "{{ db_lab_deploy_root }}/releases"
+          prefix: .incoming-
+        register: db_lab_stage
+        changed_when: false
+        when: not ansible_check_mode and not db_lab_release_stat.stat.exists
+
+      - name: Create target-side temporary archive
+        ansible.builtin.tempfile:
+          state: file
+          suffix: .tar.gz
+        register: db_lab_remote_archive
+        changed_when: false
+        when: not ansible_check_mode and not db_lab_release_stat.stat.exists
+
+      - name: Transfer artifact with expected SHA-256
+        ansible.builtin.copy:
+          src: "{{ db_lab_package.artifact }}"
+          dest: "{{ db_lab_remote_archive.path }}"
+          mode: '0600'
+        when: not ansible_check_mode and not db_lab_release_stat.stat.exists
+
+      - name: Verify transferred archive SHA-256 before extraction
+        ansible.builtin.stat:
+          path: "{{ db_lab_remote_archive.path }}"
+          checksum_algorithm: sha256
+          get_checksum: true
+        register: db_lab_remote_archive_stat
+        when: not ansible_check_mode and not db_lab_release_stat.stat.exists
+
+      - name: Require an exact artifact digest match
+        ansible.builtin.assert:
+          that: db_lab_remote_archive_stat.stat.checksum == db_lab_package.sha256
+          fail_msg: Transferred release artifact digest does not match the controller package.
+        when: not ansible_check_mode and not db_lab_release_stat.stat.exists
+
+      - name: Extract into the unique staging directory
+        ansible.builtin.unarchive:
+          src: "{{ db_lab_remote_archive.path }}"
+          dest: "{{ db_lab_stage.path }}"
+          remote_src: true
+        when: not ansible_check_mode and not db_lab_release_stat.stat.exists
+
+      - name: Write release identity marker
+        ansible.builtin.copy:
+          content: "{{ {'schema_version': 1, 'release_id': db_lab_package.release_id, 'sha256': db_lab_package.sha256} | to_nice_json }}\n"
+          dest: "{{ db_lab_stage.path }}/DEPLOYMENT.json"
+          mode: '0444'
+          force: false
+        when: not ansible_check_mode and not db_lab_release_stat.stat.exists
+
+      - name: Atomically publish the content-addressed release directory
+        ansible.builtin.command:
+          argv:
+            - python3
+            - -c
+            - import os,sys; os.rename(sys.argv[1], sys.argv[2])
+            - "{{ db_lab_stage.path }}"
+            - "{{ db_lab_deploy_root }}/releases/{{ db_lab_package.release_id }}"
+        changed_when: true
+        when: not ansible_check_mode and not db_lab_release_stat.stat.exists
+
+      - name: Report the deployed release path and identity
+        ansible.builtin.debug:
+          msg: "release={{ db_lab_package.release_id }} path={{ db_lab_deploy_root }}/releases/{{ db_lab_package.release_id }} files={{ db_lab_package.files }}"
+        when: not ansible_check_mode
+    always:
+      - name: Remove controller-side temporary archive directory
+        ansible.builtin.file:
+          path: "{{ db_lab_artifact_tmp.path }}"
+          state: absent
+        delegate_to: localhost
+        changed_when: false
+        when: db_lab_artifact_tmp.path is defined
+
+      - name: Remove target-side temporary archive
+        ansible.builtin.file:
+          path: "{{ db_lab_remote_archive.path }}"
+          state: absent
+        changed_when: false
+        when: db_lab_remote_archive.path is defined

@@ -52,8 +52,12 @@ jobs:
           python-version: '3.12'
       - name: Install actual Ansible (no mock fallback)
         run: python -m pip install -r ansible/requirements.txt
+      - name: Install sshd for loopback-only transport acceptance
+        run: sudo apt-get update && sudo apt-get install -y openssh-server
       - name: Real local playbooks with harmless fixture (not SSH/DB)
         run: bash scripts/test-ansible.sh
+      - name: Real SSH auth and module transfer to disposable loopback sshd (not remote host/DB)
+        run: bash scripts/test-ansible-ssh.sh
   helm-render:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
