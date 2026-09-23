@@ -12,8 +12,12 @@ import tempfile
 
 KEYS=('redis-password','mariadb-root-password','mariadb-sst-password')
 
-def valid_password(value):
-    return bool(re.fullmatch(r'[A-Za-z0-9_-]{24,128}',value))
+def valid_password(value,max_length=128):
+    return bool(re.fullmatch(fr'[A-Za-z0-9_-]{{24,{max_length}}}',value))
+
+def helm_list_all_flag(help_text):
+    # Helm 3 uses --all; Helm 4 lists every status by default and removed the flag.
+    return ['--all'] if re.search(r'^\s*-a,\s+--all(?:\s|$)',help_text,re.M) else []
 
 class Guard:
     def __init__(self,args):
@@ -39,7 +43,8 @@ class Guard:
         for key in required:
             try:value=base64.b64decode(obj.get('data',{})[key],validate=True).decode()
             except (ValueError,UnicodeDecodeError,KeyError):raise ValueError(f'Secret {name}: missing or invalid {key}') from None
-            if not valid_password(value):raise ValueError(f'Secret {name}/{key} must be 24..128 URL-safe characters; default/weak passwords are refused')
+            maximum=32 if key.startswith('mariadb-') else 128
+            if not valid_password(value,maximum):raise ValueError(f'Secret {name}/{key} must be 24..{maximum} URL-safe characters; default/weak passwords are refused')
     def initialize(self):
         ns=self.get('namespace',self.args.namespace)
         if not ns:
@@ -49,7 +54,7 @@ class Guard:
             print('Existing credentials preserved; no rotation performed.',file=sys.stderr);return
         obj={'apiVersion':'v1','kind':'Secret','metadata':{'name':self.args.secret,'namespace':self.args.namespace,
              'labels':{'app.kubernetes.io/part-of':'db-lab'}},'type':'Opaque',
-             'stringData':{key:secrets.token_urlsafe(32) for key in KEYS}}
+             'stringData':{key:secrets.token_urlsafe(24) for key in KEYS}}
         # Payload uses stdin, never argv, a checked-in file, or a log.
         self.call(self.kube+['create','-f','-'],json.dumps(obj))
         print('Created lab credentials (values not printed).',file=sys.stderr)
@@ -62,7 +67,8 @@ class Guard:
         # explicitly supplied values, then caller overrides, on NEW chart defaults.
         target=['--namespace',self.args.namespace,'--kube-context',self.args.context]
         if self.args.kubeconfig:target+=['--kubeconfig',self.args.kubeconfig]
-        releases=json.loads(self.call(['helm','list','--all','--filter','^'+re.escape(self.args.release)+'$','-o','json']+target))
+        list_args=helm_list_all_flag(self.call(['helm','list','--help']))
+        releases=json.loads(self.call(['helm','list',*list_args,'--filter','^'+re.escape(self.args.release)+'$','-o','json']+target))
         if any(str(x.get('chart','')).startswith('db-lab-0.1.') for x in releases):
             raise ValueError('Chart 0.1.x requires a new namespace/release and verified backup/restore; in-place migration is refused')
         prior={}

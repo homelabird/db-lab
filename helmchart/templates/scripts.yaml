@@ -8,6 +8,8 @@ data:
 {{ .Files.Get "scripts/mariadb-ready.sh" | indent 4 }}
   mariadb-start.sh: |
 {{ .Files.Get "scripts/mariadb-start.sh" | indent 4 }}
+  mariadb-peer-ready.sh: |
+{{ .Files.Get "scripts/mariadb-peer-ready.sh" | indent 4 }}
   redis-ready.sh: |
 {{ .Files.Get "scripts/redis-ready.sh" | indent 4 }}
   redis-start.sh: |

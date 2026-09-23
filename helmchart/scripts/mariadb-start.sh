@@ -3,11 +3,10 @@
 set -euo pipefail
 for key in MARIADB_ROOT_PASSWORD MARIADB_GALERA_MARIABACKUP_PASSWORD; do
   value=${!key}
-  [[ "$value" =~ ^[A-Za-z0-9_-]{24,128}$ ]] || { echo "Invalid Secret key for $key" >&2; exit 1; }
+  [[ "$value" =~ ^[A-Za-z0-9_-]{24,32}$ ]] || { echo "Invalid Secret key for $key (expected 24..32 URL-safe characters)" >&2; exit 1; }
 done
 ordinal=${POD_NAME##*-}
 export MARIADB_GALERA_NODE_NAME="$POD_NAME"
-export MARIADB_GALERA_NODE_ADDRESS="$POD_NAME.$PEER_SERVICE"
 export MARIADB_GALERA_CLUSTER_BOOTSTRAP=no
 export MARIADB_GALERA_CLUSTER_ADDRESS="gcomm://$GALERA_PEERS"
 existing=no

@@ -51,7 +51,7 @@ zookeeper:
       memory: 768Mi
 mariadb:
   enabled: false
-  image: bitnami/mariadb-galera:11.4.5
+  image: docker.io/bitnamilegacy/mariadb-galera@sha256:c860f10be93cbb180d316e921eae40b9e191822d347e57fcfc2e182f52ce710d
   replicas: 3
   storage: 5Gi
   existingSecret: db-lab-credentials

@@ -66,6 +66,35 @@ class ChartContracts(unittest.TestCase):
         c=state['spec']['template']['spec']['containers'][0];self.assertIn('/bitnami/mariadb',[x['mountPath'] for x in c['volumeMounts']])
         for e in c['env']:
             if 'PASSWORD' in e['name']:self.assertIn('secretKeyRef',e['valueFrom'])
+    def test_mariadb_joiners_wait_for_bootstrap_listener(self):
+        state=next(x for x in self.render(self.full()) if x['kind']=='StatefulSet' and x['metadata']['name'].endswith('-mariadb'))
+        pod=state['spec']['template']['spec'];gate=pod['initContainers'][0]
+        self.assertEqual(gate['name'],'wait-for-galera-bootstrap-peer')
+        self.assertEqual(gate['command'],['/bin/bash','/opt/db-lab/mariadb-peer-ready.sh'])
+        script=(CHART/'scripts/mariadb-peer-ready.sh').read_text()
+        self.assertIn("trap 'exit 143' TERM INT",script)
+        self.assertIn('[[ "$BOOTSTRAP_NEW_CLUSTER" == yes ]] || exit 0',script)
+        self.assertIn('getent hosts "$GALERA_BOOTSTRAP_HOST"',script)
+        self.assertIn('wsrep_cluster_status\\tPrimary',script)
+        self.assertIn('wsrep_local_state_comment\\tSynced',script)
+        self.assertIn('mariadb-root-password',str(pod['initContainers'][0]['env']))
+
+    def test_mariadb_recovery_peer_gate_targets_selected_ordinal(self):
+        values=self.full();values['mariadb']['recovery']={'bootstrapOrdinal':2,'confirmed':True}
+        state=next(x for x in self.render(values) if x['kind']=='StatefulSet' and x['metadata']['name'].endswith('-mariadb'))
+        env={x['name']:x.get('value') for x in state['spec']['template']['spec']['initContainers'][0]['env']}
+        self.assertEqual(env['GALERA_BOOTSTRAP_HOST'],'alpha-db-lab-mariadb-2.alpha-db-lab-mariadb-peer.lab-space.svc.cluster.local')
+        self.assertEqual(env['RECOVERY_ORDINAL'],'2')
+    def test_mariadb_runtime_failure_diagnostics_capture_wsrep_without_dumping_secrets(self):
+        script=(ROOT/'scripts/test-helm-mariadb-runtime.sh').read_text()
+        self.assertIn('SHOW GLOBAL VARIABLES',script)
+        self.assertIn('wsrep_(cluster_address|node_address|provider_options|cluster_name)',script)
+        self.assertIn('wsrep_(cluster_status|cluster_size|incoming_addresses|connected|ready|local_state_comment|local_state_uuid)',script)
+        self.assertIn('localhost:3306 SQL unavailable',script)
+        self.assertIn('for port in 4567 4568 4444',script)
+        self.assertIn('peer $peer:$port TCP unavailable',script)
+        self.assertNotIn('kubectl get secret',script)
+        self.assertNotIn('printenv',script)
     def test_kafka_dependent_environment_order(self):
         state=next(x for x in self.render(self.full()) if x['kind']=='StatefulSet' and x['metadata']['name'].endswith('-kafka'))
         env=state['spec']['template']['spec']['containers'][0]['env'];names=[x['name'] for x in env]

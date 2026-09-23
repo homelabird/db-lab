@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -61,13 +62,21 @@ class ControlTests(unittest.TestCase):
         p=subprocess.run([os.sys.executable,str(ROOT/'scripts/control.py'),'health','--json'],capture_output=True,text=True)
         self.assertNotEqual(p.returncode,2);self.assertEqual(len(json.loads(p.stdout)['checks']),4)
 
+    def test_helm_list_all_flag_matches_major_version_help(self):
+        helm3='Flags:\n  -a, --all   show all releases without any filter applied\n'
+        helm4='By default, helm list shows all releases in any status.\nFlags:\n  -A, --all-namespaces\n'
+        self.assertEqual(k8s.helm_list_all_flag(helm3),['--all'])
+        self.assertEqual(k8s.helm_list_all_flag(helm4),[])
+
 class ExposureTests(unittest.TestCase):
     def run_guard(self,bind,allow='no'):
         with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);(root/'scripts').mkdir();(root/'scripts/common.sh').write_bytes((ROOT/'elasticsearch/scripts/common.sh').read_bytes())
-            (root/'.env').write_text(f'ES_BIND_IP={bind}\nES_ALLOW_PUBLIC_BIND={allow}\n')
+            root=Path(tmp)/'fixture';lab_root=root/'elasticsearch'
+            (lab_root/'scripts').mkdir(parents=True);(lab_root/'scripts/common.sh').write_bytes((ROOT/'elasticsearch/scripts/common.sh').read_bytes())
+            (root/'lib').mkdir();shutil.copytree(ROOT/'lib/es-lab',root/'lib/es-lab')
+            (lab_root/'.env').write_text(f'ES_BIND_IP={bind}\nES_ALLOW_PUBLIC_BIND={allow}\n')
             env={k:v for k,v in os.environ.items() if not k.startswith('ES_')}
-            return subprocess.run(['bash','-c','source "$1"; check_exposure','bash',str(root/'scripts/common.sh')],env=env,capture_output=True,text=True)
+            return subprocess.run(['bash','-c','source "$1"; check_exposure','bash',str(lab_root/'scripts/common.sh')],env=env,capture_output=True,text=True)
     def test_loopback_no_ack(self):self.assertEqual(self.run_guard('127.0.0.1').returncode,0)
     def test_old_public_env_refused(self):self.assertNotEqual(self.run_guard('0.0.0.0').returncode,0)
     def test_public_ack_warns(self):
@@ -87,9 +96,15 @@ class K8sGuardTests(unittest.TestCase):
     def test_default_and_malformed_credentials_refused(self):
         for password in ('change-me','short','x'*129,'not safe '*4):self.assertFalse(k8s.valid_password(password))
         self.assertTrue(k8s.valid_password('safe_-01'*4))
+        self.assertFalse(k8s.valid_password('x'*33,32))
     def test_secret_keys_checked(self):
         with patch.object(self.guard,'get',return_value=self.secret):self.guard.check_secret('test',k8s.KEYS)
         with patch.object(self.guard,'get',return_value={'data':{}}),self.assertRaises(ValueError):self.guard.check_secret('test',k8s.KEYS)
+    def test_mariadb_secret_limit_does_not_restrict_redis(self):
+        secret={'data':{k:base64.b64encode(('r'*43 if k=='redis-password' else 'm'*32).encode()).decode() for k in k8s.KEYS}}
+        with patch.object(self.guard,'get',return_value=secret):self.guard.check_secret('test',k8s.KEYS)
+        secret['data']['mariadb-root-password']=base64.b64encode(('m'*33).encode()).decode()
+        with patch.object(self.guard,'get',return_value=secret),self.assertRaises(ValueError):self.guard.check_secret('test',k8s.KEYS)
     def test_init_preserves_existing_credentials(self):
         with patch.object(self.guard,'get',side_effect=lambda kind,name:self.secret if kind=='secret' else {'metadata':{'name':name}}),patch.object(self.guard,'call') as call,contextlib.redirect_stderr(io.StringIO()):self.guard.initialize()
         call.assert_not_called()
@@ -97,7 +112,7 @@ class K8sGuardTests(unittest.TestCase):
         with patch.object(self.guard,'get',return_value=None),patch.object(self.guard,'call') as call,contextlib.redirect_stderr(io.StringIO()):self.guard.initialize()
         args,payload=call.call_args.args
         obj=json.loads(payload);self.assertEqual(set(obj['stringData']),set(k8s.KEYS));self.assertIn('--context',args)
-        for v in obj['stringData'].values():self.assertNotIn(v,' '.join(args));self.assertTrue(k8s.valid_password(v))
+        for v in obj['stringData'].values():self.assertNotIn(v,' '.join(args));self.assertTrue(k8s.valid_password(v));self.assertEqual(len(v),32)
     def test_failed_command_never_echoes_secret_output(self):
         with patch.object(k8s.subprocess,'run',return_value=subprocess.CompletedProcess([],1,'sensitive','secret')):
             with self.assertRaises(ValueError) as error:self.guard.call(['helm','template'])

@@ -1,6 +1,38 @@
-# 실제 런타임 인수 시험 — 아직 수행하지 않은 항목
+# 실제 런타임 인수 시험 — 2026-09-24 결과와 남은 항목
 
-이 문서는 합격 결과가 아니라 실행 절차입니다. 이번 수정본에서 수행한 것은 호스트 로직/모의 테스트, 생성 설정, Go-template 부분 계약 검사입니다. 실제 Helm 검사는 별도 명령으로 실행하고, Kubernetes API 수용 여부와 DB 동작도 다시 검사해야 합니다.
+이 문서는 실제 실행 증거와 미수행 항목을 분리합니다. 아래 kind 결과는 단일 노드 disposable 클러스터에서 수행한 Redis 프로필의 범위이며, 다른 DB/provider나 production HA를 보증하지 않습니다.
+
+## 2026-09-24: kind + Helm 4.1.1 Redis acceptance
+
+| 항목 | 결과 |
+|---|---|
+| 격리 | `db-lab-accept2`, 전용 `/tmp/db-lab-kind-kubeconfig-2`, namespace/release `db-lab`; 기존 `k3d-board-msa` context는 사용하지 않음 |
+| 런타임 | kind Kubernetes v1.31.2, Docker Engine 29.6.2, Helm v4.1.1, 단일 kind worker, 기본 `standard` StorageClass |
+| 설치/준비 | chart 설치 및 2차 bootstrap seal 완료; Redis 3/3, Sentinel 3/3, PVC 6개 Bound, EndpointSlice 연결 확인 |
+| 복제/데이터 | Sentinel `CKQUORUM` 통과; 합성 키 쓰기 후 `WAIT 2 5000`에서 2 replica ACK; replica 재생성 뒤 동일 PVC와 키 보존 확인 |
+| 장애 전환 | primary Pod 삭제 후 Sentinel이 Redis 2를 primary로 선출; 세 Sentinel 동의, Redis 0 재합류해 replica로 복제; 합성 키 유지 확인 |
+| NetworkPolicy | 같은 release label을 가진 probe는 Redis에 도달해 예상 `NOAUTH`; unlabeled probe는 연결 timeout. kind CNI에서 해당 정책이 실제 적용됨 |
+| 정리 | probe Pod 제거. acceptance 완료 후 전용 Helm release와 kind cluster를 삭제하고 전용 kubeconfig를 제거함; 기존 Docker `kind` 네트워크는 건드리지 않음 |
+
+이 결과는 Redis 일반 Pod 재생성 및 primary Pod 장애 전환의 실제 런타임 근거입니다. Redis 전체 정전, Sentinel/PVC 전체 손실, PVC 삭제 복구, 두 번째 release 격리, Helm upgrade/uninstall 데이터 동작, MariaDB/Kafka/Elasticsearch 기동은 포함하지 않습니다. acceptance 클러스터는 보고서 작성 뒤 제거했으므로 재현 시 아래 절차로 새 격리 클러스터를 만듭니다.
+
+## 2026-09-24: Elasticsearch 9 bounded benchmark
+
+기존 `es9-lab` 다섯 노드 클러스터를 먼저 읽기 전용 status로 확인했습니다. Docker Engine 29.6.2, Elasticsearch 9.5.3, 285/285 shard copies STARTED, health green이었습니다. `./elasticsearch-9/lab.sh benchmark --seconds 5 --rate 5 --batch 5 --seed 42`를 세 번 실행했고, 각 run은 25건을 bulk ack, refresh/count 검증 후 전용 `lab-benchmark-v1` 인덱스를 삭제했습니다. 각 JSON report는 `elasticsearch-9/reports/benchmarks/`에 남았습니다.
+
+공통 comparator에서 세 run은 workload와 host/컨테이너 자원 설정이 일치했습니다. p95 batch latency는 60.754, 45.242, 19.619ms였고 CV는 49.61%였습니다. 따라서 이 세 번은 repeat 산포를 보여주는 데는 쓸 수 있지만 성능 기준선으로 안정적이지 않습니다. 실행 전후 ES node CPU는 45%에서 97%까지, node load average는 24.73에서 51.48까지 관측됐고 백그라운드 경쟁 부하가 컸습니다. comparator는 `performance_comparison_ready: false`로 contention/dataset 상태의 전체 실행 계측 부족을 표시합니다. 이 값으로 ES 7, 다른 DB, production 처리량을 추론하지 않습니다.
+
+ES 9의 실제 bounded write 경로와 cleanup은 확인했습니다. ES 7의 runtime run, search latency workload, image digest 기록, contention 격리/계측은 남아 있습니다.
+
+### 공통 비교기 재검증 및 이후 호스트 상태 확인
+
+저장된 ES9 report 5개 모두 같은 workload(5초, 5 docs/s, 5문서 batch, seed 42)와 PASS 상태였습니다. 공통 comparator는 p95 batch latency median 45.242ms, mean 38.776ms, sample stdev 19.344ms, CV 49.89%를 계산했습니다. 두 report에 host/container metadata가 없어 `environment_confirmed=false`였고 `performance_comparison_ready=false`를 유지했습니다. 기존 report 파일만 읽었으며 DB 데이터는 변경하지 않았습니다.
+
+이후 읽기 전용 상태 확인에서 cluster는 green, 285/285 shard copies STARTED, pending task 0이었습니다. 같은 시점 host load average는 9.92/12.94/23.13, ES node CPU는 각 49%, node RAM 92%, disk 82.89%, host swap은 8GiB 중 8GiB 사용 중이었습니다. 이 상태 때문에 추가 실부하는 실행하지 않았습니다. 이는 기존 report의 측정 당시 상태를 설명하는 자료가 아니며 이번 시점의 안전 판단에만 사용합니다.
+
+새 공통 메타데이터 collector를 적용한 뒤 ES9의 기존 실행 컨테이너 다섯 개에 Docker inspect/image inspect를 읽기 전용으로 실행했습니다. 다섯 개 모두 container limit 정보와 immutable image ID를 읽었고, `docker.elastic.co/elasticsearch/elasticsearch@sha256:f456578fc2a620a8a4f4c21d070fff1f6070345adb2be5e5626b65be72aea350` registry digest로 일치했습니다. 이 확인은 Docker inspect 형식과 이미지 identity 수집만 검증하며 DB API 호출이나 부하 실행은 하지 않았습니다.
+
+같은 기존 report 5개를 새 comparator로 다시 읽었을 때 기존 파일의 `container_images`가 없고 host/resource metadata 일부도 누락·불일치하여 `environment_confirmed=false` 및 `performance_comparison_ready=false`를 유지했습니다. 이 report들을 새 환경 증거가 있는 반복 측정으로 간주하지 않습니다.
 
 ## 시험 경계
 
@@ -16,7 +48,7 @@ bash scripts/test-offline.sh
 bash scripts/test-helm.sh
 ```
 
-두 명령을 분리합니다. 첫 명령의 Go renderer는 차트에 필요한 일부 함수만 구현한 계약 검사이며 Helm 대체물이 아닙니다. 두 번째 명령은 실제 Helm이 없으면 127로 종료합니다. 실제 Helm 렌더링도 admission, 이미지 pull, 준비 상태, 데이터 보존의 증거는 아닙니다.
+두 명령을 분리합니다. 첫 명령의 Go renderer는 차트에 필요한 일부 함수만 구현한 계약 검사이며 Helm 대체물이 아닙니다. 두 번째 명령은 실제 Helm이 없으면 127로 종료합니다. 2026-09-24에는 Helm v4.1.1 lint/render가 통과했습니다. 실제 Helm 렌더링만으로 admission, 이미지 pull, 준비 상태, 데이터 보존은 증명되지 않으며, 위 표의 Redis runtime acceptance가 해당 범위만 추가로 입증합니다.
 
 ## 2. Compose 신규·기존 볼륨 시험
 
@@ -58,6 +90,16 @@ MariaDB의 기존 `tests/run-real.sh`는 명시적 `RUN_DISRUPTIVE_TESTS=1`을 �
 고유 실행 ID를 붙인 데이터를 쓰고 복제 후 비교합니다. primary 프로세스 중지 → Sentinel 선출 → 클라이언트 재연결 → 기존 primary 복귀 → Sentinel 순차/전체 재시작을 수행합니다. 마지막에도 역할/데이터/감시 대상이 일치해야 합니다. 승인된 쓰기 목록과 복구 후 실제 키 집합을 비교하여 누락을 집계합니다. AOF everysec와 비동기 복제의 손실 가능성을 숨기지 않습니다. **PVC를 삭제해 primary를 비우는 것은 정상 재시작 시험이 아닙니다.** 별도 백업/복원 시나리오로 취급합니다.
 
 ## 5. Helm MariaDB 보존·전체 복구
+
+2026-09-24에 새 kind v1.31.2 클러스터로 설치를 시도했으나 **미통과**입니다. 기본 `bitnami/mariadb-galera:11.4.5`는 pull되지 않았고, pull되는 legacy digest를 고정했습니다. 발견한 결함은 두 가지입니다. `k8s init`의 43자 암호가 MariaDB 32자 상한을 넘었고, Pod security context의 `runAsGroup: 1001`은 이미지의 `1001:0` 기본 실행 계약을 덮어써 `my.cnf`를 쓸 수 없게 했습니다. 암호 길이를 제한하고 `runAsGroup`을 제거하자 node 0은 설정 파일을 갱신하고 Galera Primary/size 1로 준비됐습니다. 세 Pod의 DNS 해석과 Primary의 TCP 4567 연결은 확인했지만 node 1/2는 `failed to reach primary view`로 종료해 세 노드 quorum을 만들지 못했습니다. 이후 node address를 이미지 기본 IP autodetect로 돌렸지만 재시험에서도 동일한 증상이 남았습니다. 쓰기·PVC 보존·전체복구는 수행하지 않았으며 시험용 kind 클러스터, namespace, PVC와 Secret을 클러스터 삭제로 정리했습니다. 런타임 지원은 미검증 상태입니다. 현재 readiness는 선언된 replica 수만큼 `wsrep_cluster_size`가 일치해야 통과하도록 보강했습니다.
+
+추가로 `scripts/test-helm-mariadb-runtime.sh`에 신선 설치, 3노드 복제, 단일 Pod/PVC 재합류 검증을 자동화했다. 2026-09-24의 격리 4-node kind 실행에서는 node 0이 `Primary/Synced`, cluster_size 1에 머물고 node 1/2가 `failed to reach primary view`로 종료했다. 같은 release label의 probe는 seed TCP 4567/3306 연결에 성공했고, node 1의 로그에는 세 seed 주소와 자기 Pod endpoint가 나타났다. 이는 Pod network 전체 차단 증거는 아니며 Galera peer admission/주소 교환은 여전히 미확인이다. 복제·쓰기는 시도하지 않았고 정확한 acceptance kind cluster와 kubeconfig를 제거했다. 이 acceptance는 아직 **실패** 상태다.
+
+2026-09-24에 보강된 acceptance 스크립트를 다시 실행했다. Helm readiness deadline에서 StatefulSet `Ready: 0/3`으로 실패했고, 자동 진단에서 node 0은 계속 Running, node 1/2는 재시작 중인 것을 확인했다. DNS는 각 ordinal의 고유 Pod IP를 반환했고, node 1에서 node 0의 3306 및 4567/TCP 접속이 성공했다. joiner 로그에는 `Connecting with bootstrap option: 0`, 전체 gcomm seed 목록, 자기 주소 blacklisting 뒤 `Connection refused`와 NON_PRIM view가 기록됐다. 이후 격리 시험에서 fresh/recovery joiner seed를 선택된 bootstrap FQDN 하나로 줄였지만 같은 primary-view 실패가 재현되어 해당 소스 변경은 되돌렸다. 시험 namespace에서만 NetworkPolicy를 삭제한 뒤에도 cluster size는 1로 남았다. 정책 삭제 후 별도 socat probe는 Pod 간 UDP/4567 payload 전달에 성공했다. 따라서 이 결과는 NetworkPolicy나 일반 TCP/UDP Pod 경로가 원인임을 뒷받침하지 않으며, 실제 Galera protocol exchange/admission 실패 지점은 여전히 미확인이다. 이번 시험에서는 데이터 쓰기/PVC 재합류를 하지 않았고 정확한 kind 클러스터와 임시 kubeconfig를 삭제했다.
+
+5분 제한의 두 번째 fresh-install 시험도 `Ready: 0/3` 및 Galera `failed to reach primary view`로 종료됐다. 진단 중 NetworkPolicy를 삭제했기 때문에 release guard도 `NetworkPolicy ... NotFound`를 보고했다. 해당 변경은 전용 namespace에만 있었고 acceptance cleanup이 클러스터 전체를 제거했다. 이 시험은 설치·복제·재합류 acceptance를 통과하지 못했다.
+
+마지막 격리 재시도는 새 kind v1.31.2 4-node cluster, 전용 namespace/release와 임시 kubeconfig로 실행했다. Helm 설치 후 세 PVC(각 5Gi)는 모두 Bound였지만 StatefulSet은 deadline까지 `Ready: 0/3`이었다. node 0은 `Primary/Synced`, `wsrep_cluster_size=1`을 유지했고 node 1/2는 Primary view를 얻지 못해 재시작했다. Pod DNS는 서로 다른 주소를 반환했고 joiner init gate의 seed 3306 연결은 성공했다. kindnet은 NetworkPolicy를 구현/집행하지 않으므로 이 실행에서 firewall 또는 NetworkPolicy를 원인으로 단정할 수 없다. 복제 쓰기나 PVC 재합류 검증은 실행하지 않았다. 스크립트가 해당 kind cluster와 임시 kubeconfig를 정리했으며 사후 `kind get clusters`도 비어 있었다.
 
 선택 이미지의 digest와 실제 UID, `SELECT @@datadir`, 컨테이너 mount/PVC를 기록합니다. 시험 행 삽입 후 Pod를 하나씩 재생성하여 데이터가 남고 모든 노드의 `wsrep_cluster_status=Primary`, `wsrep_local_state_comment=Synced`, `wsrep_cluster_size=3`, cluster UUID가 일치하는지 확인합니다.
 

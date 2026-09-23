@@ -56,6 +56,7 @@ spec:
     metadata:
       annotations:
         checksum/mariadb-start.sh: {{ .Files.Get "scripts/mariadb-start.sh" | sha256sum | quote }}
+        checksum/mariadb-peer-ready.sh: {{ .Files.Get "scripts/mariadb-peer-ready.sh" | sha256sum | quote }}
         checksum/mariadb-ready.sh: {{ .Files.Get "scripts/mariadb-ready.sh" | sha256sum | quote }}
       labels:
         component: mariadb
@@ -66,12 +67,40 @@ spec:
       securityContext:
         fsGroup: 1001
         runAsUser: 1001
-        runAsGroup: 1001
         runAsNonRoot: true
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       {{- include "db-lab.placement" (dict "root" . "component" "mariadb") | nindent 6 }}
+      initContainers:
+        - name: wait-for-galera-bootstrap-peer
+          image: {{ .Values.mariadb.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "/opt/db-lab/mariadb-peer-ready.sh"]
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: GALERA_BOOTSTRAP_HOST
+              value: "{{ include "db-lab.fullname" . }}-mariadb-{{ ternary .Values.mariadb.recovery.bootstrapOrdinal 0 (ge (int .Values.mariadb.recovery.bootstrapOrdinal) 0) }}.{{ include "db-lab.dns" (dict "root" . "service" (printf "%s-mariadb-peer" (include "db-lab.fullname" .))) }}"
+            - name: BOOTSTRAP_NEW_CLUSTER
+              value: "{{ ternary "yes" "no" .Values.mariadb.bootstrapNewCluster }}"
+            - name: RECOVERY_ORDINAL
+              value: "{{ .Values.mariadb.recovery.bootstrapOrdinal }}"
+            - name: MARIADB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mariadb.existingSecret | quote }}
+                  key: mariadb-root-password
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: scripts
+              mountPath: /opt/db-lab
+              readOnly: true
       containers:
         - name: mariadb
           image: {{ .Values.mariadb.image | quote }}
@@ -115,10 +144,10 @@ spec:
               value: "mariabackup"
             - name: MARIADB_GALERA_CLUSTER_NAME
               value: "{{ include "db-lab.fullname" . }}-mariadb"
+            - name: EXPECTED_CLUSTER_SIZE
+              value: {{ .Values.mariadb.replicas | quote }}
             - name: GALERA_PEERS
               value: "{{ include "db-lab.fullname" . }}-mariadb-0.{{ include "db-lab.dns" (dict "root" . "service" (printf "%s-mariadb-peer" (include "db-lab.fullname" .))) }},{{ include "db-lab.fullname" . }}-mariadb-1.{{ include "db-lab.dns" (dict "root" . "service" (printf "%s-mariadb-peer" (include "db-lab.fullname" .))) }},{{ include "db-lab.fullname" . }}-mariadb-2.{{ include "db-lab.dns" (dict "root" . "service" (printf "%s-mariadb-peer" (include "db-lab.fullname" .))) }}"
-            - name: PEER_SERVICE
-              value: "{{ include "db-lab.dns" (dict "root" . "service" (printf "%s-mariadb-peer" (include "db-lab.fullname" .))) }}"
             - name: BOOTSTRAP_NEW_CLUSTER
               value: "{{ ternary "yes" "no" .Values.mariadb.bootstrapNewCluster }}"
             - name: RECOVERY_ORDINAL
