@@ -103,6 +103,17 @@ class CollectTests(unittest.TestCase):
         self.assertEqual(result['containers'][0]['signals'],['permission_denied'])
         self.assertNotIn('private-password',json.dumps(result))
 
+    def test_requested_healthy_service_logs_are_classified(self):
+        c=self.compose()
+        def run(argv,**kwargs):
+            if argv[1]=='inspect': return types.SimpleNamespace(stdout=json.dumps([container('api')]),stderr='')
+            return types.SimpleNamespace(stdout='private-token: Access denied',stderr='')
+        with patch.object(startup,'BASE_SERVICES',('api',)),patch.object(startup.subprocess,'run',side_effect=run):
+            result=startup.collect(c,include_logs=True,log_services=('api',))
+        self.assertTrue(result['containers'][0]['ready'])
+        self.assertEqual(result['containers'][0]['signals'],['authentication_rejected'])
+        self.assertNotIn('private-token',json.dumps(result))
+
 class InitializationTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
@@ -129,6 +140,16 @@ class InitializationTests(unittest.TestCase):
         with patch.object(startup,'collect',return_value={'ready':True,'containers':[]}),redirect_stdout(io.StringIO()):
             manage.Compose.wait_initialized(self.compose,seconds=4)
         self.assertEqual(self.compose.run.call_count,2);self.assertEqual(self.evidence()['status'],'initialized_and_ready')
+
+    def test_admin_timeout_classifies_partial_output_without_storing_it(self):
+        self.compose.engine=['podman']
+        self.compose.run.side_effect=subprocess.TimeoutExpired(['fake'],1,
+            output='password=PRIVATE-SENTINEL',stderr='Access denied; connection timed out')
+        with self.assertRaisesRegex(RuntimeError,'logs api'):
+            manage.Compose.wait_initialized(self.compose,seconds=2)
+        evidence=self.evidence()
+        self.assertEqual(evidence['admin_signals'],['authentication_rejected','connection_timeout'])
+        self.assertNotIn('PRIVATE-SENTINEL',json.dumps(evidence))
     def test_raw_stdout_is_not_in_startup_receipt(self):
         with patch.object(startup,'collect',return_value={'ready':True,'containers':[]}),redirect_stdout(io.StringIO()):
             manage.Compose.wait_initialized(self.compose,seconds=4)
@@ -158,6 +179,8 @@ class FailedInitializationEvidenceTests(unittest.TestCase):
         with patch.object(startup,'collect',return_value={'ready':False,'containers':rows}) as collect,self.assertRaisesRegex(RuntimeError,'deadline'):
             manage.Compose.wait_initialized(self.compose,seconds=2)
         self.assertGreater(collect.call_count,0)
+        self.assertTrue(any(call.kwargs.get('log_services')==('api','worker')
+                            for call in collect.call_args_list))
         evidence=self.evidence()
         self.assertEqual(evidence['containers'],rows);self.assertFalse(evidence['admin_initialized'])
         self.assertEqual(evidence['last_error'],'admin_initialization_failed')
@@ -168,3 +191,13 @@ class FailedInitializationEvidenceTests(unittest.TestCase):
         with patch.object(startup,'collect',return_value={'ready':True,'containers':[]}),self.assertRaisesRegex(RuntimeError,'deadline'):
             manage.Compose.wait_initialized(self.compose,seconds=2)
         self.assertEqual(self.evidence()['status'],'failed')
+
+    def test_admin_failure_reports_only_sanitized_signals(self):
+        self.compose.engine=['podman']
+        self.compose.run.return_value=types.SimpleNamespace(returncode=1,
+            stdout='password=PRIVATE-SENTINEL',stderr='Access denied; connection refused')
+        with self.assertRaisesRegex(RuntimeError,'logs api'):
+            manage.Compose.wait_initialized(self.compose,seconds=2)
+        evidence=self.evidence()
+        self.assertEqual(evidence['admin_signals'],['authentication_rejected','connection_refused'])
+        self.assertNotIn('PRIVATE-SENTINEL',json.dumps(evidence))

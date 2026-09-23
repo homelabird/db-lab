@@ -71,11 +71,11 @@ bash ./all.sh mvp smoke
 | 시나리오 | 변경 | 기대 관찰과 판정 |
 |---|---|---|
 | `baseline` | 장애 없음 | 요청 정상 처리, 승인 주문과 원본·검색의 전체 필드 일치 |
-| `kafka-outage` | Kafka 컨테이너 stop 후 같은 ID start | 주문은 SQL에 저장, outbox 증가, 복원 뒤 검색 수렴 |
+| `kafka-outage` | Kafka 컨테이너 stop 후 같은 ID start | 장애 적용 직후 canary 주문을 실제 HTTP로 저장·검색. SQL 저장/검색 미노출과 Kafka 연결 실패/outbox 증가를 함께 관측하고 복원 뒤 수렴 |
 | `es-outage` | ES stop/start | 검색 오류와 consumer 지연. outbox=0만으로 성공 판정하지 않음 |
 | `redis-outage` | Redis stop/start | 캐시 연결 오류, SQL 우회, 원본·검색은 보존 |
 | `db-freeze` | MariaDB pause/unpause | 프로세스를 종료하지 않고 응답을 정지. 타임아웃과 일부 캐시 조회의 차이 |
-| `worker-freeze` | worker pause/unpause | DB 연결은 살아 있어도 처리 대기가 증가. 재개 후 따라잡는지 확인 |
+| `worker-freeze` | worker pause/unpause | 장애 적용 직후 canary 주문을 실제 HTTP로 저장·검색. DB와 Kafka는 연결되지만 outbox 또는 consumer lag가 증가하며 검색은 stale인 상태를 확인하고 재개 뒤 수렴 |
 | `redis-recreate` | Redis 컨테이너 재생성 | 이미지 ID·named volume이 같은지 검사. 컨테이너 교체와 데이터 초기화를 구분 |
 | `redis-switch` | API/worker를 별도 Redis로 연결 후 normal 복원 | 다른 캐시의 HIT/MISS와 잔존 캐시를 비교. 기존/spare 볼륨 삭제 안 함 |
 | `row-lock` | 이번 실행 전용 주문 행 하나에 제한시간 `FOR UPDATE` | SQL 프로세스 장애가 아닌 잠금 대기. `mariadb_lock_wait_timeout`을 실제 응답에서 관측해야 효과 확인 |
@@ -131,6 +131,8 @@ bash ./all.sh mvp simulate run kafka-outage \
 일감이 밀리면 무한 큐나 따라잡기 폭주 대신 계획 슬롯을 건너뜁니다. 따라서 요청 제한은 과부하 도구의 완전한 open-loop 부하 보장을 의미하지 않습니다. 건너뛴 작업은 지연 표본에 존재하지 않으므로 높은 부하의 성능 비교는 표본 누락까지 고려해야 합니다. 진단·대조도 DB 읽기 부하를 추가합니다.
 
 `hot-key` 업데이트는 주문의 정상 상태 전이(created→paid→shipped)를 따르므로 terminal 상태 이후에는 조회로 바뀝니다. 무한 결제/취소 반복이나 가짜로 version만 증가시키는 모델은 아닙니다.
+
+`kafka-outage`와 `worker-freeze`는 무작위 부하 생성 주문에 기대지 않고, 장애가 확인된 직후 별도 실행 전용 canary 주문을 만듭니다. HTTP 쓰기 승인, 즉시 검색 결과, 진단 시점의 dependency/backlog를 함께 남깁니다. Kafka 정지와 worker 정지를 구분하려고 전자는 Kafka 연결 불가와 SQL outbox 증가를, 후자는 DB/Kafka 연결 유지와 outbox 또는 consumer lag 증가를 요구합니다. 복구 후 canary도 다른 실행 주문처럼 SQL/검색/캐시 대조를 통과해야 합니다. 이는 짧은 고정 workload 실습이지 실제 사용자 traffic이나 장기 backlog drain 성능 보증은 아닙니다.
 
 ## 5. 성공 기준과 보고서 읽기
 

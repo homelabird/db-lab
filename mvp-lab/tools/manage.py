@@ -235,6 +235,7 @@ class Compose:
             if context or not host:
                 rows = read("context", "inspect", *([context] if context else []))
                 host = rows[0]["Endpoints"]["docker"]["Host"]
+                self._resolved_host = host
             daemon = info.get("ID")
             if not daemon:
                 raise RuntimeError("Docker did not return a daemon ID; target cannot be verified")
@@ -286,27 +287,37 @@ class Compose:
             atomic_json(path, guarded)
 
     def wait_initialized(self, seconds=180):
-        from tools.startup import collect
+        from tools.startup import collect, log_signals
         if type(seconds) not in (int, float) or not 0 < seconds <= 600:
             raise ValueError("Initialization budget must be 0..600 seconds")
         deadline = time.monotonic() + seconds
         initialized = False
         docker_readiness = self.engine == ["docker"] and bool(self.guard_engine().get("local_docker"))
+        work_deadline = deadline - min(10, seconds / 4) if docker_readiness else deadline
         evidence = {"schema": 1, "status": "waiting", "admin_initialized": False,
-                    "attempts": 0, "last_error": None, "containers": []}
+                    "attempts": 0, "last_error": None, "admin_signals": [], "containers": []}
         directory = ROOT / "reports/startup"
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         path = directory / ("startup-" + uuid.uuid4().hex[:12] + ".json")
-        while time.monotonic() < deadline:
+        while time.monotonic() < work_deadline:
             evidence["attempts"] += 1
             if not initialized:
                 try:
+                    remaining = deadline - time.monotonic()
+                    # Keep time to record container states if admin init stalls.
+                    init_timeout = min(40, max(.01, remaining - min(5, remaining / 2)))
                     result = self.run("exec", "-T", "api", "python", "-m", "mvp_app.admin", "init",
-                                      capture=True, check=False, timeout=min(40, max(.01, deadline-time.monotonic())))
+                                      capture=True, check=False, timeout=init_timeout)
                     initialized = result.returncode == 0
                     evidence["last_error"] = None if initialized else "admin_initialization_failed"
-                except subprocess.TimeoutExpired:
+                    if not initialized:
+                        evidence["admin_signals"] = sorted(set(evidence["admin_signals"] +
+                            log_signals((getattr(result, "stdout", "") or "") + "\n" +
+                                        (getattr(result, "stderr", "") or ""))))
+                except subprocess.TimeoutExpired as exc:
                     evidence["last_error"] = "admin_initialization_timeout"
+                    output = "\n".join(str(part) for part in (exc.stdout, exc.stderr) if part)
+                    evidence["admin_signals"] = sorted(set(evidence["admin_signals"] + log_signals(output)))
                 evidence["admin_initialized"] = initialized
             left = deadline - time.monotonic()
             if left > 0:
@@ -327,9 +338,25 @@ class Compose:
             left = deadline - time.monotonic()
             if left > 0:
                 time.sleep(min(3, left))
+        if docker_readiness:
+            left = deadline - time.monotonic()
+            if left > 0:
+                try:
+                    observed = collect(self, include_logs=True, log_services=("api", "worker"),
+                                       budget=min(10, left))
+                    evidence["containers"] = observed["containers"]
+                    if initialized and observed["ready"]:
+                        evidence["status"] = "initialized_and_ready"
+                        atomic_json(path, evidence)
+                        print("Initialization evidence:", str(path))
+                        return
+                except Exception:
+                    evidence["diagnostics"] = "container_observation_failed"
         evidence["status"] = "failed"
         atomic_json(path, evidence)
-        raise RuntimeError("Initialization/readiness deadline exceeded; containers and volumes retained. See " + str(path))
+        raise RuntimeError("Initialization/readiness deadline exceeded; containers and volumes retained. "
+                           "Inspect ./all.sh mvp logs api, ./all.sh mvp logs worker, and "
+                           "./all.sh mvp diagnose. Sanitized evidence: " + str(path))
 
 
 def parser():

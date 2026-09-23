@@ -3,8 +3,8 @@
 현재 시작점은 [v12 시작·진단 수정 가이드](../docs/FOLLOWUP-REPAIR-2026-09-21.md)입니다.
 검사 명령의 기본 설명은 [품질 가이드](../docs/QUALITY-GUIDE.md)를 확인하세요.
 전체 품질 검사 → core 인수 → 개별 장애 실습 → [같은 계획의 비교 실험](docs/COMPARATIVE-STUDIES.md) 순서로 진행합니다.
-트랜잭션·메시지·네트워크 실습은 아래 문서의 별도 경계를 확인하세요.
-[트랜잭션](docs/TRANSACTION-DRILLS.md) · [메시지](docs/MESSAGE-DRILLS.md) · [네트워크/복원](docs/ADVANCED-DRILLS.md) · [Ansible](../ansible/README.md)
+트랜잭션·메시지·네트워크 실습은 아래 문서의 별도 경계를 확인하세요. 시나리오별 dev/staging/prod 대응 조회는 [대응 쿼리 가이드](../docs/SCENARIO-RESPONSE-QUERIES.md#mvp-end-to-end-scenarios)를 참고하세요.
+[트랜잭션](docs/TRANSACTION-DRILLS.md) · [메시지](docs/MESSAGE-DRILLS.md) · [통합 사고 대응 훈련](docs/INCIDENT-EXERCISE.md) · [네트워크/복원](docs/ADVANCED-DRILLS.md) · [Ansible](../ansible/README.md)
 
 이 시스템은 기능이 많은 쇼핑몰이 아닙니다. 주문 하나가 저장·전달·검색되는 경로를 만들고,
 **어느 DB가 멈췄는지에 따라 왜 일부 기능만 실패하는지** 관찰하는 실습입니다.
@@ -90,6 +90,11 @@ API만 호스트 loopback에 공개됩니다. DB 포트는 호스트에 공개�
 두 MVP 사본을 동시에 띄우려면 **첫 up 전** 서로 다른 `MVP_PROJECT=db-lab-mvp-<이름>`와 `API_PORT`를 정하세요.
 같은 엔진에서 같은 project 이름을 쓰면 디렉터리가 달라도 같은 자원을 관리할 수 있습니다.
 기존 배포를 새 코드로 관리할 때는 기존 `.env`와 `.state`를 보존해야 합니다. 여기에는 사용자 환경으로의 자동 적용·이전이 없습니다.
+
+`up`이 initialization/readiness deadline으로 실패하면 컨테이너와 볼륨은 보존됩니다.
+오류에 나온 `reports/startup/startup-*.json`에서 `last_error`, 분류된 `admin_signals`와
+가능한 경우 컨테이너 상태를 확인하고 `./all.sh mvp logs api`, `logs worker`, `diagnose`를 실행하세요.
+보고서에는 원본 로그나 비밀번호를 저장하지 않습니다.
 
 ## 3. 명령 빠른 참고
 

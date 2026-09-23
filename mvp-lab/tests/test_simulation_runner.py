@@ -50,6 +50,22 @@ class RunnerContractTests(unittest.TestCase):
         self.j.rows['requests'].append({'error':'mariadb_lock_wait_timeout'})
         self.assertTrue(self.runner.effect_observed())
 
+    def test_worker_freeze_requires_write_to_be_acknowledged_but_not_searchable(self):
+        self.runner.plan=Plan(scenario='worker-freeze')
+        self.runner.projection_gaps.append('synthetic-order')
+        self.runner.baseline_diagnostics={'mariadb':{'outbox_pending':0},'kafka':{'lag':0}}
+        self.j.rows['timeline'].append({'stage':'diagnostics','phase':'fault','data':{'dependencies':{
+            'mariadb':{'reachable':True,'outbox_pending':1},
+            'kafka':{'reachable':True,'lag':0}}}})
+        self.assertTrue(self.runner.effect_observed())
+
+    def test_outage_without_search_gap_is_not_a_confirmed_customer_symptom(self):
+        self.runner.plan=Plan(scenario='kafka-outage')
+        self.runner.baseline_diagnostics={'mariadb':{'outbox_pending':0}}
+        self.j.rows['timeline'].append({'stage':'diagnostics','phase':'fault','data':{'dependencies':{
+            'mariadb':{'reachable':True,'outbox_pending':1},'kafka':{'reachable':False}}}})
+        self.assertFalse(self.runner.effect_observed())
+
     def test_old_generic_error_is_not_a_confirmed_lock_timeout(self):
         self.runner.plan=Plan(scenario='row-lock')
         self.j.rows['requests'].append({'error':'mariadb_unavailable'})
@@ -132,6 +148,7 @@ class LoopbackScenarioTests(unittest.TestCase):
                 self.assertEqual(result['status'],'passed',json.dumps(result,ensure_ascii=False))
                 self.assertTrue(result['fault_applied']);self.assertTrue(result['fault_restored'])
                 self.assertTrue(result['fault_effect_observed']);self.assertTrue(result['final_consistency']['consistent'])
+                self.assertTrue(any(r.get('stage')=='write_not_yet_searchable' for r in journal.rows['timeline']))
                 self.assertEqual(repo.orders,search.docs)
                 self.assertGreater(result['workload_http_requests'],result['admitted_workflows'])
                 self.assertEqual(result['evidence_kind'],'TEST-DOUBLE-DBS-WITH-REAL-LOOPBACK-HTTP')

@@ -17,6 +17,9 @@ LOG_PATTERNS = {
     'configuration_rejected': r'unrecognized configuration|unknown configuration|invalid configuration|fatal config',
     'memory_allocation_failed': r'cannot allocate memory|outofmemoryerror|out of memory',
     'topic_unavailable': r'unknown_topic_or_part|unknown topic or partition',
+    'connection_timeout': r'connection timed out|connect timeout|timed out',
+    'name_resolution_failed': r'temporary failure in name resolution|name or service not known|could not resolve host',
+    'service_unavailable': r'service unavailable|server is not ready|not yet available',
 }
 
 
@@ -51,7 +54,7 @@ def sanitize_container(raw: dict, project: str, service: str) -> dict:
             'ready': ready, 'signals': []}
 
 
-def collect(compose, *, include_logs=True, budget=30.0) -> dict:
+def collect(compose, *, include_logs=True, log_services=(), budget=30.0) -> dict:
     """Observations, not a DB I/O/replication proof. Engine pin is mandatory."""
     if not 0 < budget <= 60:
         raise ValueError('diagnostic_budget_out_of_range')
@@ -86,7 +89,7 @@ def collect(compose, *, include_logs=True, budget=30.0) -> dict:
                 if not isinstance(values, list) or len(values) != 1:
                     raise RuntimeError('invalid_inspect_response')
                 row = sanitize_container(values[0], compose.config['MVP_PROJECT'], service)
-                if include_logs and not row['ready']:
+                if include_logs and (not row['ready'] or service in log_services):
                     try:
                         row['signals'] = log_signals(docker('logs', '--tail', '100', row['container_id']))
                     except Exception:

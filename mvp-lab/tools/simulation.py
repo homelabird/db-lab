@@ -274,6 +274,8 @@ class Runner:
         self.phase = "setup"
         self.contract_errors = []
         self.races = []
+        self.projection_gaps = []
+        self.baseline_diagnostics = {}
         self.cancel = threading.Event()
         self.observer_stop = threading.Event()
         self.fault_started = False
@@ -483,6 +485,25 @@ class Runner:
         self.journal.write("timeline", stage="diagnostics", phase=self.phase, data=data)
         return data
 
+    def projection_probe(self):
+        """Prove a successful SQL write can lag search while the pipeline is impaired."""
+        key = self.run_id + "-fault-probe"
+        created = self.create(key, self.payload("fault-probe"), scope="fault_probe")
+        if created.status not in {200, 201} or not isinstance(created.payload.get("order"), dict):
+            self.journal.write("timeline", stage="fault_probe_write_failed", status=created.status)
+            return
+        order = created.payload["order"]
+        found = self.call("GET", "/api/search?q=" + quote(order["id"]),
+                          operation="fault_probe_search", scope="fault_probe")
+        if found.status == 200 and not any(
+                row.get("id") == order["id"] for row in found.payload.get("orders", [])):
+            self.projection_gaps.append(order["id"])
+            self.journal.write("timeline", stage="write_not_yet_searchable", order_id=order["id"],
+                               search_status=found.status)
+        else:
+            self.journal.write("timeline", stage="fault_probe_search_result", order_id=order["id"],
+                               search_status=found.status, visible=found.status == 200)
+
     def observe(self):
         while not self.observer_stop.is_set():
             self.sample()
@@ -503,6 +524,8 @@ class Runner:
             self.fault_started = True
             self.phase = "fault"
             self.journal.write("timeline", stage="fault_applied", detail=applied)
+            if self.plan.scenario in {"kafka-outage", "worker-freeze"}:
+                self.projection_probe()
             self.cancel.wait(self.plan.fault_for)
         except Exception as exc:
             self.fault_error = type(exc).__name__
@@ -585,7 +608,23 @@ class Runner:
             return any(r["phase"] in {"fault", "fault_transition"} and r["scope"] == "workload"
                        and (r["status"] == 0 or r["status"] >= 500) for r in requests)
         if scenario in {"kafka-outage", "worker-freeze"}:
-            return any(d.get("mariadb", {}).get("outbox_pending", 0) > 0 for d in diagnostic)
+            if not self.projection_gaps:
+                return False
+            for data in diagnostic:
+                sql = data.get("mariadb", {})
+                broker = data.get("kafka", {})
+                if scenario == "kafka-outage":
+                    backlog = sql.get("outbox_pending", 0) > self.baseline_diagnostics.get(
+                        "mariadb", {}).get("outbox_pending", 0)
+                    if sql.get("reachable") is True and broker.get("reachable") is False and backlog:
+                        return True
+                else:
+                    backlog = (sql.get("outbox_pending", 0) > self.baseline_diagnostics.get(
+                        "mariadb", {}).get("outbox_pending", 0)
+                        or broker.get("lag", 0) > self.baseline_diagnostics.get("kafka", {}).get("lag", 0))
+                    if sql.get("reachable") is True and broker.get("reachable") is True and backlog:
+                        return True
+            return False
         if scenario == "es-outage":
             return any(d.get("elasticsearch", {}).get("reachable") is False for d in diagnostic)
         return False
@@ -619,6 +658,7 @@ class Runner:
             data = self.sample()
             if not data.get("dependencies_reachable"):
                 raise RuntimeError("A baseline dependency is unreachable")
+            self.baseline_diagnostics = data.get("dependencies", {})
             self.phase = "baseline"
             self.workload_zero = time.monotonic()
             self.journal.write("timeline", stage="workload_started",
