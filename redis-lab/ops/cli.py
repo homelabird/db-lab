@@ -5,7 +5,7 @@ import signal
 import sys
 import time
 from .common import Blocked,Report,Sampler,redact,recover_journal,root,snapshot
-from .load import exercise
+from .load import exercise,save_benchmark
 from .resp import Settings,Connection,RedisError
 from .scenarios import SCENARIOS,run_scenario,proxy_rule
 
@@ -69,6 +69,7 @@ def main(argv=None):
                 options={k:v for k,v in vars(args).items() if k!='cmd'}
                 result=exercise(settings,report,**options)
             status='PASS' if result['counts'].get('success',0)>0 else 'FAIL'
+            save_benchmark(report,result,status)
             report.data['note']='PASS means some real requests succeeded and the run completed. It does NOT mean the offered rate was sustainable or that there were no errors; inspect rates, drops and latency.'
         elif args.cmd=='collect':
             factories={'perf':lambda:settings.direct(timeout=1)}

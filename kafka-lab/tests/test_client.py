@@ -142,6 +142,48 @@ class ProducerTests(unittest.TestCase):
             return client.publish(self.args(**kwargs))
     def test_all_delivery_callbacks_required(self):
         out=self.publish(); self.assertEqual(out['queued'],7); self.assertEqual(out['delivered'],7)
+    def test_benchmark_uses_fresh_topic_verifies_offsets_and_deletes_it(self):
+        class Future:
+            def result(self,timeout):return None
+        class Admin:
+            def delete_topics(self,topics,**kwargs):self.deleted=topics;return {topics[0]:Future()}
+        admin=Admin();args=self.args(topic=None)
+        native={'run_id':'test','queued':7,'delivered':7,'failed':0,'pending':0,
+                'elapsed_seconds':1,'topic':None,'parameters':{}}
+        with patch.object(client,'metadata',return_value={'topics':{}}), \
+             patch.object(client,'create_topic') as create,patch.object(client,'wait_state'), \
+             patch.object(client,'topic_watermarks',side_effect=[
+                 [{'offset_span':0} for _ in range(12)],
+                 [{'offset_span':7}]+[{'offset_span':0} for _ in range(11)]]), \
+             patch.object(client,'publish',side_effect=lambda a,announce=False:{**native,'topic':a.topic}), \
+             patch.object(client,'admin_client',return_value=admin),redirect_stdout(io.StringIO()) as output:
+            client.benchmark_publish(args)
+        result=json.loads(output.getvalue())
+        self.assertRegex(result['topic'],r'^lab\.benchmark\.[a-f0-9]{32}$')
+        self.assertEqual(create.call_args.args[1],result['topic'])
+        self.assertEqual(create.call_args.args[2],12)
+        self.assertEqual(create.call_args.args[3],{
+            'cleanup.policy':'delete','retention.ms':'3600000','segment.ms':'60000'})
+        self.assertEqual(admin.deleted,[result['topic']])
+        self.assertTrue(result['benchmark_dataset_state_verified'])
+    def test_benchmark_cleanup_failure_is_not_verified(self):
+        class Future:
+            def result(self,timeout):raise RuntimeError('delete failed')
+        class Admin:
+            def delete_topics(self,topics,**kwargs):return {topics[0]:Future()}
+        native={'run_id':'test','queued':7,'delivered':7,'failed':0,'pending':0,
+                'elapsed_seconds':1,'parameters':{}}
+        with patch.object(client,'metadata',return_value={'topics':{}}), \
+             patch.object(client,'create_topic'),patch.object(client,'wait_state'), \
+             patch.object(client,'topic_watermarks',side_effect=[
+                 [{'offset_span':0} for _ in range(12)],
+                 [{'offset_span':7}]+[{'offset_span':0} for _ in range(11)]]), \
+             patch.object(client,'publish',side_effect=lambda a,announce=False:{**native,'topic':a.topic}), \
+             patch.object(client,'admin_client',return_value=Admin()),redirect_stdout(io.StringIO()) as output:
+            with self.assertRaises(client.LabError):client.benchmark_publish(self.args(topic=None))
+        result=json.loads(output.getvalue())
+        self.assertFalse(result['benchmark_cleanup_verified'])
+        self.assertFalse(result['benchmark_dataset_state_verified'])
     def test_delivery_error_is_failure(self):
         with self.assertRaises(client.LabError): self.publish(FakeProducer(FakeError('NOT_ENOUGH_REPLICAS')))
     def test_flush_pending_is_failure(self):

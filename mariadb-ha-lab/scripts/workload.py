@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import random
+import re
 import statistics
 import sys
 import threading
@@ -74,10 +75,10 @@ def routes():
     print('A single persistent connection stays on its selected backend; this is not per-query routing.')
 
 
-def transfer(conn, request_id, source, target, amount):
+def transfer(conn, request_id, source, target, amount, account_table='account', transfer_table='transfer'):
     """One atomic transfer. A stable request_id makes retry after an unknown COMMIT safe."""
     query(conn, 'SET SESSION wsrep_sync_wait=1')
-    existing = query(conn, 'SELECT from_id,to_id,amount,handled_by FROM transfer WHERE request_id=%s', (request_id,))
+    existing = query(conn, f'SELECT from_id,to_id,amount,handled_by FROM `{transfer_table}` WHERE request_id=%s', (request_id,))
     if existing:
         if tuple(existing[0][:3]) != (source,target,amount):
             raise RuntimeError('Idempotency key was reused with a different request.')
@@ -86,14 +87,14 @@ def transfer(conn, request_id, source, target, amount):
     conn.begin()
     try:
         hostname = query(conn, 'SELECT @@hostname')[0][0]
-        balances = dict(query(conn, 'SELECT id,balance FROM account WHERE id IN (%s,%s) ORDER BY id FOR UPDATE',
+        balances = dict(query(conn, f'SELECT id,balance FROM `{account_table}` WHERE id IN (%s,%s) ORDER BY id FOR UPDATE',
                               (min(source,target),max(source,target))))
         if balances[source] < amount:
             conn.rollback(); return None
-        query(conn, 'INSERT INTO transfer VALUES(%s,%s,%s,%s,%s,NOW(6))',
+        query(conn, f'INSERT INTO `{transfer_table}` VALUES(%s,%s,%s,%s,%s,NOW(6))',
               (request_id,source,target,amount,hostname))
-        query(conn, 'UPDATE account SET balance=balance-%s WHERE id=%s', (amount,source))
-        query(conn, 'UPDATE account SET balance=balance+%s WHERE id=%s', (amount,target))
+        query(conn, f'UPDATE `{account_table}` SET balance=balance-%s WHERE id=%s', (amount,source))
+        query(conn, f'UPDATE `{account_table}` SET balance=balance+%s WHERE id=%s', (amount,target))
         conn.commit()
         return hostname
     except BaseException:
@@ -102,10 +103,14 @@ def transfer(conn, request_id, source, target, amount):
         raise
 
 
-def load(seconds, workers, target):
+def load(seconds, workers, target, account_table, transfer_table):
     if not 1 <= seconds <= 3600 or not 1 <= workers <= 32:
         raise ValueError('seconds: 1..3600, workers: 1..32')
-    deadline = time.monotonic() + seconds
+    for table, suffix in ((account_table, 'accounts'), (transfer_table, 'transfers')):
+        if not re.fullmatch(rf'lab_bench_[a-f0-9]{{16}}_{suffix}', table):
+            raise ValueError('benchmark tables must use generated lab_bench_<id>_accounts/transfers names')
+    run_started = time.monotonic()
+    deadline = run_started + seconds
     counts, errors, hosts, latencies = Counter(), Counter(), Counter(), []
     lock = threading.Lock()
     def worker(index):
@@ -123,7 +128,7 @@ def load(seconds, workers, target):
                         if conn is None:
                             host = 'proxy' if target == 'writer' else rng.choice(NODES)
                             conn = connect(host)
-                        node = transfer(conn, request_id, source, dest, amount)
+                        node = transfer(conn, request_id, source, dest, amount, account_table, transfer_table)
                         with lock:
                             counts['committed' if node else 'insufficient_funds'] += 1
                             if node: hosts[node] += 1
@@ -150,14 +155,16 @@ def load(seconds, workers, target):
         for future in futures: future.result()
     ordered = sorted(latencies)
     report = {'counts':dict(counts), 'successful_backend':dict(hosts), 'errors_by_code':dict(errors),
+              'elapsed_seconds':round(time.monotonic()-run_started,3),
               'latency_ms_p50':round(statistics.median(ordered),2) if ordered else None,
               'latency_ms_p95':round(ordered[min(len(ordered)-1,int(len(ordered)*.95))],2) if ordered else None}
     print(json.dumps(report, indent=2))
+    print('BENCHMARK_JSON=' + json.dumps(report, separators=(',', ':')), flush=True)
     with checked_connect() as conn:
         query(conn,'SET SESSION wsrep_sync_wait=1')
-        total = int(query(conn,'SELECT SUM(balance) FROM account')[0][0])
-        print('Balance invariant:',total,'expected=100000000')
-        if total != 100000000: raise RuntimeError('Balance invariant violated.')
+        total = int(query(conn,f'SELECT SUM(balance) FROM `{account_table}`')[0][0])
+        print('Benchmark account balance invariant:',total)
+        if total <= 0: raise RuntimeError('Benchmark account balance invariant violated.')
     if counts['unresolved_requests']:
         print('Some requests remain unresolved after retries; inspect transfer receipts before declaring them failed.', file=sys.stderr)
         return 2
@@ -207,11 +214,13 @@ def main():
     parser.add_argument('--seconds',type=int,default=60)
     parser.add_argument('--workers',type=int,default=4)
     parser.add_argument('--target',choices=['writer','multi'],default='writer')
+    parser.add_argument('--account-table',default='account')
+    parser.add_argument('--transfer-table',default='transfer')
     args = parser.parse_args()
     if args.action == 'check': check()
     elif args.action == 'route': routes()
     elif args.action == 'conflict': conflict()
-    else: return load(args.seconds,args.workers,args.target)
+    else: return load(args.seconds,args.workers,args.target,args.account_table,args.transfer_table)
     return 0
 
 if __name__ == '__main__':

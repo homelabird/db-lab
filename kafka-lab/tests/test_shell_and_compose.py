@@ -20,6 +20,8 @@ class ShellTests(unittest.TestCase):
         (self.root/'scripts').mkdir()
         shutil.copy2(ROOT/'scripts/render-compose.py',self.root/'scripts/render-compose.py')
         shutil.copy2(ROOT/'scripts/kraft-id.py',self.root/'scripts/kraft-id.py')
+        shutil.copy2(ROOT/'scripts/save-benchmark.py',self.root/'scripts/save-benchmark.py')
+        shutil.copy2(ROOT/'scripts/run-observed.py',self.root/'scripts/run-observed.py')
         if (ROOT/'scripts/topology-state.py').exists():
             shutil.copy2(ROOT/'scripts/topology-state.py',self.root/'scripts/topology-state.py')
         self.bin=self.root/'bin'; self.bin.mkdir()
@@ -37,7 +39,8 @@ elif '--version' in sys.argv: print('podman-compose version 1.3.0 [MOCK]')
         self.data={'containers':{f'kzk-lab-{name}':dict(owner='kzk-lab',running=True,paused=False,connected=True)
                    for name in ['zk1','zk2','zk3','kafka1','kafka2','kafka3','tools']}}
         self.save()
-        self.env=dict(os.environ,PATH=f'{self.bin}:{os.environ["PATH"]}',FAKE_STATE=str(self.state))
+        self.env=dict(os.environ,PATH=f'{self.bin}:{os.environ["PATH"]}',FAKE_STATE=str(self.state),
+                      DB_LAB_LIB=str(ROOT.parent/'lib'))
     def tearDown(self): self.tmp.cleanup()
     def save(self): self.state.write_text(json.dumps(self.data))
     def load(self): self.data=json.loads(self.state.read_text()); return self.data
@@ -137,6 +140,16 @@ elif '--version' in sys.argv: print('podman-compose version 1.3.0 [MOCK]')
     def test_seed_arguments_preserved(self):
         self.run_lab('seed','--kind','access','--count','17')
         self.assertIn(['exec','kzk-lab-tools','python','/opt/lab/client.py','seed','--kind','access','--count','17'],self.load()['calls'])
+
+    def test_benchmark_uses_isolated_topic_and_saves_report(self):
+        self.run_lab('benchmark','--kind','access','--count','17')
+        self.assertIn(['exec','kzk-lab-tools','python','/opt/lab/client.py','benchmark-seed','--kind','access','--count','17'],self.load()['calls'])
+        reports=list((self.root/'reports/benchmarks').glob('*.json'))
+        self.assertEqual(len(reports),1)
+        saved=json.loads(reports[0].read_text())
+        self.assertTrue(saved['verification']['dataset_state_verified'])
+        self.assertTrue(saved['dataset']['temporary_topic'])
+        self.assertTrue(saved['environment']['runtime_observation']['sample_count']>=2)
     def test_read_arguments_preserved(self):
         self.run_lab('read','lab.payments','--max','9')
         self.assertIn(['exec','kzk-lab-tools','python','/opt/lab/client.py','read','--topic','lab.payments','--max','9'],self.load()['calls'])

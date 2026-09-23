@@ -161,9 +161,12 @@ class Lab:
     def compose(self, *args, capture=False, check=True, timeout=None):
         if self._compose is None:
             if self.compose_cmd == ['podman-compose']:
-                if '--in-pod' not in self.run(['podman-compose', '--help']).stdout:
-                    raise RuntimeError('This podman-compose lacks --in-pod; install a newer version.')
-                base = ['podman-compose', '--in-pod=false']
+                version = self.run(['podman-compose', '--version'])
+                match = re.search(r'\bversion\s+(\d+)\.(\d+)\.(\d+)\b', version.stdout + version.stderr)
+                if not match or tuple(map(int, match.groups())) < (1, 0, 3):
+                    raise RuntimeError('podman-compose 1.0.3+ is required; older releases may put services in a shared pod.')
+                # From 1.0.3 the default is no pods; --in-pod=false is unsafe on releases using type=bool.
+                base = ['podman-compose']
             else:
                 base = list(self.compose_cmd)
             compose_file = self.cluster_compose_path() if self.env['DEPLOYMENT_MODE'] == 'cluster' else ROOT / 'compose.yaml'
@@ -374,7 +377,12 @@ volumes:
             print(self.run(['podman', '--version']).stdout.strip())
         version_cmd = ['podman-compose', '--version'] if self.compose_cmd == ['podman-compose'] else [*self.compose_cmd, 'version']
         version = self.run(version_cmd); print((version.stdout + version.stderr).strip())
-        self.compose('config', capture=True)  # Do not print secrets.
+        if self.compose_cmd == ['podman-compose'] and 'config' not in self.run(['podman-compose', '--help']).stdout:
+            compose_file = self.cluster_compose_path() if self.env['DEPLOYMENT_MODE'] == 'cluster' else ROOT / 'compose.yaml'
+            self.run(['python3', '-c', 'import sys,yaml; yaml.safe_load(open(sys.argv[1]))', str(compose_file)])
+            print('Compose YAML syntax valid; this provider has no config normalization command.')
+        else:
+            self.compose('config', capture=True)  # Do not print secrets.
         for node in self.active_nodes(): self.inspect(node, required=False)
         for suffix in self.active_volumes(): self.volume_owned(suffix)
         self.check_network(); self.check_env_state()
@@ -601,7 +609,9 @@ volumes:
     def sandbox_up(self):
         self.check_env_state()
         self.inspect('redis-sandbox', required=False)
-        self.compose('--profile', 'sandbox', 'up', '-d', '--no-deps', 'redis-sandbox')
+        # Explicitly naming a profiled service enables it in Docker Compose; older
+        # podman-compose releases ignore profile keys and do not accept --profile.
+        self.compose('up', '-d', '--no-deps', 'redis-sandbox')
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             result = self.cli('redis-sandbox', ['PING'], check=False)
@@ -779,7 +789,7 @@ rm -f /restore/state/persistence-fault-active /restore/state/pre-fault.rdb
             if node in self.state() and self.state()[node]['action'] == 'isolate': self.connect_network(node)
         for suffix in self.active_volumes(): self.volume_owned(suffix)
         self.check_network()
-        self.compose('--profile', 'sandbox', 'down', *(['-v'] if reset else []))
+        self.compose('down', *(['-v'] if reset else []))
         self.save_state({})
         if reset:
             # Some providers skip unused profile volumes; remove only exact owned leftovers.

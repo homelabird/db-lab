@@ -3,8 +3,11 @@
 from __future__ import annotations
 import argparse
 from collections import Counter, deque
+from contextlib import redirect_stdout
+import io
 import json
 import math
+from importlib.metadata import PackageNotFoundError, version as package_version
 import os
 import random
 import re
@@ -26,6 +29,13 @@ def kafka_modules():
     import confluent_kafka as ck
     from confluent_kafka import admin
     return ck, admin
+
+
+def kafka_client_version() -> str:
+    try:
+        return package_version("confluent-kafka")
+    except PackageNotFoundError:
+        return "not-installed"
 
 
 def emit(value: Any) -> None:
@@ -171,7 +181,7 @@ def zk_status(args) -> None:
 
 def create_topic(bootstrap: str, topic: str, partitions: int = 3,
                  configs: dict | None = None, assignment: list[int] | None = None,
-                 exist_ok: bool = False, timeout: int = 15) -> None:
+                 exist_ok: bool = False, timeout: int = 15, announce: bool = True) -> None:
     checked_topic(topic)
     ck, ka = kafka_modules()
     rf = int(os.getenv("REPLICATION_FACTOR", "3"))
@@ -193,7 +203,8 @@ def create_topic(bootstrap: str, topic: str, partitions: int = 3,
         ps = get_partitions(metadata(bootstrap, topic), topic)
         if len(ps) != partitions or any(len(p["replicas"]) != rf for p in ps):
             raise LabError(f"기존 토픽의 partition/RF가 기대값과 다릅니다: {topic}")
-    emit({"created_or_exists": topic, "partitions": partitions, "replication_factor": rf})
+    if announce:
+        emit({"created_or_exists": topic, "partitions": partitions, "replication_factor": rf})
 
 
 def parse_configs(items: list[str]) -> dict:
@@ -230,7 +241,7 @@ def make_producer(bootstrap: str, timeout_ms: int = 15000, probe: bool = False):
                         "queue.buffering.max.kbytes": 32768, "batch.size": 16384, "linger.ms": 5})
 
 
-def publish(args) -> dict:
+def publish(args, announce: bool = True) -> dict:
     topic = checked_topic(args.topic or TOPICS[args.kind])
     get_partitions(metadata(args.bootstrap, topic), topic)  # fail fast; no silent auto-creation
     if not 0 <= args.payload_bytes <= 2 * 1024 * 1024:
@@ -298,15 +309,79 @@ def publish(args) -> dict:
     pending = p.flush(20)
     elapsed = round(time.monotonic() - start, 3)
     ordered = sorted(latencies)
-    result = {"topic": topic, "run_id": rid, **totals, "pending": pending,
+    result = {"topic": topic, "run_id": rid, "started_utc": base.isoformat(),
+              "parameters": {"kind": args.kind, "count": count, "mib": args.mib,
+                             "duration_seconds": args.duration, "rate": args.rate,
+                             "payload_bytes": args.payload_bytes, "hot_key": args.hot_key,
+                             "seed": args.seed, "profile": getattr(args, "profile", "baseline")},
+              "client_library_version": kafka_client_version(), **totals, "pending": pending,
               "errors": dict(errors), "elapsed_seconds": elapsed,
               "delivered_per_second": round(totals["delivered"] / max(elapsed, .001), 1),
               "logical_mib": round(totals["logical_bytes"] / 1048576, 3),
               "ack_latency_p95_ms_last_10000": ordered[min(len(ordered)-1, int(len(ordered)*.95))] if ordered else None}
-    emit(result)
+    if announce:
+        emit(result)
     if pending or totals["failed"] or totals["delivered"] != totals["queued"]:
         raise LabError("브로커 delivery 확인 실패: queued를 성공 건수로 세지 않습니다.")
     return result
+
+
+def benchmark_publish(args) -> None:
+    """Use a fresh topic and delete it after delivery and offset verification."""
+    if args.topic:
+        raise LabError("benchmark-seed owns its temporary topic; omit --topic")
+    topic = f"lab.benchmark.{uuid.uuid4().hex}"
+    partitions = {"payments": 12, "access": 6, "metrics": 6}[args.kind]
+    if topic in metadata(args.bootstrap)["topics"]:
+        raise LabError("Generated benchmark topic already exists; refusing to reuse it")
+    created = False
+    result = None
+    delivery_verified = False
+    deletion_verified = False
+    try:
+        create_topic(args.bootstrap, topic, partitions,
+                     {"cleanup.policy": "delete", "retention.ms": "3600000", "segment.ms": "60000"},
+                     timeout=30, announce=False)
+        created = True
+        with redirect_stdout(io.StringIO()):
+            wait_state(argparse.Namespace(bootstrap=args.bootstrap, topic=topic,
+                brokers=int(os.getenv("NODES", "3")), isr=int(os.getenv("REPLICATION_FACTOR", "3")),
+                leader_not=None, controller_not=None, timeout=120))
+        empty_offsets = topic_watermarks(args.bootstrap, topic)
+        if len(empty_offsets) != partitions or any(row["offset_span"] != 0 for row in empty_offsets):
+            raise LabError("Fresh benchmark topic was not empty before workload")
+        run_args = argparse.Namespace(**vars(args)); run_args.topic = topic
+        result = publish(run_args, announce=False)
+        written = sum(row["offset_span"] for row in topic_watermarks(args.bootstrap, topic))
+        delivery_verified = (result["queued"] == result["delivered"] and result["failed"] == 0
+                             and result["pending"] == 0 and written == result["delivered"])
+    finally:
+        if created:
+            try:
+                admin_client(args.bootstrap).delete_topics(
+                    [topic], request_timeout=20, operation_timeout=20)[topic].result(25)
+                deletion_verified = True
+            except Exception:
+                pass
+    if result is None:
+        raise LabError("Benchmark workload produced no result")
+    result["benchmark_dataset_state_verified"] = delivery_verified and deletion_verified
+    result["benchmark_cleanup_verified"] = deletion_verified
+    result["benchmark_topic_partitions"] = partitions
+    emit(result)
+    if not result["benchmark_dataset_state_verified"]:
+        raise LabError("Benchmark delivery/offset verification or temporary topic cleanup failed")
+
+
+def add_seed_arguments(parser):
+    parser.add_argument("--kind", choices=KINDS, default="payments"); parser.add_argument("--topic")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--count", type=positive); group.add_argument("--mib", type=float)
+    group.add_argument("--duration", type=positive)
+    parser.add_argument("--rate", type=float, default=1000)
+    parser.add_argument("--payload-bytes", type=int, default=256); parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--hot-key", action="store_true"); parser.add_argument("--run-id")
+    parser.add_argument("--profile", choices=PROFILES, default="baseline")
 
 
 def simulate(args) -> None:
@@ -655,16 +730,8 @@ def main(argv=None) -> int:
     p.set_defaults(func=leader)
     p = sub.add_parser("controller")
     p.set_defaults(func=lambda a: print(metadata(a.bootstrap)["controller"]))
-    p = sub.add_parser("seed")
-    p.add_argument("--kind", choices=KINDS, default="payments"); p.add_argument("--topic")
-    group = p.add_mutually_exclusive_group()
-    group.add_argument("--count", type=positive); group.add_argument("--mib", type=float)
-    group.add_argument("--duration", type=positive)
-    p.add_argument("--rate", type=float, default=1000)
-    p.add_argument("--payload-bytes", type=int, default=256); p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--hot-key", action="store_true"); p.add_argument("--run-id")
-    p.add_argument("--profile", choices=PROFILES, default="baseline")
-    p.set_defaults(func=publish)
+    p = sub.add_parser("seed"); add_seed_arguments(p); p.set_defaults(func=publish)
+    p = sub.add_parser("benchmark-seed"); add_seed_arguments(p); p.set_defaults(func=benchmark_publish)
     p = sub.add_parser("simulate")
     p.add_argument("--kind", choices=(*KINDS, "all"), default="payments"); p.add_argument("--topic")
     p.add_argument("--batch-count", type=positive, default=100)

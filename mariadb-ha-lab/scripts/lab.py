@@ -24,6 +24,8 @@ import uuid
 from seed import PROFILES, SIZES, expected_counts, generate
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0,str(ROOT.parent/'lib'))
+from db_lab_benchmark import HostPressureSampler, environment as host_environment
 LAB_DIR = ROOT / 'labs'
 NODES = ('galera1', 'galera2', 'galera3')
 PASSWORDS = ('ROOT_PASSWORD', 'LAB_PASSWORD', 'READONLY_PASSWORD', 'SST_PASSWORD')
@@ -528,6 +530,52 @@ class Lab:
         self.comp('run', '--rm', '--no-deps', 'tools', 'check', capture=False)
         print('PASS: workload sum invariant, writer/reader endpoints and readonly write rejection.')
 
+    def benchmark_account_snapshot(self, node, table, check=True):
+        result = self.sql(node, f'SELECT id,balance FROM {table} ORDER BY id;', check=check)
+        if result.returncode: return None
+        rows = []
+        try:
+            for line in result.stdout.splitlines():
+                account_id, balance = line.split('\t')
+                rows.append((int(account_id), int(balance)))
+        except (ValueError, TypeError):
+            raise LabError('Account snapshot returned malformed rows.')
+        if not rows or len({account_id for account_id, _ in rows}) != len(rows):
+            raise LabError('Account snapshot is empty or has duplicate IDs.')
+        canonical = ''.join(f'{account_id}\t{balance}\n' for account_id, balance in rows)
+        return {'account_rows': len(rows), 'balance_total': sum(balance for _, balance in rows),
+                'account_fingerprint': hashlib.sha256(canonical.encode()).hexdigest()}
+
+    def create_benchmark_dataset(self, token, node='galera1'):
+        if not re.fullmatch(r'[a-f0-9]{16}', token): raise LabError('Invalid benchmark dataset token.')
+        accounts, transfers = f'lab_bench_{token}_accounts', f'lab_bench_{token}_transfers'
+        source = self.benchmark_account_snapshot(node, 'lab_ops.account')
+        if source['account_rows'] < 2 or source['balance_total'] <= 0:
+            raise LabError('Source synthetic account dataset is empty or invalid.')
+        self.sql(node, f'CREATE TABLE `{accounts}` LIKE lab_ops.account;')
+        try:
+            self.sql(node, f'INSERT INTO `{accounts}` SELECT * FROM lab_ops.account;')
+            self.sql(node, f'CREATE TABLE `{transfers}` LIKE lab_ops.transfer;')
+            if self.benchmark_account_snapshot(node, f'`{accounts}`') != source:
+                raise LabError('Run-scoped account copy differs from the source account fingerprint.')
+        except BaseException as exc:
+            if not self.cleanup_benchmark_dataset(accounts, transfers, node):
+                raise LabError(f'Benchmark setup failed and run-scoped tables may remain: {accounts}, {transfers}.') from exc
+            raise
+        return accounts, transfers, source
+
+    def cleanup_benchmark_dataset(self, accounts, transfers, node='galera1'):
+        try:
+            transfer_drop = self.sql(node, f'DROP TABLE IF EXISTS `{transfers}`;', check=False)
+            account_drop = self.sql(node, f'DROP TABLE IF EXISTS `{accounts}`;', check=False)
+            remaining = self.sql(node,
+                'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() '
+                f"AND table_name IN ('{accounts}','{transfers}');", check=False)
+            return (transfer_drop.returncode == 0 and account_drop.returncode == 0
+                    and remaining.returncode == 0 and remaining.stdout.strip() == '0')
+        except (LabError, OSError, subprocess.SubprocessError, ValueError):
+            return False
+
     def rebuild(self, node):
         for other in NODES:
             if other != node and not self.health(other).get('ready'):
@@ -739,6 +787,83 @@ def main():
                      '/opt/lab/simulator.py', '--seconds',str(args.seconds),
                      '--rate',str(args.rate),
                      '--seed',str(args.seed),'--mode',args.mode)
+        elif command == 'load':
+            started = dt.datetime.now(dt.timezone.utc)
+            dataset_token = uuid.uuid4().hex[:16]
+            benchmark_node = lab.healthy_node()
+            account_table, transfer_table, source_dataset = lab.create_benchmark_dataset(dataset_token, benchmark_node)
+            pressure = HostPressureSampler()
+            dataset_invariant_passed = False
+            try:
+                pressure.start()
+                result = lab.comp('run','--rm','--no-deps','tools',*toolcmd,
+                                  '--account-table',account_table,'--transfer-table',transfer_table,
+                                  capture=True,check=False)
+                after = lab.benchmark_account_snapshot(benchmark_node, f'`{account_table}`', check=False)
+                dataset_invariant_passed = result.returncode == 0 and after == source_dataset
+            finally:
+                runtime_observation = pressure.stop()
+                tables_removed = lab.cleanup_benchmark_dataset(account_table, transfer_table, benchmark_node)
+                dataset_state_verified = dataset_invariant_passed and tables_removed
+            print(result.stdout, end='')
+            stderr = result.stderr or ''
+            for key in PASSWORDS: stderr = stderr.replace(lab.settings[key], '<redacted>')
+            if stderr: print(stderr, file=sys.stderr, end='')
+            marker = next((line[len('BENCHMARK_JSON='):] for line in result.stdout.splitlines()
+                           if line.startswith('BENCHMARK_JSON=')), None)
+            if marker is None: raise LabError('Workload finished without its machine-readable benchmark summary.')
+            native = json.loads(marker)
+            version_result = lab.sql(benchmark_node,'SELECT VERSION()',check=False)
+            version = version_result.stdout.strip() or None
+            runtime = lab.run([lab.engine,'version','--format','{{.Client.Version}}'],capture=True,check=False).stdout.strip()
+            finished = dt.datetime.now(dt.timezone.utc)
+            run_id = finished.strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:8]
+            elapsed = float(native.get('elapsed_seconds') or args.seconds)
+            counts = native.get('counts', {})
+            report = {
+                'schema_version': 1, 'run_id': run_id,
+                'status': 'FAIL' if result.returncode or not dataset_state_verified else ('PASS' if version else 'UNVERIFIED'),
+                'evidence_kind': 'live_database', 'started_utc': started.isoformat(),
+                'finished_utc': finished.isoformat(), 'duration_seconds': elapsed,
+                'database': {'product': 'MariaDB Galera', 'version': version},
+                'workload': {'name': 'synthetic-transfer', 'parameters':
+                             {'seconds': args.seconds, 'workers': args.workers, 'target': args.target,
+                              'dataset_fingerprint': source_dataset['account_fingerprint']}},
+                'environment': {**host_environment(lab.engine,[lab.name(node) for node in ('galera1','galera2','galera3')]),
+                                'runtime_observation': runtime_observation,
+                                'revision': lab.run(['git','rev-parse','HEAD'],capture=True,check=False).stdout.strip() or None,
+                                'source_dirty': bool(lab.run(['git','status','--porcelain'],capture=True,check=False).stdout.strip()),
+                                'container_engine': lab.engine, 'container_engine_version': runtime or None},
+                'metrics': {'committed_transactions': counts.get('committed', 0),
+                            'unresolved_requests': counts.get('unresolved_requests', 0),
+                            'retry_attempts': counts.get('retries', 0),
+                            'committed_transactions_per_second': round(counts.get('committed', 0)/elapsed, 3) if elapsed else None,
+                            'latency_p50_ms': native.get('latency_ms_p50'),
+                            'latency_p95_ms': native.get('latency_ms_p95'),
+                            'successful_backend': native.get('successful_backend', {}),
+                            'errors_by_code': native.get('errors_by_code', {})},
+                'verification': {'balance_invariant_expected': source_dataset['balance_total'],
+                                 'workload_and_invariant_passed': result.returncode == 0,
+                                 'dataset_state_verified': dataset_state_verified,
+                                 'run_dataset_invariant_passed': dataset_invariant_passed,
+                                 'dataset_state_note': ('Run-scoped account/transfer tables were removed and verified absent.'
+                                                        if dataset_state_verified else 'Run-scoped benchmark tables remain or cleanup could not be verified.'),
+                                 'source_dataset': source_dataset,
+                                 'version_observed': bool(version)},
+                'note': 'Lab workload measurement; same workload and controlled host/container state are required for comparison. Not production capacity evidence.'}
+            out = ROOT/'reports'/'benchmarks'; out.mkdir(parents=True, exist_ok=True)
+            report_path = out/(run_id+'.json')
+            fd, temp_name = tempfile.mkstemp(prefix='.benchmark-', dir=out)
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                    json.dump(report, stream, ensure_ascii=False, indent=2, allow_nan=False)
+                    stream.write('\n'); stream.flush(); os.fsync(stream.fileno())
+                os.replace(temp_name, report_path)
+            finally:
+                Path(temp_name).unlink(missing_ok=True)
+            print(f'Benchmark report: {report_path.relative_to(ROOT)}')
+            if result.returncode or not dataset_state_verified:
+                raise LabError(f'Load benchmark acceptance failed (workload rc={result.returncode}, dataset verified={dataset_state_verified}); report retained.')
         else:
             lab.comp('run','--rm','--no-deps','tools',*toolcmd)
     elif command == 'restore':

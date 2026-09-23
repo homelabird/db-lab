@@ -1,12 +1,13 @@
 """Rate-scheduled bounded workload. No silent catch-up bursts or write retries."""
 from __future__ import annotations
 import json
+import os
 import queue
 import random
 import threading
 import time
 from collections import Counter
-from .common import Histogram, Report, Sampler, cleanup, utc
+from .common import Histogram, Report, Sampler, atomic_json, cleanup, utc
 from .resp import RedisError, ServerError
 
 class Stats:
@@ -33,6 +34,51 @@ def validate(seconds,rate,workers,keys,payload):
             ('keys',keys,1,50000),('payload',payload,32,8192)]:
         if not lo<=value<=hi: raise ValueError(f'{name} must be {lo}..{hi}')
     if keys*payload>96*1024*1024: raise ValueError('Raw seed data exceeds 96MiB safety limit')
+
+def save_benchmark(report, result, status):
+    """Write the shared benchmark-v1 envelope beside the detailed Redis evidence."""
+    versions=set()
+    metrics=report.path/'metrics.jsonl'
+    if metrics.is_file():
+        for line in metrics.read_text(encoding='utf-8').splitlines():
+            try: version=json.loads(line).get('info',{}).get('redis_version')
+            except (ValueError,AttributeError): continue
+            if version: versions.add(str(version))
+    parameters={key:value for key,value in report.data.get('parameters',{}).items()
+                if key not in ('cmd','target')}
+    counts=result.get('counts',{});rtt=result.get('rtt_ms',{})
+    cleanup_complete=(result.get('cleanup_keys') == parameters.get('keys')
+                      and 'cleanup_error' not in result)
+    try: runtime_environment=json.loads(os.environ.get('DB_LAB_BENCHMARK_ENV','{}'))
+    except (TypeError,ValueError): runtime_environment={}
+    if not isinstance(runtime_environment,dict): runtime_environment={}
+    normalized={
+        'schema_version':1,'run_id':report.id,'status':status,'evidence_kind':'live_database',
+        'started_utc':report.data.get('started_utc'),'finished_utc':utc(),
+        'duration_seconds':result.get('wall_s'),
+        'database':{'product':'Redis','version':','.join(sorted(versions)) or None,
+                    'target':result.get('target')},
+        'workload':{'name':'mixed-read-write','parameters':parameters},
+        'environment':{**runtime_environment,'revision':os.environ.get('GIT_COMMIT'),
+                       'container_engine':runtime_environment.get('container_engine',os.environ.get('CONTAINER_ENGINE')),
+                       'container_engine_version':runtime_environment.get('container_engine_version',
+                                                                          os.environ.get('CONTAINER_ENGINE_VERSION'))},
+        'metrics':{'requests_attempted':counts.get('attempted',0),
+                   'requests_succeeded':counts.get('success',0),
+                   'requests_failed':counts.get('error',0),
+                   'success_rps':result.get('achieved_success_rps'),
+                   'latency_p50_ms':rtt.get('p50_upper'),
+                   'latency_p95_ms':rtt.get('p95_upper'),
+                   'latency_p99_ms':rtt.get('p99_upper'),
+                   'offered_rps':result.get('offered_target_rps'),
+                   'queue_dropped':counts.get('queue_dropped',0),
+                   'scheduler_skipped':counts.get('scheduler_skipped',0)},
+        'verification':{'workload_completed':status=='PASS',
+                        'owned_keys_cleanup_succeeded':cleanup_complete,
+                        'dataset_state_verified':cleanup_complete},
+        'note':'Redis mixed workload observation. Container image/resource metadata is captured when supplied by the host runner; full-run contention and dataset equivalence are not verified. Not production capacity evidence.'}
+    atomic_json(report.path/'benchmark.json',normalized)
+    return normalized
 
 def seed(settings,target,prefix,keys,payload):
     with settings.connection(target,timeout=4) as c:

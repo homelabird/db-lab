@@ -3,6 +3,7 @@ These tests do NOT start MariaDB, Docker, Podman, or a Galera cluster.
 LAB_TEST_PROJECT_ROOT allows the exact same regression to run against an older project copy.
 """
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -16,6 +17,7 @@ import tempfile
 import time
 import types
 import unittest
+import warnings
 from unittest.mock import MagicMock, patch
 
 ROOT = Path(os.environ.get('LAB_TEST_PROJECT_ROOT', Path(__file__).resolve().parent.parent))
@@ -136,6 +138,21 @@ class RegressionControllerTests(unittest.TestCase):
         marker=next(i for i,q in enumerate(commands) if "'loading'" in q)
         ddl=next(i for i,q in enumerate(commands) if 'DROP DATABASE' in q)
         self.assertLess(marker,ddl)
+    def test_benchmark_dataset_uses_unique_copy_and_confirms_cleanup(self):
+        rows='1\t50000000\n2\t50000000\n'
+        fingerprint=hashlib.sha256(rows.encode()).hexdigest()
+        with patch.object(self.obj,'sql',side_effect=[
+            done(stdout=rows),done(),done(),done(),done(stdout=rows),
+            done(),done(),done(stdout='0\n')]) as sql:
+            accounts,transfers,source=self.obj.create_benchmark_dataset('0123456789abcdef')
+            self.assertEqual(source,{'account_rows':2,'balance_total':100000000,'account_fingerprint':fingerprint})
+            self.assertTrue(self.obj.cleanup_benchmark_dataset(accounts,transfers))
+        self.assertEqual(accounts,'lab_bench_0123456789abcdef_accounts')
+        self.assertEqual(transfers,'lab_bench_0123456789abcdef_transfers')
+        self.assertIn('INSERT INTO `lab_bench_0123456789abcdef_accounts` SELECT * FROM lab_ops.account',sql.call_args_list[2].args[1])
+        with patch.object(self.obj,'sql',side_effect=lab.LabError('database unavailable')):
+            self.assertFalse(self.obj.cleanup_benchmark_dataset(accounts,transfers))
+        with self.assertRaises(lab.LabError):self.obj.create_benchmark_dataset('unsafe` SQL')
     def test_unknown_mode_is_not_ready(self):
         self.assertFalse(health.is_ready({'sql_alive':True},'galerra'))
     def test_standalone_ready_allowed(self):
@@ -219,6 +236,9 @@ class RegressionWorkloadTests(unittest.TestCase):
         a=MagicMock()
         with patch.object(workload,'checked_connect',side_effect=[a,stub.MySQLError(2003,'offline')]),self.assertRaises(stub.MySQLError):workload.conflict()
         a.close.assert_called_once()
+    def test_benchmark_load_rejects_non_run_scoped_table_names(self):
+        with self.assertRaisesRegex(ValueError,'generated lab_bench'):
+            workload.load(1,1,'writer','account','transfer')
 
 
 class RegressionBashProcessTests(unittest.TestCase):
@@ -310,6 +330,53 @@ open(os.environ['LAB_TEST_ROOT']+'/gosu-args.json','w').write(json.dumps(sys.arg
         self.initialized();(self.root/'var/lib/labctl/bootstrap-once').write_text('test')
         result=self.run_script('mariadbd',LAB_MODE='standalone')
         self.assertNotEqual(result.returncode,0);self.assertFalse((self.root/'gosu-args.json').exists())
+
+class MariaBenchmarkReportTests(unittest.TestCase):
+    def test_load_writes_versioned_report_without_container_credentials(self):
+        class FakeLab:
+            engine='docker'
+            settings={key:'do-not-store-'+key for key in lab.PASSWORDS}
+            def name(self,node): return 'fake-'+node
+            def healthy_node(self): return 'galera1'
+            def create_benchmark_dataset(self,token,node):
+                return f'lab_bench_{token}_accounts',f'lab_bench_{token}_transfers',{'account_rows':100,'balance_total':100000000,'account_fingerprint':'synthetic-hash'}
+            def cleanup_benchmark_dataset(self,*tables): return True
+            def benchmark_account_snapshot(self,*args,**kwargs):
+                return {'account_rows':100,'balance_total':100000000,'account_fingerprint':'synthetic-hash'}
+            def comp(self,*args,**kwargs):
+                data={'counts':{'committed':4,'retries':0,'unresolved_requests':0},
+                      'elapsed_seconds':2,'latency_ms_p50':3,'latency_ms_p95':5,
+                      'successful_backend':{'galera1':4},'errors_by_code':{}}
+                return done(stdout='BENCHMARK_JSON='+json.dumps(data)+'\n')
+            def sql(self,node,query,**kwargs):
+                return done(stdout='100\t100000000\n' if query.startswith('SELECT COUNT(*)') else '11.8.4-MariaDB\n')
+            def run(self,args,**kwargs):
+                return done(stdout='28.3.1\n' if args[0]=='docker' else 'revision-test\n')
+
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'.state').mkdir()
+            with patch.object(lab,'ROOT',root),patch.object(lab,'Lab',FakeLab), \
+                 patch.object(lab,'host_environment',return_value={'host_fingerprint':'test','host_cpu_count':8,
+                    'host_memory_bytes':1000,'container_limits':{'galera':{'memory_bytes':None,'cpu_cores':None}}}), \
+                 patch.object(sys,'argv',['lab.py','load','--seconds','2','--workers','1']), \
+                 contextlib.redirect_stdout(io.StringIO()),warnings.catch_warnings():
+                warnings.simplefilter('ignore',ResourceWarning)
+                lab.main()
+            files=list((root/'reports/benchmarks').glob('*.json'))
+            self.assertEqual(len(files),1)
+            report=json.loads(files[0].read_text())
+            self.assertEqual(report['schema_version'],1)
+            self.assertEqual(report['database']['version'],'11.8.4-MariaDB')
+            self.assertEqual(report['metrics']['committed_transactions_per_second'],2.0)
+            self.assertEqual(report['verification']['balance_invariant_expected'],100000000)
+            self.assertEqual(report['environment']['revision'],'revision-test')
+            self.assertEqual(report['environment']['runtime_observation']['scope'],'host')
+            self.assertGreaterEqual(report['environment']['runtime_observation']['sample_count'],2)
+            self.assertTrue(report['verification']['dataset_state_verified'],report['verification'])
+            self.assertTrue(report['verification']['run_dataset_invariant_passed'])
+            self.assertIn('removed and verified absent',report['verification']['dataset_state_note'])
+            self.assertFalse(any(value in files[0].read_text() for value in FakeLab.settings.values()))
+
 
 class AcceptanceGuardProcessTests(unittest.TestCase):
     def invoke(self, approved):

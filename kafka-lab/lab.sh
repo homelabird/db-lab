@@ -52,6 +52,7 @@ ZooKeeper 3 + Kafka 3 / Podman Compose 실습
   ./lab.sh seed [--kind payments|access|metrics] [--count N | --mib N | --duration S]
                 [--payload-bytes N] [--rate N] [--profile baseline|fraud|outage|seasonal|skewed]
                 [--hot-key] [--topic lab.NAME]
+  ./lab.sh benchmark [same bounded workload options]  격리 topic 생성·검증·삭제 후 공통 report 저장
   ./lab.sh seed-preset fraud|outage|skewed
   ./lab.sh simulate [--kind payments|access|metrics] [--batch-count N]
                     [--batches N | --duration S] [--interval S] [--profile PROFILE]
@@ -613,6 +614,30 @@ demo() {
 if [[ "$cmd" != scenarios && "$cmd" != summary ]]; then
     need_engine
 fi
+seed_benchmark() {
+    local output rc status engine_version report_rc observation_file
+    owned tools || return 1
+    observation_file=$(mktemp "${TMPDIR:-/tmp}/db-lab-kafka-observation.XXXXXX") || return 1
+    if output=$(python3 "$ROOT/scripts/run-observed.py" --output "$observation_file" -- \
+        "$ENGINE" exec "$LAB_NAME-tools" python /opt/lab/client.py benchmark-seed "$@"); then rc=0; else rc=$?; fi
+    [[ -z "$output" ]] || printf '%s\n' "$output"
+    if [[ -z "$output" ]]; then rm -f -- "$observation_file"; return "$rc"; fi
+    status=FAIL; (( rc != 0 )) || status=PASS
+    engine_version=$(eng version --format '{{.Client.Version}}' 2>/dev/null || true)
+    [[ -n "$engine_version" ]] || engine_version=$(eng --version 2>/dev/null || printf unknown)
+    if printf '%s\n' "$output" | python3 "$ROOT/scripts/save-benchmark.py" \
+        --status "$status" --image-tag "$CP_VERSION" --mode "$KAFKA_MODE" \
+        --brokers "$NODES" --engine "$ENGINE" --engine-version "$engine_version" \
+        --runtime-observation-file "$observation_file"; then
+        :
+    else
+        report_rc=$?
+        rm -f -- "$observation_file"
+        (( rc != 0 )) || return "$report_rc"
+    fi
+    rm -f -- "$observation_file"
+    return "$rc"
+}
 case "$cmd" in
   doctor) doctor;;
   config) need_compose; pc config;;
@@ -629,6 +654,7 @@ case "$cmd" in
     client status;;
   topics) kcli kafka-topics --describe "$@";;
   seed) client seed "$@";;
+  benchmark) seed_benchmark "$@";;
   seed-preset) seed_preset "$@";;
   simulate) client simulate "$@";;
   simulate-preset) simulate_preset "$@";;

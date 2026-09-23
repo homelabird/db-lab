@@ -87,6 +87,7 @@ Common commands (default: all four Compose/container labs):
   preflight [--json]      Read-only engine/settings/port-plan checks
   health [--json]         Application/topology checks; nonzero when unhealthy
   doctor | check          Run each lab's prerequisite checks
+  benchmark DATABASE     Run bounded workload; --repeat 3 compares fresh runs
   up | start             Initialize and start labs, sequentially
   status | ps            Run each lab's native status command
   down | stop            Stop labs in reverse order; retain database volumes
@@ -105,6 +106,9 @@ Project-specific operations are passed through without rewriting arguments:
   ./all.sh logs kafka kafka1 --follow
   ./all.sh logs redis redis-1 --follow
   ./all.sh mariadb --help
+
+Benchmark operations target an already-running lab; they do not start, reset,
+or delete its services. See ./all.sh benchmark --help for workload options.
 
 MVP (independent six-container order system; NOT included in common up/down):
   ./all.sh mvp up                   Build/start the small integrated study lab
@@ -499,6 +503,23 @@ main() {
       run_at "$ROOT/mvp-lab" bash "$ROOT/mvp-lab/lab.sh" "$@"
       return ;;
 
+    benchmark)
+      (( $# )) || usage_error 'benchmark requires a database: es7, es9, mariadb, kafka, or redis.'
+      require_file "$ROOT/scripts/benchmarks.py" || return
+      local show_help=0 option
+      for option in "$@"; do
+        [[ "$option" == -h || "$option" == --help ]] && show_help=1
+      done
+      if (( DRY_RUN )); then
+        run_at "$ROOT" python3 "$ROOT/scripts/benchmarks.py" run "$@" --dry-run
+      elif (( show_help )); then
+        run_at "$ROOT" python3 "$ROOT/scripts/benchmarks.py" run "$@"
+      else
+        begin_operation "benchmark:${1}" || return
+        run_at "$ROOT" python3 "$ROOT/scripts/benchmarks.py" run "$@"
+      fi
+      return ;;
+
     list)
       (( $# == 0 )) || usage_error 'list does not take arguments.'
       printf '%-16s %-24s %s\n' PROJECT DIRECTORY ENTRYPOINT
@@ -553,7 +574,7 @@ main() {
   if [[ "$action" == health || "$action" == preflight ]]; then
     local opts=()
     (( ! JSON_OUTPUT )) || opts+=(--json)
-    run_at "$ROOT" python3 "$ROOT/scripts/control.py" "$action" "${opts[@]}" "${SELECTED[@]}"
+    run_at "$ROOT" python3 "$ROOT/scripts/control.py" "$action" "${SELECTED[@]}" "${opts[@]}"
   else
     (( ! JSON_OUTPUT )) || usage_error '--json is valid only for health/preflight.'
     run_batch "$action"

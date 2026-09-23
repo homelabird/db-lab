@@ -11,14 +11,43 @@ from unittest.mock import Mock,patch
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT));sys.path.insert(0,str(ROOT/'scripts'))
 from ops.resp import encode,read_reply,ServerError,ProtocolError,parse_info,pairs,endpoints
 from ops.common import Histogram,Guard,Report,Blocked,cleanup,owned_prefix,recover_journal,atomic_json,render
-from ops.load import validate,Stats
+from ops.load import validate,Stats,save_benchmark
+from ops.compare import compare_reports
 from ops.proxy import Rules
 from ops.cli import parser as runner_parser
 from ops_manage import Ops,parser as host_parser
+import ops_manage
 import manage
 
 class RespCodecTests(unittest.TestCase):
     def test_encode_binary(self):self.assertEqual(encode(('SET','k',b'\0\xff')),b'*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$2\r\n\0\xff\r\n')
+    def test_host_runner_passes_benchmark_environment_without_shell(self):
+        ops=Ops(manage.parse_env(ROOT/'.env.example'))
+        with patch.object(ops,'inspect'),patch.object(ops.base,'run') as run:
+            ops.runner('load',child_env={'DB_LAB_BENCHMARK_ENV':'{"container_images":{}}'},capture=True)
+        command=run.call_args.args[0]
+        self.assertIn('--env',command)
+        self.assertIn('DB_LAB_BENCHMARK_ENV={"container_images":{}}',command)
+        self.assertEqual(command[-4:],['python','-m','ops.cli','load'])
+
+    def test_host_environment_inspects_owned_redis_and_runner_containers(self):
+        ops=Ops(manage.parse_env(ROOT/'.env.example'))
+        ops.base.engine='podman'
+        with patch.object(ops.base,'run',return_value=Mock(stdout='podman 5.4')) as version, \
+             patch.object(ops_manage,'host_benchmark_environment',return_value={'container_images':{'rslab-redis-1':{}}}) as inspect:
+            result=ops.benchmark_environment()
+        self.assertEqual(result['container_engine_version'],'podman 5.4')
+        version.assert_called_once()
+        inspect.assert_called_once_with('podman',[
+            'rslab-redis-1','rslab-redis-2','rslab-redis-3','rslab-redis-perf','rslab-ops-runner'])
+    def test_runtime_observation_is_encoded_as_data_for_runner(self):
+        ops=Ops(manage.parse_env(ROOT/'.env.example'))
+        observation={'scope':'host','sample_count':4,'host_load_1m_peak':1.2}
+        with patch.object(ops,'execute') as execute:
+            ops.attach_runtime_observation(observation)
+        argv=execute.call_args.args[1]
+        self.assertEqual(json.loads(argv[-1]),observation)
+        self.assertIn('benchmark.json',argv[2])
     def test_empty_command(self):
         with self.assertRaises(ValueError):encode(())
     def test_none_argument(self):
@@ -62,6 +91,49 @@ class HistAndValidationTests(unittest.TestCase):
     def test_load_rate_limit(self):
         with self.assertRaises(ValueError):validate(10,10001,2,100,128)
     def test_load_good(self):validate(30,300,8,2000,256)
+    def test_shared_benchmark_report_excludes_secrets_and_observes_version(self):
+        runtime={'host_fingerprint':'test-host','host_cpu_count':8,'host_memory_bytes':1000,
+                 'container_limits':{'rslab-redis-1':{'memory_bytes':512,'cpu_cores':1.0}},
+                 'container_images':{'rslab-redis-1':{'image_id':'sha256:redis','repo_digests':[]}},
+                 'container_engine':'podman','container_engine_version':'5.4'}
+        with tempfile.TemporaryDirectory() as temp,patch.dict(os.environ,{'OPS_RESULTS':temp,'REDIS_PASSWORD':'secret-value',
+                'DB_LAB_BENCHMARK_ENV':json.dumps(runtime)}):
+            report=Report('load',{'cmd':'load','target':'perf','rate':300,'workers':8,'keys':100})
+            (report.path/'metrics.jsonl').write_text('{"info":{"redis_version":"7.4.1"}}\n')
+            normalized=save_benchmark(report,{'target':'perf','wall_s':2.0,
+                'counts':{'attempted':20,'success':19,'error':1},'rtt_ms':{'p50_upper':1.0,'p95_upper':2.0,'p99_upper':3.0},
+                'achieved_success_rps':9.5,'offered_target_rps':10,'cleanup_keys':100},'PASS')
+            saved=json.loads((report.path/'benchmark.json').read_text())
+            self.assertEqual(saved['database']['version'],'7.4.1')
+            self.assertEqual(saved['metrics']['requests_succeeded'],19)
+            self.assertEqual(saved['verification']['owned_keys_cleanup_succeeded'],True)
+            self.assertTrue(saved['verification']['dataset_state_verified'])
+            self.assertEqual(saved['environment']['container_images'],runtime['container_images'])
+            self.assertNotIn('secret-value',(report.path/'benchmark.json').read_text())
+    def test_compare_requires_matching_parameters_and_versions(self):
+        with tempfile.TemporaryDirectory() as temp:
+            paths=[]
+            for i,rate in enumerate((100,100)):
+                folder=Path(temp)/str(i);folder.mkdir();paths.append(folder/'report.json')
+                data={'status':'PASS','scenario':'load','run_id':str(i),
+                    'parameters':{'target':'perf','rate':rate},
+                    'findings':{'load':{'counts':{'success':10+i,'error':0},
+                        'achieved_success_rps':10+i,'rtt_ms':{'p95_upper':2+i}}}}
+                paths[-1].write_text(json.dumps(data))
+                (folder/'metrics.jsonl').write_text('{"info":{"redis_version":"7.4.1"}}\n')
+            result=compare_reports(*paths)
+            self.assertTrue(result['comparable']);self.assertEqual(result['candidate']['success'],11)
+            self.assertEqual(result['candidate_minus_baseline']['success_rps']['absolute'],1)
+            data=json.loads(paths[1].read_text());data['parameters']['rate']=200
+            paths[1].write_text(json.dumps(data))
+            self.assertFalse(compare_reports(*paths)['comparable'])
+            data['parameters']['rate']=100;paths[1].write_text(json.dumps(data))
+            (Path(temp)/'1'/'metrics.jsonl').unlink()
+            self.assertFalse(compare_reports(*paths)['comparable'])
+    def test_compare_rejects_failed_report(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'report.json';path.write_text(json.dumps({'status':'FAIL'}))
+            with self.assertRaises(ValueError):compare_reports(path,path)
     def test_stats_uncertain_vs_rejected(self):
         s=Stats();s.result(False,'SET',1,2,'transport:TransportError');s.result(False,'SET',1,2,'server:OOM')
         self.assertEqual(s.snapshot()['counts']['writes_uncertain'],1);self.assertEqual(s.snapshot()['counts']['writes_rejected'],1)
@@ -174,6 +246,9 @@ class HostAndComposeTests(unittest.TestCase):
         with self.assertRaises(ValueError):ops.volume('other')
     def test_main_defaults(self):
         a=host_parser().parse_args(['run','fragmentation','--yes']);self.assertEqual(a.mib,64)
+    def test_compare_cli_takes_two_report_paths(self):
+        a=host_parser().parse_args(['compare','baseline/report.json','candidate/report.json'])
+        self.assertEqual((str(a.baseline),str(a.candidate)),('baseline/report.json','candidate/report.json'))
     def test_runner_rejects_unbounded_time(self):
         with self.assertRaises(SystemExit):runner_parser().parse_args(['run','fragmentation','--seconds','999'])
     def test_no_host_ports_privileged_or_binds(self):

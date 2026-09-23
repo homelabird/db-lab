@@ -89,6 +89,21 @@ class EnvironmentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'.env';path.write_text('KEY=a\nKEY=b\n')
             with self.assertRaises(ValueError): manage.parse_env(path)
+
+    def test_podman_compose_103_uses_independent_container_default(self):
+        lab=manage.Lab.__new__(manage.Lab)
+        lab.env={'DEPLOYMENT_MODE':'sentinel'};lab.name='test';lab.compose_cmd=['podman-compose'];lab._compose=None
+        lab.run=Mock(side_effect=[Mock(stdout='podman-compose version 1.0.3\n',stderr=''),Mock()])
+        lab.compose('config',capture=True)
+        self.assertNotIn('--in-pod=false',lab.run.call_args_list[-1].args[0])
+        self.assertEqual(lab.run.call_args_list[-1].args[0][:2],['podman-compose','-p'])
+
+    def test_old_podman_compose_without_in_pod_is_rejected(self):
+        lab=manage.Lab.__new__(manage.Lab)
+        lab.env={'DEPLOYMENT_MODE':'sentinel'};lab.name='test';lab.compose_cmd=['podman-compose'];lab._compose=None
+        lab.run=Mock(return_value=Mock(stdout='podman-compose version 1.0.2\n',stderr=''))
+        with self.assertRaisesRegex(RuntimeError,r'1\.0\.3\+'):
+            lab.compose('config',capture=True)
     def test_env_not_executed(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'.env';path.write_text('KEY=$(echo hello)\n')
@@ -104,6 +119,11 @@ class EnvironmentTests(unittest.TestCase):
 
 class ManagementTests(unittest.TestCase):
     def setUp(self): self.lab=manage.Lab(manage.parse_env(ROOT/'.env.example'))
+    def test_sandbox_up_targets_profiled_service_without_provider_profile_flag(self):
+        self.lab.check_env_state=Mock();self.lab.inspect=Mock()
+        self.lab.compose=Mock();self.lab.cli=Mock(return_value=Mock(returncode=0,stdout='PONG'))
+        self.lab.sandbox_up()
+        self.lab.compose.assert_called_once_with('up','-d','--no-deps','redis-sandbox')
     def test_node_allowlist(self):
         with self.assertRaises(ValueError): self.lab.cname('production-redis')
     def test_volume_allowlist(self):

@@ -45,3 +45,12 @@ p50/p95/p99는 로그 버킷의 **상단값 근사치**이며 약 3% 버킷 폭�
 Redis SLOWLOG는 명령 실행시간이며 네트워크 I/O 시간을 포함하지 않습니다. 따라서 client RTT와 서버 slowlog가 서로 다를 수 있습니다. [공식 SLOWLOG 설명](https://redis.io/docs/latest/commands/slowlog-get/)
 
 프록시는 **perf 경로 전용**입니다. Sentinel Master 주소 반환이나 Replica 통신을 투명하게 프록시하지 않습니다. 프로토콜 수준 지연 주입이지 실제 WAN이나 패킷 손실 모델도 아닙니다. control API는 내부 8080, Bearer token 인증이 필요하고 호스트에 공개하지 않습니다.
+
+## 두 실행 비교
+
+```bash
+./ops.sh results
+./ops.sh compare output/ops-.../RUN_ID/report.json output/ops-.../RUN_ID/report.json
+```
+
+`compare`는 완료된 PASS `load` 보고서만 받고 모든 workload 인수와 관측된 Redis 버전이 같을 때만 `comparable: true`로 표시합니다. 성공/오류 수, 성공 RPS와 RTT 분포를 나란히 보여주며 성능 승패를 자동 판정하지 않습니다. 호스트, 컨테이너 자원 제한, 데이터 상태, 동시 부하는 사용자가 동일하게 유지해야 합니다. 이 조건들은 보고서에서 검증하지 않으므로 결과를 production capacity 근거로 쓰지 마세요.

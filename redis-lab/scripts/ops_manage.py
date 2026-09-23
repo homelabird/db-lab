@@ -14,6 +14,8 @@ from datetime import datetime,timezone
 from pathlib import Path
 import manage
 ROOT=manage.ROOT
+sys.path.insert(0,str(ROOT.parent/'lib'))
+from db_lab_benchmark import HostPressureSampler, environment as host_benchmark_environment
 sys.path.insert(0,str(ROOT))
 from ops.common import atomic_json,render
 from ops.resp import parse_info
@@ -46,10 +48,32 @@ class Ops:
         return obj
     def compose(self,*args):
         return self.base.run(['podman-compose','--in-pod=false','-p',self.name+'-ops','-f',str(ROOT/'compose.ops.yaml'),*args],capture=False,timeout=None)
-    def execute(self,node,args,capture=False,check=True,timeout=None):
+    def execute(self,node,args,capture=False,check=True,timeout=None,child_env=None):
         self.inspect(node)
-        return self.base.run(['podman','exec',self.name_of(node),*args],capture=capture,check=check,timeout=timeout)
+        command=['podman','exec']
+        for key,value in sorted((child_env or {}).items()):command.extend(['--env',key+'='+value])
+        return self.base.run([*command,self.name_of(node),*args],capture=capture,check=check,timeout=timeout)
     def runner(self,*args,**kwargs):return self.execute('ops-runner',['python','-m','ops.cli',*map(str,args)],**kwargs)
+    def benchmark_environment(self):
+        engine_version=self.base.run([self.base.engine,'version','--format','{{.Client.Version}}'],
+                                     check=False).stdout.strip() or None
+        containers=[self.name+'-redis-'+str(i) for i in range(1,4)]
+        containers.extend((self.name_of('redis-perf'),self.name_of('ops-runner')))
+        return {**host_benchmark_environment(self.base.engine,containers),
+                'container_engine':self.base.engine,'container_engine_version':engine_version}
+    def attach_runtime_observation(self,observation):
+        script='''import json, pathlib, sys
+root=pathlib.Path('/results/ops')
+run=root/json.loads((root/'latest.json').read_text())['run_id']
+observation=json.loads(sys.argv[1])
+for name in ('report.json','benchmark.json'):
+    path=run/name
+    if path.is_file():
+        report=json.loads(path.read_text())
+        report.setdefault('environment',{})['runtime_observation']=observation
+        path.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\\n')
+'''
+        self.execute('ops-runner',['python','-c',script,json.dumps(observation,separators=(',',':'))],timeout=10)
     @contextmanager
     def mutation(self):
         path=ROOT/'.lab'/'ops-mutation.lock';path.parent.mkdir(exist_ok=True)
@@ -79,6 +103,13 @@ class Ops:
         self.base.run(['podman','cp',self.name_of('ops-runner')+':/results/ops/.',target])
         atomic_json(ROOT/'output'/'ops-latest-export.json',{'directory':str(target.relative_to(ROOT))})
         print('Exported: '+str(target));return target
+
+    @staticmethod
+    def compare(first,second):
+        from ops.compare import compare_reports
+        result=compare_reports(first,second)
+        print(json.dumps(result,indent=2,ensure_ascii=False))
+        return 0 if result['comparable'] else 2
     def latest_report(self):
         script="import json,pathlib;p=pathlib.Path('/results/ops');m=json.loads((p/'latest.json').read_text());print((p/m['run_id']/'report.json').read_text())"
         return json.loads(self.execute('ops-runner',['python','-c',script],capture=True,timeout=10).stdout)
@@ -235,6 +266,8 @@ def parser():
         q=sub.add_parser(cmd);q.add_argument('--no-build',action='store_true');q.add_argument('--only',action='store_true',help='Use an already running base HA lab')
         if cmd=='validate':q.add_argument('--yes',action='store_true')
     sub.add_parser('list');sub.add_parser('doctor');sub.add_parser('results')
+    q=sub.add_parser('compare',help='Compare two exported Redis load reports with identical settings')
+    q.add_argument('baseline',type=Path);q.add_argument('candidate',type=Path)
     for cmd in ('down','reset','recover','replication','ha-test'):
         q=sub.add_parser(cmd)
         if cmd!='down':q.add_argument('--yes',action='store_true')
@@ -253,6 +286,7 @@ def parser():
 def main(argv=None):
     args=parser().parse_args(argv)
     if args.command=='list':print('\n'.join(SCENARIOS));return 0
+    if args.command=='compare':return Ops.compare(args.baseline,args.candidate)
     if args.command in ('run','reset','recover','replication','ha-test','cpu','validate') and not args.yes:
         raise ValueError('This command changes the isolated lab. Review scope and rerun with --yes.')
     env=manage.load_env();ops=Ops(env);command=args.command
@@ -268,7 +302,16 @@ def main(argv=None):
         argv=[command]
         for key,value in vars(args).items():
             if key!='command':argv+=['--'+key.replace('_','-'),str(value)]
-        result=ops.runner(*argv,check=False,timeout=args.seconds+120);return result.returncode
+        options={'check':False,'timeout':args.seconds+120}
+        if command=='load':
+            with ops.mutation():
+                options['child_env']={'DB_LAB_BENCHMARK_ENV':json.dumps(ops.benchmark_environment(),separators=(',',':'))}
+                pressure=HostPressureSampler().start()
+                try:result=ops.runner(*argv,**options)
+                finally:observation=pressure.stop()
+                ops.attach_runtime_observation(observation)
+        else:result=ops.runner(*argv,**options)
+        return result.returncode
     else:
         with ops.mutation():
             if command=='run':

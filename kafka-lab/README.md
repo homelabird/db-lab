@@ -4,6 +4,8 @@
 
 카프카 기본 송수신, 파티션/복제/ISR, 컨슈머 그룹/오프셋/lag를 학습한 다음 직접 장애를 넣고 복구할 수 있습니다. 데이터 파일은 들어 있지 않습니다. 실행할 때 Python 생성기가 합성 JSON 이벤트를 만들어 실제 Kafka producer로 전송합니다.
 
+각 장애 시나리오의 dev 재현과 staging/prod 읽기 전용 진단 명령은 [시나리오별 대응 쿼리](../docs/SCENARIO-RESPONSE-QUERIES.md#kafka-failure-scenarios)를 참고하세요.
+
 > **검증 범위:** 제작 환경에서 75개 단위·모의 테스트 및 Bash/YAML 검사가 통과했습니다. 이 환경에는 Podman/Docker가 없어 이미지 다운로드, 실제 Kafka 기동·장애 전환, UI 접속은 실행하지 못했습니다. 실제 실행 검증용 `smoke`와 `scripts/test-live.sh`가 포함되어 있습니다. 자세한 내역은 `reports/VALIDATION.md`에 있습니다.
 
 ## 2026-09-21 실행 수정

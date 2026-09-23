@@ -2,6 +2,8 @@
 
 Redis 기본 동작과 Sentinel 장애조치에 **지속 부하, 병목, 메모리 단편화, 자원 제한, 원인별 대응과 결과 기록**을 추가한 Podman Compose 실습환경입니다.
 
+각 perf scenario의 dev 재현과 staging/prod Redis 조회 명령은 [시나리오별 대응 쿼리](../docs/SCENARIO-RESPONSE-QUERIES.md#redis-perf-scenario-대응)를 참고하세요.
+
 > **검증 경계:** 제작 환경의 170개 정적·단위·회귀·로컬 TCP 검사는 통과했습니다. TCP 검사는 작은 테스트 서버/echo 서버를 사용합니다. 실제 Redis 서버와 Podman은 실행기가 없어 **BLOCKED(미검증)**입니다. `TESTING.md`와 `tests/evidence/`에 실제 실행 결과를 구분해 두었습니다. 이 압축파일은 소스·설정·교재이며 컨테이너 이미지나 사전 생성 데이터셋을 포함하지 않습니다.
 
 ## 2026-09-21 실행 수정
@@ -60,6 +62,10 @@ chmod +x lab.sh ops.sh
 ```bash
 # 평상시 부하. 평균이 아니라 p50/p95/p99, 오류, 큐 드롭도 기록
 ./ops.sh load --seconds 30 --rate 300 --workers 8
+
+# 동일 workload로 수행한 두 Redis 실행 결과 비교
+./ops.sh results
+./ops.sh compare output/ops-BASELINE/RUN_ID/report.json output/ops-CANDIDATE/RUN_ID/report.json
 
 # 큰 Hash 전체조회 vs 필요한 필드만 조회, DEL vs UNLINK
 ./ops.sh run bigkey --yes

@@ -1,5 +1,7 @@
 # MariaDB HA / Galera 실습 환경
 
+각 incident scenario의 dev 재현과 staging/prod SQL 대응 조회는 [시나리오별 대응 쿼리](../docs/SCENARIO-RESPONSE-QUERIES.md#mariadb-galera-incident-scenarios)를 참고하세요.
+
 > **2026-09-17 수정본** — [수정 내역·검증 결과](docs/FIXES-VALIDATION.md)를 먼저 확인하세요.
 > 쉘 9개/Python 14개 문법 검사와 호스트 테스트 182개는 통과했습니다.
 > **실제 MariaDB/Galera 컨테이너 검사는 런타임 미설치로 BLOCKED이며 완료했다고 주장하지 않습니다.**
@@ -287,6 +289,8 @@ API 로그 JSON에는 기본 256바이트 payload를 추가합니다. 실제 데
 ./lab.sh recover                          # 세 노드 recovered UUID/seqno 비교, 시작은 하지 않음
 ./lab.sh recover --execute --confirm-recovery
 ```
+
+각 `load` 실행은 원본 계정 테이블을 복사한 run별 임시 계정/송금 테이블에서만 workload를 실행합니다. 정렬한 계정 ID/잔액의 SHA-256 fingerprint를 기록하고 실행 후 복사 데이터가 동일한지와 임시 테이블 제거를 확인합니다. 확인하지 못하면 report를 FAIL로 남기고 명령도 실패합니다. 비밀 제외 JSON은 `reports/benchmarks/`에 저장됩니다. 같은 host, 자원 제한, workload 설정, 데이터 fingerprint로 반복한 뒤 공통 비교기를 사용하세요. 이 보고서는 부하 측정 증거이지 production capacity 보증은 아닙니다.
 
 `recover`는 매번 실제 `--wsrep-recover`를 다시 수행합니다. 과거 보고서의 숫자를 그대로 신뢰해 bootstrap하지 않습니다. UUID 불일치, 일부 노드 상태 미확인, 음수 위치, 실행 중/paused 노드는 거부합니다. 복구 로그는 `reports/recovery.json`에 남습니다. `--wsrep-recover`는 InnoDB 복구를 수행할 수 있어 **완전한 읽기 전용 작업은 아닙니다.** 중요한 데이터를 대상으로는 먼저 디스크 복사본을 확보해야 합니다.
 

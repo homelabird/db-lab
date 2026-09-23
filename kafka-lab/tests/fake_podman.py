@@ -36,6 +36,10 @@ try:
         elif 'client.py' in ' '.join(a):
             sub=a[a.index('/opt/lab/client.py')+1]
             if sub=='wait' and os.getenv('FAKE_FAIL_WAIT')=='1': rc=12
+            elif sub in ('seed','benchmark-seed'): out=json.dumps({'run_id':'mock-seed-0001','queued':17,'delivered':17,
+                'failed':0,'pending':0,'logical_bytes':1234,'elapsed_seconds':0.1,
+                'parameters':{'kind':'access','count':17},'topic':'lab.benchmark.0123456789abcdef0123456789abcdef',
+                'benchmark_dataset_state_verified':True,'benchmark_cleanup_verified':True})
             elif sub in ['wait','zk-status']: out='{"mock": true}'
             else: out='{"mock_command": '+json.dumps(sub)+'}'
         else: out='mock CLI'
