@@ -1,0 +1,4 @@
+interface:
+  display_name: "DB Lab Quality"
+  short_description: "Implement and validate changes across DB Lab projects"
+  default_prompt: "Use $db-lab-quality to implement and validate this DB Lab change."
