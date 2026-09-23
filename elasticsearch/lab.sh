@@ -13,11 +13,14 @@ Usage:
   ./lab.sh <command> [options]
 
 Lifecycle:
-  doctor|check       Check host prerequisites
+  doctor|check [--install-missing]
+                     Check prerequisites; optionally install python3, curl,
+                     and iptables with the detected system package manager
   up|start           Start Elasticsearch, Cerebro, and Kibana
   demo               Start → seed smoke data → verify everything
   down [--purge --yes]
   status|ps          Show cluster, node, and shard status
+  verify-install     Verify running containers, green cluster, snapshot, and UIs
   ui                 Print browser URLs
   logs [service...]  Follow Compose logs
   compose <args...>  Run the configured Compose provider
@@ -32,6 +35,7 @@ Data and queries:
   query [args...]    Run a catalog query example (no args: list)
   pit [options]      Run PIT/search_after pagination example
   load [options]     Run the live write load
+  benchmark [options] Run a bounded load and save a comparable JSON report
   reset              Restore lab cluster settings without deleting data
   snapshot           (Re)register + verify the shared snapshot repository
 
@@ -42,7 +46,14 @@ Operations:
   help               Show this help
 
 Quick start:
+  cp .env.example .env        # first run only; edit ports/provider if needed
+  ./lab.sh help                 # commands and examples
+  ./lab.sh doctor               # check prerequisites and network
   ./lab.sh demo                 # safe 5MiB smoke dataset
+  ./lab.sh status               # cluster and shard health
+  ./lab.sh logs es02            # inspect one service
+  ./lab.sh ui                   # print browser URLs
+  ./lab.sh down                 # stop while preserving data
   ./lab.sh seed                 # default 100MiB dataset
   ./lab.sh verify
   ./lab.sh ui
@@ -188,6 +199,7 @@ case "$command" in
   up|start) run_script "$ROOT/scripts/01-up.sh" "$@" ;;
   down|stop) run_script "$ROOT/scripts/02-down.sh" "$@" ;;
   status|ps) run_script "$ROOT/scripts/03-status.sh" "$@" ;;
+  verify-install) verify_install ;;
   seed) run_python generate_and_load.py "$@" ;;
   reset) run_script "$ROOT/scripts/05-reset-cluster-settings.sh" "$@" ;;
   snapshot|snapshot-repo) ensure_snapshot_repo "$@" ;;
@@ -202,6 +214,7 @@ case "$command" in
     ;;
   verify) run_python verify_seed.py "$@" ;;
   pit|pagination) run_python pit_pagination.py "$@" ;;
+  benchmark) python3 "$ROOT/../lib/es-lab/benchmark.py" "$@" ;;
   load|live-load) run_python live_load.py "$@" ;;
   offline-tests|test) run_script "$ROOT/scripts/12-offline-tests.sh" "$@" ;;
   fault|fault-lab) run_python fault_lab.py "$@" ;;

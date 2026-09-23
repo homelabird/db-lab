@@ -35,8 +35,8 @@ class Es9DefaultsTests(unittest.TestCase):
 
     def test_latest_images_are_pinned(self):
         text = (ROOT / 'compose.yaml').read_text()
-        self.assertEqual(text.count('image: docker.elastic.co/elasticsearch/elasticsearch:9.5.3'), 2)
-        self.assertEqual(text.count('docker.elastic.co/elasticsearch/elasticsearch:9.5.3'), 2)
+        self.assertEqual(text.count('image: docker.elastic.co/elasticsearch/elasticsearch:9.5.3'), 3)
+        self.assertEqual(text.count('docker.elastic.co/elasticsearch/elasticsearch:9.5.3'), 3)
         self.assertEqual(text.count('image: docker.elastic.co/kibana/kibana:9.5.3'), 1)
         self.assertIn('ELASTICSEARCH_HOSTS=["http://es01:9200","http://es02:9200","http://es03:9200","http://es04:9200","http://es05:9200"]', text)
 
@@ -73,6 +73,22 @@ class Es9DefaultsTests(unittest.TestCase):
         self.assertEqual(text.count('condition: service_completed_successfully'), 1)
         self.assertEqual(text.count('<<: *es9-node'), 5)
 
+    def test_cert_init_is_a_real_shell_command_and_shares_a_named_volume(self):
+        text = (ROOT / 'compose.yaml').read_text()
+        self.assertIn('cert-init:', text)
+        self.assertIn('entrypoint:\n    - /bin/bash\n    - -c\n    - |', text)
+        self.assertIn('es-certs:/usr/share/elasticsearch/config/certs', text)
+        self.assertEqual(text.count('es-certs:/usr/share/elasticsearch/config/certs:ro'), 5)
+        self.assertIn('compose run --rm cert-init', (ROOT / 'scripts/01-up.sh').read_text())
+
+    def test_install_verification_checks_all_stack_layers(self):
+        verifier = (SHARED / 'verify-install.py').read_text()
+        for check in ('_cluster/health', '_snapshot/', '_verify', '/api/status', 'available'):
+            self.assertIn(check, verifier)
+        self.assertIn('Authorization', verifier)
+        self.assertIn('overall.get("level") or overall.get("state")', verifier)
+        self.assertIn('verify-install) verify_install', (ROOT / 'lab.sh').read_text())
+
     def test_no_scenario_or_cerebro_machinery(self):
         for name in ('scenarios', 'datasets', 'cerebro'):
             self.assertFalse((ROOT / name).exists(), name)
@@ -84,6 +100,11 @@ class Es9DefaultsTests(unittest.TestCase):
         loader = (ROOT / 'scripts/common.sh').read_text()
         self.assertIn('export LAB_ROOT', loader)
         self.assertIn('lib/es-lab/common.sh', loader)
+        self.assertIn('LAB_CONTAINER_PREFIX="${LAB_CONTAINER_PREFIX:-es9-lab-}"', loader)
+        self.assertIn('LAB_CONTAINER_PREFIX=es9-lab-', (ROOT / '.env.example').read_text())
+        self.assertIn('${LAB_CONTAINER_PREFIX:-es9-lab-}es01', (ROOT / 'compose.yaml').read_text())
+        self.assertIn('doctor|check [--install-missing]', (ROOT / 'lab.sh').read_text())
+        self.assertIn('check_host_packages "$install_missing"', (ROOT / 'scripts/00-doctor.sh').read_text())
         lablib = (ROOT / 'scripts/lablib.py').read_text()
         self.assertIn('from lablib_core import', lablib)
         common = (SHARED / 'common.sh').read_text()

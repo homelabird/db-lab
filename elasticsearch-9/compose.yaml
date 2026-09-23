@@ -25,7 +25,7 @@ x-es9-node: &es9-node
   healthcheck:
     test:
     - CMD-SHELL
-    - curl -fsS --max-time 5 http://localhost:9200/_cluster/health >/dev/null
+    - curl -sS --max-time 5 http://localhost:9200/_cluster/health >/dev/null
     interval: 10s
     timeout: 6s
     retries: 30
@@ -34,6 +34,49 @@ x-es9-node: &es9-node
   - es-lab
 
 services:
+  cert-init:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.3
+    user: "0:0"
+    entrypoint:
+    - /bin/bash
+    - -c
+    - |
+      set -e
+      mkdir -p config/certs
+      if [ ! -s config/certs/ca/ca.crt ] || [ ! -s config/certs/ca/ca.key ]; then
+        bin/elasticsearch-certutil ca --silent --pem -out config/certs/ca.zip
+        unzip -oq config/certs/ca.zip -d config/certs
+      fi
+      if [ ! -s config/certs/es01/es01.crt ] || [ ! -s config/certs/es02/es02.crt ] || \
+         [ ! -s config/certs/es03/es03.crt ] || [ ! -s config/certs/es04/es04.crt ] || \
+         [ ! -s config/certs/es05/es05.crt ]; then
+        cat > config/certs/instances.yml <<'EOF'
+      instances:
+        - name: es01
+          dns: [es01, localhost]
+          ip: [127.0.0.1]
+        - name: es02
+          dns: [es02]
+        - name: es03
+          dns: [es03]
+        - name: es04
+          dns: [es04]
+        - name: es05
+          dns: [es05]
+      EOF
+        bin/elasticsearch-certutil cert --silent --pem -out config/certs/certs.zip \
+          --in config/certs/instances.yml --ca-cert config/certs/ca/ca.crt \
+          --ca-key config/certs/ca/ca.key
+        unzip -oq config/certs/certs.zip -d config/certs
+      fi
+      chown -R 1000:0 config/certs
+      find config/certs -type d -exec chmod 750 {} +
+      find config/certs -type f -exec chmod 640 {} +
+    volumes:
+    - es-certs:/usr/share/elasticsearch/config/certs
+    networks:
+    - es-lab
+    restart: "no"
   # One-shot helper: freshly-created named volumes start root-owned, but the
   # elasticsearch user (uid 1000) needs write access to the shared snapshot
   # volume. Runs once as root before any ES node starts; alpine/bash keeps the
@@ -52,7 +95,7 @@ services:
     restart: "no"
   es01:
     <<: *es9-node
-    container_name: es9-lab-es01
+    container_name: ${LAB_CONTAINER_PREFIX:-es9-lab-}es01
     environment:
     - node.name=es01
     - cluster.name=${LAB_CLUSTER_NAME:-es9-lab}
@@ -60,6 +103,11 @@ services:
     - node.attr.zone=zone-a
     - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
     - xpack.security.autoconfiguration.enabled=false
+    - xpack.security.transport.ssl.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - xpack.security.transport.ssl.verification_mode=certificate
+    - xpack.security.transport.ssl.key=certs/es01/es01.key
+    - xpack.security.transport.ssl.certificate=certs/es01/es01.crt
+    - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
     - path.repo=/usr/share/elasticsearch/snapshots
     - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
     - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
@@ -71,11 +119,12 @@ services:
     volumes:
     - es01-data:/usr/share/elasticsearch/data
     - es-snapshots:/usr/share/elasticsearch/snapshots
+    - es-certs:/usr/share/elasticsearch/config/certs:ro
     ports:
     - ${ES_BIND_IP:-127.0.0.1}:${ES_PORT:-9201}:9200
   es02:
     <<: *es9-node
-    container_name: es9-lab-es02
+    container_name: ${LAB_CONTAINER_PREFIX:-es9-lab-}es02
     environment:
     - node.name=es02
     - cluster.name=${LAB_CLUSTER_NAME:-es9-lab}
@@ -83,6 +132,11 @@ services:
     - node.attr.zone=zone-b
     - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
     - xpack.security.autoconfiguration.enabled=false
+    - xpack.security.transport.ssl.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - xpack.security.transport.ssl.verification_mode=certificate
+    - xpack.security.transport.ssl.key=certs/es02/es02.key
+    - xpack.security.transport.ssl.certificate=certs/es02/es02.crt
+    - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
     - path.repo=/usr/share/elasticsearch/snapshots
     - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
     - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
@@ -94,9 +148,10 @@ services:
     volumes:
     - es02-data:/usr/share/elasticsearch/data
     - es-snapshots:/usr/share/elasticsearch/snapshots
+    - es-certs:/usr/share/elasticsearch/config/certs:ro
   es03:
     <<: *es9-node
-    container_name: es9-lab-es03
+    container_name: ${LAB_CONTAINER_PREFIX:-es9-lab-}es03
     environment:
     - node.name=es03
     - cluster.name=${LAB_CLUSTER_NAME:-es9-lab}
@@ -104,6 +159,11 @@ services:
     - node.attr.zone=zone-c
     - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
     - xpack.security.autoconfiguration.enabled=false
+    - xpack.security.transport.ssl.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - xpack.security.transport.ssl.verification_mode=certificate
+    - xpack.security.transport.ssl.key=certs/es03/es03.key
+    - xpack.security.transport.ssl.certificate=certs/es03/es03.crt
+    - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
     - path.repo=/usr/share/elasticsearch/snapshots
     - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
     - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
@@ -115,9 +175,10 @@ services:
     volumes:
     - es03-data:/usr/share/elasticsearch/data
     - es-snapshots:/usr/share/elasticsearch/snapshots
+    - es-certs:/usr/share/elasticsearch/config/certs:ro
   es04:
     <<: *es9-node
-    container_name: es9-lab-es04
+    container_name: ${LAB_CONTAINER_PREFIX:-es9-lab-}es04
     environment:
     - node.name=es04
     - cluster.name=${LAB_CLUSTER_NAME:-es9-lab}
@@ -125,6 +186,11 @@ services:
     - node.attr.zone=zone-a
     - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
     - xpack.security.autoconfiguration.enabled=false
+    - xpack.security.transport.ssl.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - xpack.security.transport.ssl.verification_mode=certificate
+    - xpack.security.transport.ssl.key=certs/es04/es04.key
+    - xpack.security.transport.ssl.certificate=certs/es04/es04.crt
+    - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
     - path.repo=/usr/share/elasticsearch/snapshots
     - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
     - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
@@ -136,9 +202,10 @@ services:
     volumes:
     - es04-data:/usr/share/elasticsearch/data
     - es-snapshots:/usr/share/elasticsearch/snapshots
+    - es-certs:/usr/share/elasticsearch/config/certs:ro
   es05:
     <<: *es9-node
-    container_name: es9-lab-es05
+    container_name: ${LAB_CONTAINER_PREFIX:-es9-lab-}es05
     environment:
     - node.name=es05
     - cluster.name=${LAB_CLUSTER_NAME:-es9-lab}
@@ -146,6 +213,11 @@ services:
     - node.attr.zone=zone-b
     - xpack.security.enabled=${XPACK_SECURITY_ENABLED:-false}
     - xpack.security.autoconfiguration.enabled=false
+    - xpack.security.transport.ssl.enabled=${XPACK_SECURITY_ENABLED:-false}
+    - xpack.security.transport.ssl.verification_mode=certificate
+    - xpack.security.transport.ssl.key=certs/es05/es05.key
+    - xpack.security.transport.ssl.certificate=certs/es05/es05.crt
+    - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
     - path.repo=/usr/share/elasticsearch/snapshots
     - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
     - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
@@ -157,9 +229,10 @@ services:
     volumes:
     - es05-data:/usr/share/elasticsearch/data
     - es-snapshots:/usr/share/elasticsearch/snapshots
+    - es-certs:/usr/share/elasticsearch/config/certs:ro
   kibana:
     image: docker.elastic.co/kibana/kibana:9.5.3
-    container_name: es9-lab-kibana
+    container_name: ${LAB_CONTAINER_PREFIX:-es9-lab-}kibana
     depends_on:
     - es01
     - es02
@@ -175,8 +248,9 @@ services:
     - SERVER_HOST=0.0.0.0
     - ELASTICSEARCH_HOSTS=["http://es01:9200","http://es02:9200","http://es03:9200","http://es04:9200","http://es05:9200"]
     - XPACK_SECURITY_ENABLED=${XPACK_SECURITY_ENABLED:-false}
+    - MONITORING_UI_ENABLED=${KIBANA_STACK_MONITORING_ENABLED:-true}
     - ELASTICSEARCH_USERNAME=${KIBANA_USERNAME:-kibana_system}
-    - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD:-}
+    - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD:-}
     - TELEMETRY_ENABLED=false
 
 networks:
@@ -186,6 +260,7 @@ networks:
     driver: bridge
 
 volumes:
+  es-certs: null
   es01-data: null
   es02-data: null
   es03-data: null

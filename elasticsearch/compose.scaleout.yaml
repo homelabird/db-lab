@@ -1,7 +1,7 @@
 services:
   es06:
     image: docker.elastic.co/elasticsearch/elasticsearch:7.17.29
-    container_name: cerebro-seed-es06
+    container_name: ${LAB_CONTAINER_PREFIX:-cerebro-seed-}es06
     environment:
     - node.name=es06
     - cluster.name=${LAB_CLUSTER_NAME:-cerebro-shard-lab}
@@ -12,7 +12,7 @@ services:
     - ELASTIC_USERNAME=${ELASTIC_USERNAME:-elastic}
     - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
     - xpack.ml.enabled=false
-    - ES_JAVA_OPTS=-Xms${ES_HEAP:-512m} -Xmx${ES_HEAP:-512m}
+    - ES_JAVA_OPTS=-Xms${ES_HEAP:-640m} -Xmx${ES_HEAP:-640m}
     - node.roles=master,data,ingest
     - node.processors=2
     - ingest.geoip.downloader.enabled=false

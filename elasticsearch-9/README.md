@@ -4,61 +4,93 @@ Elasticsearch **9.5.x** 기반 5노드 클러스터와 Kibana 9를 올리는 실
 legacy 7.x 랩(`elasticsearch/`)과 **같은 공용 코어**(`../lib/es-lab/`)를 공유하며,
 범위는 **코어 스택 + 스냅샷 저장소 + 시드(현실적) 데이터 + 쿼리 검증**입니다.
 장애 시나리오/샤드/시드 토폴로지 드릴은 legacy 랩 전용입니다. **Cerebro는 의도적으로
-포함하지 않습니다**(legacy 7.x 보조 UI용) — 이 랩은 Kibana로 화면 검색/포인 매니지 합니다.
+포함하지 않습니다**(legacy 7.x 보조 UI용) — 화면 검색과 관리는 Kibana를 사용합니다.
 
-- Docker(+Compose v2)로 검증했습니다. podman-compose는 compose 파일을 평범한 YAML
-  앵커/브릿지로 유지해 해석 가능하지만 로컬 검증은 하지 못했습니다.
+보안 인증이 필요한 read-only cluster/shard 조회는 [공통 시나리오 대응 가이드](../docs/SCENARIO-RESPONSE-QUERIES.md)를 참고하세요.
+
+- Docker Compose로 검증했습니다. 2026-09-23에는 Podman 엔진의 `podman compose`
+  경로로도 설치와 재실행을 확인했습니다. 이 호스트에는 별도 `podman-compose`
+  실행 파일이 없어 해당 provider 자체의 동작은 검증하지 못했습니다.
 - 기본 포트: Elasticsearch **9201**, Kibana **5602**. legacy 7.x 랩(9200/9000/5601)과
   충돌하지 않아 두 랩을 동시에 기동할 수 있습니다.
+- 같은 ES9 랩의 별도 사본을 동시에 실행하려면 `.env`의 `COMPOSE_PROJECT_NAME`과
+  `LAB_CONTAINER_PREFIX`를 모두 고유하게 지정하세요.
 - 기본 보안은 꺼져 있으며(무인증, loopback 바인딩), `XPACK_SECURITY_ENABLED=true`는
   옵트인입니다(아래 한계 참고).
 
-## 바로 실행
+## 빠른 시작
+
+`doctor` 또는 `up`은 `.env`가 없으면 `.env.example`에서 권한 `600`으로 생성합니다.
+기존 `.env`는 덮어쓰지 않습니다. Linux/WSL2, Bash, Python 3.9+, curl, Docker Compose
+또는 Podman Compose(`podman compose` 포함)가 필요합니다.
 
 ```bash
-# 이 디렉터리에서
-cp .env.example .env
-chmod 600 .env
-chmod +x lab.sh scripts/*.sh
-
-./lab.sh doctor     # 엔진/도구/메모리 사전 진단
-./lab.sh up         # 콜드 부트: 5노드 green + 스냅샷 저장소 등록·검증 + Kibana
-./lab.sh seed --size-mb 5   # 실제 분포의 시드 데이터 적재(빠른 smoke)
-./lab.sh verify     # 문서 수·샤드 레이아웃·쿼리 예제 26종 검증
-./lab.sh features   # ES9 현대 기능: 데이터스트림+ILM, ES|QL, kNN, async search
-./lab.sh query list # 쿼리 예제 목록
-./lab.sh status     # 노드/샤드 상태
-./lab.sh ui         # 접속 URL 출력
-./lab.sh snapshot   # 스냅샷 저장소 재검증
-./lab.sh down
+./lab.sh doctor                 # 엔진·도구·메모리·네트워크 사전 점검
+./lab.sh up                     # ES 5노드 green + snapshot + Kibana
+./lab.sh seed --size-mb 5       # 빠른 확인용 데이터 적재
+./lab.sh verify                 # 데이터·샤드·쿼리 검증
+./lab.sh verify-install         # 설치 전체 확인
+./lab.sh ui                     # 접속 주소 출력
 ```
 
-루트에서도 쓸 수 있습니다(공용 배치에는 미포함, opt-in).
+도구 설치가 필요하면 `./lab.sh doctor --install-missing`을 선택하세요. 감지한
+패키지 관리자와 sudo로 누락된 `python3`, `curl`, `iptables`를 설치합니다.
+`iptables`는 네트워크 장애 진단용 선택 도구입니다.
+
+| 작업 | 명령 |
+|---|---|
+| 노드·샤드 상태 | `./lab.sh status` |
+| 로그 보기 | `./lab.sh logs es02` |
+| 쿼리 예제 | `./lab.sh query list` |
+| ES9 기능 예제 | `./lab.sh features` |
+| 시드 인덱스만 삭제 | `./lab.sh purge --yes` |
+| 중지하고 데이터 보존 | `./lab.sh down` |
+| 컨테이너와 프로젝트 볼륨 삭제 | `./lab.sh down --purge --yes` |
+
+`purge --yes`는 다섯 개의 시드 인덱스만 지웁니다. `down --purge --yes`는
+Elasticsearch 데이터와 snapshot을 포함한 프로젝트 볼륨을 삭제합니다.
+
+## 주요 설정
+
+`.env`에서 설정합니다. Stack Monitoring은 보안 설정과 독립적으로 표시를 제어합니다.
+`KIBANA_STACK_MANAGEMENT_ENABLED=false`는 `KIBANA_LOGIN_USERNAME` 계정에 제한된
+권한을 부여합니다. 이 권한 제어에는 보안 모드와 로그인 계정이 필요합니다.
+
+| 설정 | 기본값 | 설명 |
+|---|---:|---|
+| `COMPOSE_PROVIDER` | `auto` | `docker`, `podman`, `podman-compose` 선택 |
+| `ES_PORT` / `KIBANA_PORT` | `9201` / `5602` | 호스트 포트 |
+| `KIBANA_STACK_MONITORING_ENABLED` | `true` | Stack Monitoring 표시 |
+| `KIBANA_STACK_MANAGEMENT_ENABLED` | `true` | 보안 모드의 관리 권한 허용 |
+| `XPACK_SECURITY_ENABLED` | `false` | 인증 및 노드 간 TLS 활성화 |
+
+루트 `./all.sh es9 <command>`로도 실행할 수 있습니다. 예: `./all.sh es9 up`.
+
+### 반복 부하 측정
 
 ```bash
-cd ..
-./all.sh es9 doctor
-./all.sh es9 up
-./all.sh es9 seed --size-mb 5
-./all.sh es9 verify
-./all.sh es9 status
-./all.sh es9 health
-./all.sh es9 snapshot
-./all.sh reset es9 --yes   # 볼륨까지 삭제
+./lab.sh benchmark --seconds 30 --rate 100 --batch 100
+python3 ../scripts/benchmarks.py reports/benchmarks/RUN-1.json reports/benchmarks/RUN-2.json
 ```
+
+7.x와 같은 공유 실행기가 reserved `lab-benchmark-v1` 임시 인덱스에 합성 문서를 쓰고,
+refresh/count 검증 후 인덱스를 삭제합니다. 보고서는 `reports/benchmarks/`에 남습니다.
+측정값은 bulk write 응답 latency/throughput이며 검색, 내구성, host 동등성 또는 production
+capacity를 증명하지 않습니다. 비정상 종료 후 임시 인덱스가 남으면 기존 데이터를 자동
+삭제하지 않으므로 수동으로 검사한 뒤 정리해야 합니다.
 
 ## 구조
 
 ```
 compose.yaml            ES 9.5.3 x5 + Kibana 9.5.3, YAML 앵커로 노드 중복 최소화
 lab.sh                  subset 래퍼: doctor/up/down/status/ui/logs/compose/snapshot/
-                        seed/verify/size/purge/query/offline-tests
+                        seed/benchmark/verify/size/purge/query/offline-tests
 scripts/common.sh       공용 코어 로더 (LAB_ROOT/LAB_CONTAINER_PREFIX=es9-lab- 설정 후 ../lib/es-lab/common.sh source)
 scripts/lablib.py       공용 lablib_core 임포트 + INDICES/LAYOUT + bulk/catalog 헬퍼
 scripts/generate_and_load.py  시드 생성·적재 (../lib/es-lab/datagen/realistic 공용 생성기 위임)
 scripts/verify_seed.py  시드·샤드·쿼리 예제 26종 라이브 검증
 scripts/features.py     ES9 전용 현대 기능: 데이터스트림+ILM, ES|QL, kNN, async search
-scripts/01-up.sh        ［기동: 5컨테이너 → yellow 5노드 → 스냅샷 저장소 → Kibana］
+scripts/01-up.sh        [기동: 인증서/스냅샷 준비 → 5노드 green → Kibana → 설치 검증]
 scripts/12-offline-tests.sh  정적 회귀 테스트(실행 불필요)
 mappings/*.json         5개 시드 인덱스 매핑 (legacy와 동일 스키마)
 queries/*.json          쿼리 예제 26종 (legacy와 동일 카탈로그)
@@ -147,27 +179,23 @@ curl -XDELETE "$BASE/_snapshot/lab-snapshots/snap-1"
 `tests/test_es9_defaults.py::test_no_cerebro_and_no_docker_only_network_opts`가 compose에
 Cerebro가 없음을 정적으로 강제합니다.
 
-## 검증 기록(최신 버전 정상 구동)
+## 검증 상태 (2026-09-23)
 
-`reports/live-verification.json`은 실제 기동 후 기록한 결과입니다. 최근 확인(2026-09-22):
+- Docker Compose: 기본 설치·재실행 및 보안 모드 설치를 확인했습니다.
+- Podman: `podman compose`로 ES 9 설치·재실행, green 상태, snapshot과 Kibana를 확인했습니다.
+- 별도 `podman-compose` 실행 파일은 검증 호스트에 없어 해당 provider 검증은 남아 있습니다.
+- 오프라인 테스트: ES 9 24개, ES 7 83개 통과.
+- `./lab.sh verify-install`은 실행할 때 현재 컨테이너·클러스터·snapshot·Kibana 상태를
+  확인하고 `reports/install-verification.json`에 결과를 기록합니다.
 
-- `./lab.sh doctor` — 엔진/자원/포트 진단 OK
-- `./lab.sh up` — 콜드 부트: 5노드 전원 합류(`es9-lab`, Elasticsearch 9.5.x) + 스냅샷 저장소 검증 + Kibana 9
-- `./lab.sh status` — 78 primary + 102 replica 전원 STARTED(5노드 샤드 분산)
-- `./lab.sh snapshot` — `lab-snapshots` 저장소 5노드 verify
-- `./lab.sh seed --size-mb 5` + `./lab.sh verify` — 시드 적재·26개 쿼리 예제 전부 PASS
-- `./lab.sh features` — 데이터스트림+ILM, ES|QL 5종, kNN top-1 일치, async search 제출·폴링·삭제 전부 PASS(`reports/features.json`), `--clean`→재생성 재현 확인
-- `./lab.sh down` — 정상 종료(볼륨 보존)
-
-`docker.elastic.co/elasticsearch/elasticsearch:9.5.3` 이미지 기준이며, 재시작은
-`discovery.seed_hosts`로 재합류합니다. 랩 완성은 7.x legacy로 검증한 기능
-(롤링 업그레이드·장애 드릴 등)만 제외됩니다.
+이 결과는 로컬 실행에 한정됩니다. WSL의 Podman 네트워크/방화벽 조합은 사용자 호스트에서
+`doctor`와 `verify-install`로 확인하세요.
 
 ## 한계
 
-- **보안 옵트인은 TLS 미포함**: `XPACK_SECURITY_ENABLED=true`로 올리면 HTTP는 비활성화
-  되지만 ES 8/9 멀티노드는 transport TLS도 요구합니다. 이 랩은 TLS 구성을 제공하지
-  않으므로 보안 켜기는 실습 범위 밖이며, 필요하면 별도 구성 가이드를 따라야 합니다.
+- `XPACK_SECURITY_ENABLED=true`는 기동 시 ES 9 transport TLS 인증서를 생성합니다.
+  `ELASTIC_PASSWORD`, `KIBANA_PASSWORD`, `KIBANA_LOGIN_USERNAME`,
+  `KIBANA_LOGIN_PASSWORD`를 `.env`에 지정해야 합니다.
 - 단일 명명 볼륨은 로컬 디스크 전용입니다. 여러 호스트로 옮기면 스냅샷 공유 FS가
   깨지므로, 분산 실습은 별도 FS를 마운트하세요.
 - 포트 충돌 시 `ES_PORT`/`KIBANA_PORT`/`ES_BIND_IP`를 `.env`에서 바꾼 뒤 `ES_URL`도

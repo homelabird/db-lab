@@ -11,17 +11,23 @@ set -euo pipefail
 LAB_SCRIPTS="${LAB_SCRIPTS:-$LAB_ROOT/scripts}"
 export LAB_SCRIPTS
 
-# Simple KEY=value config, not executable shell. Existing exported env wins.
-if [[ -f "$LAB_ROOT/.env" ]]; then
+# Keep the caller's exported values above .env, but allow a newly generated
+# .env to replace defaults initialized later in this file.
+declare -Ag LAB_CALLER_ENV=()
+while IFS= read -r key; do LAB_CALLER_ENV["$key"]=1; done < <(compgen -e)
+
+load_lab_env() {
+  # Simple KEY=value config, not executable shell. Caller environment wins.
   while IFS='=' read -r key value || [[ -n "${key:-}" ]]; do
     [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || continue
-    [[ -v "$key" ]] && continue
+    [[ ${LAB_CALLER_ENV[$key]+set} ]] && continue
     value="${value%$'\r'}"
     if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then value="${value:1:${#value}-2}"; fi
     printf -v "$key" '%s' "$value"
     export "$key"
   done < "$LAB_ROOT/.env"
-fi
+}
+[[ -f "$LAB_ROOT/.env" ]] && load_lab_env
 export ES_URL="${ES_URL:-http://127.0.0.1:9200}"
 export LAB_CLUSTER_NAME="${LAB_CLUSTER_NAME:-cerebro-shard-lab}"
 export SNAPSHOT_REPO_NAME="${SNAPSHOT_REPO_NAME:-lab-snapshots}"
@@ -80,10 +86,29 @@ network_exists() {
 
 # Print the first IPv4 subnet of the Compose network, or nothing.
 network_subnet() {
-  local net="${1:-$(network_name)}" subnet
+  local net="${1:-$(network_name)}" subnet inspect
   case "${RUNTIME:-}" in
     docker) subnet="$(docker network inspect "$net" --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null)" ;;
-    podman) subnet="$(podman network inspect "$net" --format '{{range .Subnets}}{{.Subnet}} {{end}}' 2>/dev/null)" ;;
+    podman)
+      subnet="$(podman network inspect "$net" --format '{{range .Subnets}}{{.Subnet}} {{end}}' 2>/dev/null || true)"
+      if [[ -z "$subnet" ]]; then
+        inspect="$(podman network inspect "$net" 2>/dev/null || true)"
+        subnet="$(python3 -c 'import ipaddress,json,sys
+def walk(v):
+ if isinstance(v,dict):
+  for k,x in v.items():
+   if k.lower() in ("subnet","ipnet") and isinstance(x,str):
+    try: yield str(ipaddress.ip_interface(x).network)
+    except ValueError: pass
+   yield from walk(x)
+ elif isinstance(v,list):
+  for x in v: yield from walk(x)
+try:
+ values=list(dict.fromkeys(walk(json.load(sys.stdin))))
+ print(values[0] if values else "")
+except (ValueError,TypeError): print("")' <<<"$inspect")"
+      fi
+      ;;
     *) return 1 ;;
   esac
   [[ -n "${subnet:-}" ]] || return 1
@@ -132,12 +157,12 @@ eng_exec() {
 # Distinguish an Elasticsearch startup problem from blocked inter-container
 # traffic, and print an executable host firewall hint with the real subnet.
 es_network_diagnose() {
-  local net="${1:-$(network_name)}" subnet="" node_url code
+  local net="${1:-$(network_name)}" subnet="" code node_missing=0
   local -a nodes
   read -r -a nodes <<< "$LAB_ES_NODES"
   echo ''
   echo '[error] The Elasticsearch cluster did not become ready.'
-  printf '[info] Container runtime: %s\n' "${RUNTIME:-unknown}"
+  printf '[ok] Runtime: %s\n' "${RUNTIME:-unknown}"
   printf '[info] Compose provider: %s\n' "${COMPOSE_PROVIDER:-unknown}"
   if network_exists "$net"; then
     subnet="$(network_subnet "$net" 2>/dev/null || true)"
@@ -152,14 +177,15 @@ es_network_diagnose() {
       printf '[ok]   %s is running\n' "$(container_name "$name")"
     else
       printf '[error] %s is NOT running\n' "$(container_name "$name")"
+      node_missing=1
     fi
   done
   echo ''
   echo '--- Step 2: is Elasticsearch listening inside each container? ---'
-  code=0
+  code="$node_missing"
   for name in "${nodes[@]}"; do
     if container_running "$name"; then
-      if eng_exec "$(container_name "$name")" curl -fsS --max-time 5 http://localhost:9200/ >/dev/null 2>&1; then
+      if eng_exec "$(container_name "$name")" curl -sS --max-time 5 http://localhost:9200/ >/dev/null 2>&1; then
         printf '[ok]   %s localhost:9200 answers (HTTP is up inside the container)\n' "$name"
       else
         printf '[error] %s localhost:9200 does NOT answer\n' "$name"
@@ -173,12 +199,14 @@ es_network_diagnose() {
   fi
   echo ''
   echo '--- Step 3: can containers reach each other over the Compose network? ---'
-  if (( ${#nodes[@]} >= 2 )) && container_running "${nodes[0]}" && container_running "${nodes[1]}"; then
-    if eng_exec "$(container_name "${nodes[0]}")" curl -fsS --max-time 5 "http://${nodes[1]}:9200/_cluster/health" >/dev/null 2>&1; then
+  if (( code != 0 )); then
+    echo '[info] Skipping network/firewall diagnosis because a node is not running or its local HTTP listener is unavailable.'
+  elif (( ${#nodes[@]} >= 2 )) && container_running "${nodes[0]}" && container_running "${nodes[1]}"; then
+    if eng_exec "$(container_name "${nodes[0]}")" curl -sS --max-time 5 "http://${nodes[1]}:9200/" >/dev/null 2>&1; then
       printf '[ok]   %s can reach %s:9200 on the Compose network.\n' "${nodes[0]}" "${nodes[1]}"
     else
       printf '[error] %s cannot connect to %s:9200.\n' "${nodes[0]}" "${nodes[1]}"
-      printf '[error] Cluster formation is blocked even though localhost:9200 works.\n'
+      printf '[error] Container-to-container connection failed while Elasticsearch is listening locally.\n'
       if [[ -n "$subnet" ]]; then
         echo '[hint] Allow container-to-container FORWARD traffic in the host firewall:'
         printf '       sudo iptables-legacy -I FORWARD 1 -s %s -d %s -j ACCEPT\n' "$subnet" "$subnet"
@@ -192,7 +220,7 @@ es_network_diagnose() {
   fi
   echo ''
   echo '--- Step 4: published host port ---'
-  if curl -fsS --max-time 3 "http://127.0.0.1:${ES_PORT:-9200}/" >/dev/null 2>&1; then
+  if curl -sS --max-time 3 "http://127.0.0.1:${ES_PORT:-9200}/" >/dev/null 2>&1; then
     printf '[ok]   Host can reach 127.0.0.1:%s (published ES port).\n' "${ES_PORT:-9200}"
   else
     printf '[error] Host cannot reach 127.0.0.1:%s.\n' "${ES_PORT:-9200}"
@@ -200,6 +228,163 @@ es_network_diagnose() {
   printf '[hint] Elasticsearch logs: ./lab.sh logs %s\n' "${nodes[*]}"
   printf '[hint] Host prerequisites: ./lab.sh doctor\n'
   return 1
+}
+
+ensure_lab_env() {
+  [[ -f "$LAB_ROOT/.env" ]] && return 0
+  if [[ ! -f "$LAB_ROOT/.env.example" ]]; then
+    printf '[error] Missing both %s/.env and its template .env.example\n' "$LAB_ROOT" >&2
+    return 1
+  fi
+  (umask 077; cp -- "$LAB_ROOT/.env.example" "$LAB_ROOT/.env")
+  load_lab_env
+  printf '[info] Created %s/.env from .env.example (mode 600).\n' "$LAB_ROOT"
+}
+
+host_package_manager() {
+  local id=""
+  [[ -r /etc/os-release ]] && . /etc/os-release && id="${ID:-} ${ID_LIKE:-}"
+  case " $id " in
+    *debian*|*ubuntu*) command -v apt-get >/dev/null && { echo apt-get; return; } ;;
+    *fedora*|*rhel*|*centos*|*rocky*|*almalinux*)
+      command -v dnf >/dev/null && { echo dnf; return; }
+      command -v yum >/dev/null && { echo yum; return; } ;;
+    *alpine*) command -v apk >/dev/null && { echo apk; return; } ;;
+    *arch*|*manjaro*) command -v pacman >/dev/null && { echo pacman; return; } ;;
+    *opensuse*|*suse*) command -v zypper >/dev/null && { echo zypper; return; } ;;
+  esac
+  for manager in apt-get dnf yum apk pacman zypper; do
+    command -v "$manager" >/dev/null && { echo "$manager"; return; }
+  done
+  return 1
+}
+
+install_host_packages() {
+  local manager="$1"; shift
+  local -a sudo_cmd=()
+  if (( EUID != 0 )); then
+    command -v sudo >/dev/null || { echo '[error] sudo is required to install host packages.' >&2; return 1; }
+    sudo_cmd=(sudo)
+  fi
+  printf '[info] Installing host packages with %s: %s\n' "$manager" "$*"
+  case "$manager" in
+    apt-get) "${sudo_cmd[@]}" apt-get update && "${sudo_cmd[@]}" apt-get install -y "$@" ;;
+    dnf) "${sudo_cmd[@]}" dnf install -y "$@" ;;
+    yum) "${sudo_cmd[@]}" yum install -y "$@" ;;
+    apk) "${sudo_cmd[@]}" apk add --no-cache "$@" ;;
+    pacman) "${sudo_cmd[@]}" pacman -Sy --needed --noconfirm "$@" ;;
+    zypper) "${sudo_cmd[@]}" zypper --non-interactive install "$@" ;;
+    *) echo "[error] Unsupported package manager: $manager" >&2; return 1 ;;
+  esac
+}
+
+check_host_packages() {
+  local install_missing="${1:-false}" manager package required_count
+  local -a packages=() required=()
+  command -v python3 >/dev/null || { packages+=(python3); required+=(python3); }
+  command -v curl >/dev/null || { packages+=(curl); required+=(curl); }
+  if ! command -v iptables >/dev/null && ! command -v iptables-legacy >/dev/null; then
+    printf '[hint] iptables is not installed; firewall diagnosis requires it only if container networking is blocked.\n'
+    packages+=(iptables)
+  fi
+  (( ${#packages[@]} == 0 )) && return 0
+  required_count="${#required[@]}"
+  if [[ "$install_missing" != true ]]; then
+    (( required_count == 0 )) || printf '[hint] Install missing required tools with: ./lab.sh doctor --install-missing\n'
+    (( required_count == 0 )) && printf '[hint] Optional firewall tool can be installed with: ./lab.sh doctor --install-missing\n'
+    if (( required_count > 0 )); then return 1; fi
+    return 0
+  fi
+  manager="$(host_package_manager)" || {
+    echo '[error] Could not detect a supported package manager (apt, dnf, yum, apk, pacman, zypper).' >&2
+    echo "[hint] Install these packages manually: ${packages[*]}" >&2
+    return 1
+  }
+  case "$manager" in
+    pacman)
+      local -a mapped=()
+      for package in "${packages[@]}"; do
+        [[ "$package" != python3 ]] || package=python
+        mapped+=("$package")
+      done
+      packages=("${mapped[@]}")
+      ;;
+  esac
+  install_host_packages "$manager" "${packages[@]}" || return 1
+  for package in python3 curl; do
+    if ! command -v "$package" >/dev/null; then
+      printf '[error] %s is still unavailable after package installation.\n' "$package" >&2
+      return 1
+    fi
+  done
+}
+
+check_kibana_auth() {
+  local key value
+  for key in XPACK_SECURITY_ENABLED KIBANA_STACK_MONITORING_ENABLED KIBANA_STACK_MANAGEMENT_ENABLED; do
+    value="${!key:-false}"
+    [[ "$value" == true || "$value" == false ]] || {
+      printf '[error] %s must be exactly true or false (got %s).\n' "$key" "$value" >&2
+      return 1
+    }
+  done
+  if [[ "${KIBANA_STACK_MANAGEMENT_ENABLED:-true}" == false && "${XPACK_SECURITY_ENABLED:-false}" != true ]]; then
+    echo '[error] Hiding Stack Management requires XPACK_SECURITY_ENABLED=true so Kibana can enforce role permissions.' >&2
+    echo '[hint] Set XPACK_SECURITY_ENABLED=true, ELASTIC_PASSWORD, KIBANA_PASSWORD, and KIBANA_LOGIN_PASSWORD in .env.' >&2
+    return 1
+  fi
+  [[ "${XPACK_SECURITY_ENABLED:-false}" == true ]] || return 0
+  if [[ -z "${ELASTIC_PASSWORD:-}" || -z "${KIBANA_PASSWORD:-}" ||
+        -z "${KIBANA_LOGIN_USERNAME:-}" || -z "${KIBANA_LOGIN_PASSWORD:-}" ]]; then
+    echo '[error] Secure Kibana startup requires ELASTIC_PASSWORD, KIBANA_PASSWORD, KIBANA_LOGIN_USERNAME, and KIBANA_LOGIN_PASSWORD in .env.' >&2
+    return 1
+  fi
+}
+
+ensure_security_users() {
+  [[ "${XPACK_SECURITY_ENABLED:-false}" == true ]] || return 0
+  PYTHONPATH="$(cd "$LAB_ROOT/../lib/es-lab" && pwd)${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 "$LAB_ROOT/../lib/es-lab/security-bootstrap.py"
+}
+
+kibana_status_available() {
+  local port="${1:-${KIBANA_PORT:-5601}}" body
+  local -a auth=()
+  if [[ "${XPACK_SECURITY_ENABLED:-false}" == true ]]; then
+    auth=(--user "${KIBANA_LOGIN_USERNAME}:${KIBANA_LOGIN_PASSWORD}")
+  fi
+  body="$(curl -fsS --connect-timeout 2 --max-time 5 "${auth[@]}" \
+    "http://127.0.0.1:${port}/api/status" 2>/dev/null)" || return 1
+  python3 -c 'import json,sys
+d=json.load(sys.stdin)
+overall=d.get("status",{}).get("overall",{})
+state=overall.get("level") or overall.get("state")
+sys.exit(0 if state in ("available", "green") else 1)' <<< "$body"
+}
+
+verify_install() {
+  local service
+  local -a services=(es01 es02 es03 es04 es05 kibana)
+  if [[ "${LAB_HAS_CEREBRO:-false}" == true && "${XPACK_SECURITY_ENABLED:-false}" != true ]]; then
+    services+=(cerebro)
+  fi
+  compose config >/dev/null || { echo '[FAIL] Compose configuration is invalid.' >&2; return 1; }
+  check_kibana_auth
+  for service in "${services[@]}"; do
+    if ! container_running "$service"; then
+      printf '[FAIL] Container for %s is not running.\n' "$service" >&2
+      compose ps "$service" >&2 || true
+      compose logs --tail=80 "$service" >&2 || true
+      return 1
+    fi
+  done
+  printf '[PASS] Compose services running: %s\n' "${services[*]}"
+  local -a args=(--es-version "$LAB_ES_VERSION" --kibana-port "${KIBANA_PORT:-5601}")
+  if [[ "${LAB_HAS_CEREBRO:-false}" == true && "${XPACK_SECURITY_ENABLED:-false}" != true ]]; then
+    args+=(--cerebro-port "${CEREBRO_PORT:-9000}")
+  fi
+  PYTHONPATH="$(cd "$LAB_ROOT/../lib/es-lab" && pwd)${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 "$LAB_ROOT/../lib/es-lab/verify-install.py" "${args[@]}"
 }
 
 guard_lab() { python3 "$LAB_SCRIPTS/lablib.py" guard; }

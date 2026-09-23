@@ -21,7 +21,7 @@
 |---|---|---|
 | Bash 문법 | `scripts/*.sh`, `scenarios/*.sh` 전체 `bash -n` | 구문 오류 점검. 명령의 실제 런타임 호환을 보증하지 않음 |
 | Python 문법 | 전체 Python 파일 compile | import/REST/실제 ES 의미론 검증과는 별개 |
-| 기존 회귀 | 시드 생성·중복 방지·Bulk 실패·PIT·0.0.0.0 기본값 | 기존 기능 손상 여부를 오프라인으로 검사 |
+| 기존 회귀 | 시드 생성·중복 방지·Bulk 실패·PIT·loopback 기본 바인딩 | 기존 기능 손상 여부를 오프라인으로 검사 |
 | 장애 기능 단위 | 11개 시나리오의 주입·판정·복구, 원래 설정 보존 | 상태를 가정한 FakeES 사용 |
 | 실제 HTTP → 모의 서버 | write-block 403, canary red 검색 503, replica 과다, allocation=none | 실제 HTTP 전송·본문·상태 코드 처리. ES 엔진 아님 |
 | 실제 Bash → Python → 모의 provider | 기본 8개 suite, 기존 번호별 wrapper, apply/check/recover | 실제 셸 인자 전달·종료 코드·report 검사 |

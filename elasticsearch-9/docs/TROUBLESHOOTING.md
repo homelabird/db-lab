@@ -15,8 +15,8 @@ curl --fail-with-body -sS "$ES_URL/_snapshot/lab-snapshots/_all?pretty"
 
 ## 2. `cluster_uuid`가 `_na_` — 아직 bootstrap 미완료
 
-`./lab.sh up`은 4단계로 진행하며 두 번째 단계가 "yellow 5노드"입니다. `_na_`인 채
-멈추면 다음을 확인합니다.
+`./lab.sh up`은 Elasticsearch 5노드가 모두 합류하고 cluster health가 green이 될 때까지
+기다린 뒤 snapshot과 Kibana를 확인합니다. `_na_`인 채 멈추면 다음을 확인합니다.
 
 ```bash
 ./lab.sh compose ps
@@ -25,11 +25,10 @@ curl --fail-with-body -sS "$ES_URL/_snapshot/lab-snapshots/_all?pretty"
 
 - `master not discovered yet` / transport 연결 실패 / bootstrap check / Exit 137(메모리)
   / 일부 컨테이너 재시작 여부.
-- 올바른 **특정 클러스터가 아니면 소프트웨어적으로 `cluster.initial_master_nodes`가
-  최초 볼륨에만 주입**됩니다. 일부 노드만 OS/클러스터 오류로 다시 시작될 때는
-  `/usr/share/elasticsearch/data/nodes`이 이미 있으면 shim이 주입을 건너뛰므로
-  `seed_hosts`로 합류해야 합니다(아래 6번).
-- 정리할 수 있는 이 랩 데이터만 초기화할 때는 `./lab.sh reset --purge --yes && ./lab.sh up`.
+- `cluster.initial_master_nodes`는 빈 데이터 볼륨을 처음 기동할 때만 주입됩니다.
+  기존 노드는 `discovery.seed_hosts`를 통해 합류합니다. 볼륨을 임의로 일부 삭제하지 마세요.
+- 클러스터 데이터를 완전히 버려도 될 때만 `./lab.sh down --purge --yes && ./lab.sh up`을
+  실행하세요. 이 명령은 모든 프로젝트 데이터 볼륨을 삭제합니다.
 
 ## 3. 스냅샷 저장소 등록 시 `access_denied_exception`
 
@@ -52,19 +51,22 @@ rootless local driver가 거부합니다. 다시 등록하려면:
 - 다른 프로세스가 점유하면 `ES_PORT`/`KIBANA_PORT`/`ES_BIND_IP`를 `.env`에서 바꾸고
   `ES_URL`도 함께 맞춥니다.
 
-## 5. 컨테이너 이름 뒤 `-1` 접미사 문제
+## 5. 재시작 시 bootstrap 재주입 방지
 
-Compose v2는 서비스 이름에 `-1`을 붙입니다(예: `es9-lab-es01-1`). 진단/출력은
-`container_name`을 명시해 일관된 고정 이름(`es9-lab-es01`…)을 사용하므로, provider나
-runtime을 바꿀 때도 컨테이너를 고정 이름에서 찾습니다.
+`cluster.initial_master_nodes`는 빈 데이터 볼륨의 최초 기동에만 사용됩니다. 이후에는
+`discovery.seed_hosts`를 통해 기존 클러스터에 합류합니다. 재시작 후 노드가 서로 다른
+cluster UUID를 보이거나 master를 찾지 못하면 로그를 확인하고 볼륨을 임의로 삭제하지 마세요.
 
-## 6. 재시작 시 bootstrap 재주입 방지
+## 6. Kibana가 ready가 되지 않음
 
-`cluster.initial_master_nodes`는 정책상 최초 부팅 전용입니다. 재시작 후 클러스터가
-mastership 불안하거나 노드가 서로 다른 cluster_uuid를 가지면: 볼륨은 그대로 두고
-`./lab.sh down && ./lab.sh up`을 처음부터 다시 시도하는 대신 로그를 확인합니다.
-`rejected execution of MoveToApplierTask`/`master not discovered`가 잦으면
-`.env`의 `DISCOVERY_SEED_HOSTS` 값과 compose의 노드 이름이 일치하는지 보고합니다.
+```bash
+./lab.sh logs kibana --tail 150
+./lab.sh verify-install
+```
+
+보안 모드에서는 `.env`의 `KIBANA_PASSWORD`가 Elasticsearch `kibana_system` 계정에
+설정한 비밀번호와 일치해야 합니다. 로그인 계정은 `KIBANA_LOGIN_USERNAME`과
+`KIBANA_LOGIN_PASSWORD`입니다. 로그의 첫 ES 연결 오류를 확인하세요.
 
 ## 7. Kibana가 ES에 등록하지 못함(exit 78)
 
@@ -74,7 +76,7 @@ superuser를 username으로 쓰는 ES 9 방식은 테스트용입니다.
 Kibana 대시보드가 뜨지만 인덱스가 없을 때는 `${KIBANA_SERVERNAME}`/포트가 ES와 안
 맞을 수 있습니다.
 
-## 8. rootless Docker 주의사항
+## 8. rootless Podman/Docker 주의사항
 
 컨테이너 프로세스는 이미지 기본 USER로 뜹니다(uid 매핑은 데몬 설정에 따라 다름).
 `docker info`의 사용자 이름과 볼륨 소유(0:0)를 확인하고, chown이 필요한 자원은

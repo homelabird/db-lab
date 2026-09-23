@@ -2,10 +2,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source ./scripts/common.sh
+install_missing=false
+if [[ "${1:-}" == '--install-missing' && $# -eq 1 ]]; then
+  install_missing=true
+elif [[ $# -gt 0 ]]; then
+  echo 'Usage: ./lab.sh doctor [--install-missing]' >&2; exit 2
+fi
+ensure_lab_env
 check_exposure
 status=0
-for bin in python3 curl; do command -v "$bin" || status=1; done
-python3 -c 'import sys; assert sys.version_info >= (3,9), "Python 3.9+ required"' || status=1
+check_host_packages "$install_missing" || status=1
+if command -v python3 >/dev/null; then
+  python3 -c 'import sys; assert sys.version_info >= (3,9), "Python 3.9+ required"' || status=1
+fi
 compose version || status=1
 resolve_engine || { echo 'No usable Compose provider (docker, podman, or podman-compose).' >&2; status=1; }
 network_info() {

@@ -2,58 +2,70 @@
 
 **실제 데이터를 ZIP에 포함하지 않습니다.** `./lab.sh seed`를 실행하면 로컬에서 모의 데이터를 만들고 Elasticsearch에 스트리밍 Bulk 적재합니다. 외부 데이터셋 다운로드, 개인정보, 실제 금융 거래는 사용하지 않습니다.
 
-## 바로 실행
+운영 조회/대응 학습은 [시나리오별 dev/staging/prod 대응 쿼리](../docs/SCENARIO-RESPONSE-QUERIES.md)의 Elasticsearch 절을 참고하세요.
 
-Linux / Bash / Python 3.9+ / curl 7.76+ / Podman Compose 기준입니다. Python 패키지를 따로 설치할 필요는 없습니다.
+## 시작하기
 
-```bash
-# 이 README가 있는 프로젝트 디렉터리에서 실행
-cp .env.example .env
-chmod +x lab.sh scripts/*.sh scripts/*.py scenarios/*.sh
-
-sudo sysctl -w vm.max_map_count=262144
-./lab.sh doctor
-./lab.sh up
-./lab.sh seed
-./lab.sh verify
-
-./lab.sh query list
-./lab.sh query 01-latest
-./lab.sh query 04-high-risk
-```
-
-모든 관리 작업은 `lab.sh` 하나로 실행할 수 있습니다. 기존 번호별
-`scripts/*.sh`와 `scenarios/*.sh`는 호환성을 위해 그대로 남아 있으며,
-`lab.sh`가 해당 스크립트로 전달합니다.
-
-일반 `up`은 호스트 방화벽을 수정하지 않습니다. 개발 컨테이너/VM의 네트워크 정책 때문에
-노드 통신이 실패하면 관리자와 해당 네트워크·방화벽 경로를 진단하세요. 전체 FORWARD 허용 규칙을 자동 삽입하지 않습니다.
+Linux/WSL2, Bash, Python 3.9+, curl, Docker Compose 또는 Podman Compose가 필요합니다.
+추가 Python 패키지는 필요하지 않습니다. `doctor`와 `up`은 `.env`가 없으면
+`.env.example`에서 권한 `600`으로 생성하며, 기존 `.env`는 덮어쓰지 않습니다.
 
 ```bash
-./lab.sh status
-./lab.sh ui
-./lab.sh demo                  # 5MiB smoke test
-./lab.sh logs es01 --tail 100
-./lab.sh scenario list
-./lab.sh scenario 01
-./lab.sh scenario manual-shard-move
-./lab.sh scenario 06-node-failure-and-recovery --test --yes
-./lab.sh fault list
-./lab.sh down
+./lab.sh doctor                 # 사전 점검 및 누락 도구 안내
+./lab.sh up                     # ES 7.17 5노드 + Cerebro + Kibana 시작
+./lab.sh seed --size-mb 5       # 빠른 확인용 작은 데이터 적재
+./lab.sh verify                 # 문서·샤드·검색 예제 검증
+./lab.sh ui                     # 접속 주소 출력
 ```
 
-`./lab.sh demo`는 클러스터를 시작하고 5MiB 데이터를 적재한 뒤 전체 검증까지
-수행하는 가장 쉬운 정상 동작 확인 방법입니다. 기본 100MiB 데이터는
-`./lab.sh seed`를 별도로 실행합니다. `./lab.sh ui`는 Elasticsearch, Cerebro,
-Kibana와 Kibana Console 주소를 출력합니다.
+`./lab.sh doctor --install-missing`은 선택형 설치 명령입니다. 감지한 패키지
+관리자와 sudo를 사용해 없는 `python3`, `curl`, `iptables`를 설치합니다.
+`iptables`는 네트워크 장애 진단용 선택 도구입니다. `vm.max_map_count`는
+호스트 설정이므로 자동으로 바꾸지 않습니다. 필요하면 doctor가 안내하는 명령을 실행하세요.
 
-기본 호스트 바인딩은 **`127.0.0.1`(loopback)** 입니다. Elasticsearch 9200, Cerebro 9000, Kibana 5601은 기본적으로 같은 호스트에서 접속합니다. Cerebro와 Kibana는 같은 Elasticsearch 클러스터를 동시에 사용합니다.
+## 자주 쓰는 명령
 
-원격 접속은 SSH 터널을 우선 사용하세요. 격리된 네트워크에서 공개하려면 `.env`에 `ES_BIND_IP=0.0.0.0` 및 `ES_ALLOW_PUBLIC_BIND=yes`를 명시해야 합니다. 기존 공개 `.env`도 동의값이 없으면 기동을 거부합니다. 공개를 선택한 경우 다른 PC에서는 Cerebro `http://<서버IP>:9000`, Kibana `http://<서버IP>:5601`, Elasticsearch `http://<서버IP>:9200`에 접속하세요. 서버 자체에서는 `http://127.0.0.1:9000`, `http://127.0.0.1:5601`, `http://127.0.0.1:9200`을 사용할 수 있습니다. **`0.0.0.0/0`은 CIDR 대역 표기이며 바인딩 값이나 브라우저 접속 주소가 아닙니다.**
+| 작업 | 명령 |
+|---|---|
+| 설치 전체 확인 | `./lab.sh verify-install` |
+| 상태·로그 | `./lab.sh status`, `./lab.sh logs es01 --tail 100` |
+| 샘플 실행·검증 | `./lab.sh demo` |
+| 시드 인덱스만 삭제 | `./lab.sh purge --yes` |
+| 중지하고 데이터 보존 | `./lab.sh down` |
+| 컨테이너와 프로젝트 볼륨 삭제 | `./lab.sh down --purge --yes` |
+| 장애 실습 목록 | `./lab.sh scenario list`, `./lab.sh fault list` |
 
-기존 프로젝트의 `.env`가 있다면 새 기본값보다 우선합니다. `KIBANA_PORT=5601`을 추가하고 `./lab.sh compose up -d kibana`를 실행하세요. 이미 존재하는 `.env`의 바인딩 설정까지 바꾸는 경우에는 `./lab.sh compose up -d --force-recreate es01 cerebro kibana`를 사용합니다. 포트 설정 적용에는 컨테이너 재생성이 필요하며 named volume은 보존됩니다.
+`purge --yes`는 다섯 시드 인덱스만 삭제합니다. `down --purge --yes`는
+Elasticsearch 데이터와 snapshot을 포함한 프로젝트 볼륨을 삭제합니다.
 
-`./lab.sh up`은 클러스터만 기동하고 시드는 자동 실행하지 않습니다. `./lab.sh verify`는 사용자의 **실제 Elasticsearch**에서 문서 수, 5개 이상의 데이터 노드, 샤드 배치, 검색 예제 22개를 검사합니다. 모든 샤드가 안정적인 green 상태여야 하므로 장애 시나리오를 진행하기 전에 실행하세요.
+## 주요 설정
+
+| `.env` 설정 | 기본값 | 설명 |
+|---|---:|---|
+| `COMPOSE_PROVIDER` | `auto` | `docker`, `podman`, `podman-compose` 선택 |
+| `ES_PORT` / `CEREBRO_PORT` / `KIBANA_PORT` | `9200` / `9000` / `5601` | 호스트 포트 |
+| `KIBANA_STACK_MONITORING_ENABLED` | `true` | Stack Monitoring 표시 |
+| `KIBANA_STACK_MANAGEMENT_ENABLED` | `true` | 보안 모드의 관리 권한 허용 |
+| `XPACK_SECURITY_ENABLED` | `false` | 인증 및 노드 간 TLS 활성화 |
+
+`KIBANA_STACK_MANAGEMENT_ENABLED=false`는 `KIBANA_LOGIN_USERNAME` 계정에 제한된
+권한을 부여합니다. 이 권한 제어에는 보안 모드와 로그인 계정이 필요합니다.
+일반 `up`은 호스트 방화벽을 변경하지 않습니다.
+
+기본 호스트 바인딩은 `127.0.0.1`(loopback)입니다. Elasticsearch 9200, Cerebro 9000,
+Kibana 5601은 기본적으로 같은 호스트에서 접속하며, 두 UI는 같은 Elasticsearch를 사용합니다.
+
+원격 접속은 SSH 터널을 우선 사용하세요. 격리된 네트워크에서 공개하려면 `.env`에
+`ES_BIND_IP=0.0.0.0`과 `ES_ALLOW_PUBLIC_BIND=yes`를 명시해야 합니다. 다른 PC에서는
+서버 IP와 각 포트로 접속합니다. `0.0.0.0`은 listen 주소이며 브라우저 주소가 아닙니다.
+
+기존 `.env`는 새 기본값보다 우선합니다. 포트나 바인딩을 바꾸면 해당 설정을 `.env`에
+맞춰 적고 `./lab.sh up`을 실행하세요. 적용에는 컨테이너 재생성이 필요하지만 named
+volume은 보존됩니다. 호스트 Elasticsearch 포트를 바꾸면 `ES_URL`도 함께 맞추세요.
+
+`./lab.sh up`은 시드를 자동 적재하지 않습니다. `./lab.sh verify`는 실행 중인
+Elasticsearch에서 문서 수, 노드, 샤드 배치, 검색 예제를 검사합니다. 장애 실습 후
+정상 상태를 확인할 때 사용하세요.
 
 ## 런타임 자동 감지와 네트워크 진단
 
@@ -69,17 +81,15 @@ Compose provider: docker
 Compose network: cerebro-seed-lab_es-lab (172.26.0.0/16)
 ```
 
-`compose.yaml`의 네트워크는 Docker 전용 옵션 없이 일반 bridge만 사용하므로
-Docker Compose와 podman-compose 모두에서 생성됩니다.
+`compose.yaml`의 네트워크는 Docker 전용 옵션 없이 일반 bridge를 사용합니다.
 
-`./lab.sh up`은 다음과 같이 단계별로 준비 상태를 확인합니다.
+`./lab.sh up`은 인증서와 snapshot 볼륨을 준비한 뒤 다음 상태를 순서대로 확인합니다.
 
 ```
-1  컨테이너 5개가 running인지
-2  Elasticsearch HTTP가 9200에서 응답하고 5개 노드가 클러스터를 구성했는지
-3  공유 Snapshot Repository 등록 + _verify
-4  Kibana / API status
-5  Cerebro / HTTP
+1  컨테이너 5개가 실행 중이고 Elasticsearch 클러스터가 green인지
+2  공유 Snapshot Repository가 5개 노드에서 검증되는지
+3  Kibana API status와 Cerebro HTTP가 응답하는지 (보안 모드에서는 Cerebro 생략)
+4  설치 검증 결과를 reports/install-verification.json에 기록
 ```
 
 클러스터가 준비되지 않으면 스크립트가 ①요청 서비스 자체가 죽었는지(로그 확인)
@@ -96,7 +106,7 @@ sudo iptables-legacy -I FORWARD 1 -s 172.26.0.0/16 -d 172.26.0.0/16 -j ACCEPT
 ## Snapshot Repository
 
 기본적으로 5개 노드가 공유하는 `es-snapshots` 볼륨을
-`/usr/share/elasticsearch/snapshots`에 마운트하고, `./lab.sh up`이 종료 시점에
+`/usr/share/elasticsearch/snapshots`에 마운트하고, `./lab.sh up`이 기동 중에
 `lab-snapshots`(fs) 저장소를 등록하고 `_verify`까지 수행합니다. 저장소 이름은
 `.env`의 `SNAPSHOT_REPO_NAME`으로 바꿀 수 있습니다. `up` 직후부터 다음 실습이
 바로 가능합니다.
@@ -121,19 +131,21 @@ curl -X POST http://127.0.0.1:9200/_snapshot/lab-snapshots/_verify
 XPACK_SECURITY_ENABLED=true
 ELASTIC_USERNAME=elastic
 ELASTIC_PASSWORD=<강한 비밀번호>
+KIBANA_PASSWORD=<kibana_system 비밀번호>
+KIBANA_LOGIN_USERNAME=lab-admin
+KIBANA_LOGIN_PASSWORD=<강한 로그인 비밀번호>
 ```
 
-켜면 Elasticsearch 홈 도메인 수준(password policy 충족)에서 `elastic` 부트스트랩
-비밀번호가 설정됩니다. `lab.sh`의 모든 curl 요청과 `lablib.py`(Python 스크립트)는
+보안 모드에서는 `ELASTIC_PASSWORD`로 `elastic` 계정을 인증합니다. `lab.sh`의
+curl 요청과 `lablib.py`(Python 스크립트)는
 `ELASTIC_USERNAME`/`ELASTIC_PASSWORD`로 Basic 인증을 자동 첨부합니다.
-Kibana도 같은 자격 증명을 사용합니다.
+Kibana 서버는 `KIBANA_USERNAME`/`KIBANA_PASSWORD`로 인증하며, 기본 사용자는
+`kibana_system`입니다. 이 계정의 비밀번호는 `elastic` 비밀번호와 별도로
+Elasticsearch에 설정해야 합니다.
 
-주의: ES 7.17은 Security 활성화 시 Transport TLS도 필수이므로, 이 옵트인이 켜지면
-각 노드에 `xpack.security.transport.ssl.*`(자체 서명 인증서 + keystore/truststore)
-설정과 인증서 볼륨을 추가해야 기동됩니다. 인증서를 만들고 `ELASTIC_USERNAME`
-을 사용하도록 `cerebro/application.conf`의 host에 Basic auth를 연결하는 절차가
-완성되기 전까지는 실습 환경에서 켜지 않는 것을 권장합니다. 이 랩의 현재
-`compose.yaml`에는 위 TLS 설정이 포함되어 있지 않습니다.
+ES 7.17용 노드 간 TLS 인증서는 보안 모드 기동 시 자동 생성됩니다. `KIBANA_PASSWORD`,
+`KIBANA_LOGIN_USERNAME`, `KIBANA_LOGIN_PASSWORD`도 `.env`에 설정해야 합니다.
+보안 모드에서는 현재 인증 구성이 없는 Cerebro를 시작하지 않습니다.
 
 ## Kubernetes 배포 및 버전 업그레이드
 
@@ -152,7 +164,7 @@ rolling update를 수행합니다. 상세 조건과 삭제 주의사항은
   -n elasticsearch-lab --create-namespace
 ```
 
-이전 랩이 실행 중이면 포트 9200/9000/5601이 겹칠 수 있습니다. 이전 랩을 종료하거나 `.env`의 `ES_PORT`, `CEREBRO_PORT`, `KIBANA_PORT`, `ES_URL`을 함께 변경하세요. 새 프로젝트명은 `cerebro-seed-lab`, 컨테이너 이름 접두사는 `cerebro-seed-`이며, 기존 볼륨을 자동 이관하거나 삭제하지 않습니다.
+이전 랩이 실행 중이면 포트 9200/9000/5601이 겹칠 수 있습니다. 이전 랩을 종료하거나 `.env`의 `ES_PORT`, `CEREBRO_PORT`, `KIBANA_PORT`, `ES_URL`을 함께 변경하세요. 별도 사본을 동시에 실행하려면 `COMPOSE_PROJECT_NAME`과 `LAB_CONTAINER_PREFIX`도 각각 고유하게 설정하세요. 기존 볼륨을 자동 이관하거나 삭제하지 않습니다.
 
 ## 장애 대응 검증 (추가)
 
@@ -226,7 +238,24 @@ rolling update를 수행합니다. 상세 조건과 삭제 주의사항은
 | [장애 스크립트 검증](docs/FAULT-VALIDATION.md) | 수정 내용, 오프라인/모의 검사, 실제 검증 미실행 항목 |
 | [검증 범위와 결과](docs/VALIDATION.md) | 실제 수행한 검사와 미실행한 항목 구분 |
 
-## 자주 쓰는 명령
+## 고급 시드 적재 옵션
+
+### 반복 부하 측정
+
+```bash
+./lab.sh benchmark --seconds 30 --rate 100 --batch 100
+python3 ../scripts/benchmarks.py reports/benchmarks/RUN-1.json reports/benchmarks/RUN-2.json
+```
+
+7.x와 `es9`는 공유 실행기를 사용합니다. 측정 전 reserved `lab-benchmark-v1` 인덱스가
+없어야 합니다. 실행기가 빈 임시 인덱스를 만들고 합성 bulk 문서를 적재·refresh·count 검증한 뒤
+인덱스를 삭제하며, 결과는 `reports/benchmarks/`에 남깁니다. 비정상 종료로 인덱스가 남으면
+먼저 이름과 내용을 확인하세요. 기존 시드 인덱스는 변경하지 않습니다. 측정치는 bulk batch
+응답 latency와 indexing throughput이며 검색 latency, 데이터 내구성, host 동등성 또는 운영
+capacity를 나타내지 않습니다. host/container 자원 정보가 빠지면 공통 비교기에서
+`performance_comparison_ready: false`로 표시됩니다.
+
+### 고급 시드 적재 옵션
 
 ```bash
 # 기본: 약 100MiB 생성 + 적재
