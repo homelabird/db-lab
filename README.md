@@ -4,8 +4,7 @@
 
 [로컬 운영 자동화 목표와 단계별 로드맵](docs/LOCAL-OPS-AUTOMATION-ROADMAP.md)
 
-> **먼저 실행 대상을 구분하세요.** `bash all.sh mvp up`은 6개 컨테이너 통합 주문 실습이며,
-> `bash all.sh up`은 별도의 4개 HA 실습을 모두 시작합니다. 두 명령은 같은 시스템이 아닙니다.
+> **MVP와 HA 실습은 서로 다른 데이터·컨테이너 구성입니다.** `bash all.sh up`은 네 HA 실습과 독립형 6개 컨테이너 MVP를 순차 기동하고, `bash all.sh down`은 역순으로 종료합니다. MVP만 별도로 관리하려면 `bash all.sh mvp up/down`을 사용하세요.
 > 컨테이너 엔진 지원과 실기동 검증은 실습별로 다릅니다. Elasticsearch 9의 최신 Podman 검증은 [ES9 README](elasticsearch-9/README.md)에, Kafka/Redis의 범위는 [수정·검증 기록](docs/STARTUP-REPAIR-2026-09-21.md)에 있습니다. 한 실습의 결과를 전체 프로젝트의 지원 보증으로 간주하지 마세요.
 > v12는 MVP의 HTTP 대상 확인, API/worker 준비 상태, 초기화 실패 증적, 진단 종료 코드와 실제 Helm CI 경로를 보강했습니다. v11의 Redis/Kafka 수정은 유지합니다.
 > 실제 수정 근거와 실행한 검사/실행하지 못한 검사는 위의 **이번 수정·실행 가이드**에서 확인하세요.
@@ -19,7 +18,7 @@ Elasticsearch, Kafka, MariaDB HA, Redis 실습을 모아 놓은 프로젝트입�
 
 주문 저장(MariaDB) → 이벤트 전달(Kafka) → 검색(Elasticsearch), 상세 캐시(Redis)를 연결한
 공부용 시스템을 `mvp-lab/`에 추가했습니다. **기존 HA 클러스터에 자동 연결하지 않는 별도 6개 컨테이너 구성**이며,
-기존 DB 데이터/설정은 변경하지 않습니다. 일반 `all.sh up/down`에도 자동 포함되지 않습니다.
+기존 HA 실습의 DB 데이터/설정은 변경하지 않습니다. `all.sh up/down/restart`의 기본 lifecycle 배치에도 MVP를 포함합니다.
 
 ```bash
 ./all.sh mvp init
@@ -92,10 +91,10 @@ Python·컨테이너 런타임 등 실제 요구사항은 각 실습의 README�
 | `reset <대상...> --yes` | 지정한 실습의 데이터까지 삭제 |
 | `logs <프로젝트> [인자...]` | 한 프로젝트의 기존 로그 명령에 전달 |
 
-공통 명령의 기본 대상은 `elasticsearch → kafka → mariadb → redis`입니다.
+공통 `up/down/restart`의 기본 대상은 `elasticsearch → kafka → mariadb → redis → mvp`이며, 종료는 역순입니다. `init/status/doctor/health/preflight/test`는 네 HA 실습을 기본 대상으로 유지합니다. MVP는 이 명령들에 `mvp` 대상으로 지정할 수 있습니다. 공통 `reset all`은 HA 실습 네 곳만 대상으로 하며 MVP 데이터를 삭제하지 않습니다.
 `elasticsearch-9`(`es9`)는 기본 배치에서 **제외**된 별도 9.x 랩이라 항상 이름을 명시해야 합니다.
 legacy 7.x 랩(9200/9000/5601)과 포트가 달라(9201/5602) 두 랩을 동시에 기동할 수 있습니다.
-`down`과 `reset`은 역순이며, `restart`는 프로젝트 하나씩 종료한 뒤 다시 시작합니다.
+`down`은 선택한 대상의 역순으로 종료하고 볼륨을 보존합니다. `restart`도 선택한 순서에 따라 한 프로젝트씩 종료한 뒤 시작합니다.
 직접 대상을 나열하면 입력한 순서를 사용하며 중복 별칭은 한 번만 처리합니다.
 `all`은 다른 프로젝트 이름과 함께 쓰지 않습니다.
 

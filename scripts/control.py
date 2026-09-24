@@ -18,7 +18,7 @@ import time
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
-DIRS = {'elasticsearch':'elasticsearch','elasticsearch9':'elasticsearch-9','kafka':'kafka-lab','mariadb':'mariadb-ha-lab','redis':'redis-lab'}
+DIRS = {'elasticsearch':'elasticsearch','elasticsearch9':'elasticsearch-9','kafka':'kafka-lab','mariadb':'mariadb-ha-lab','redis':'redis-lab','mvp':'mvp-lab'}
 DEFAULT_PROJECTS = ('elasticsearch','kafka','mariadb','redis')
 ES_LIKE = ('elasticsearch', 'elasticsearch9')
 
@@ -43,6 +43,13 @@ def settings(project):
     return data
 
 def engine_for(project,data):
+    if project=='mvp':
+        requested=data.get('MVP_ENGINE','auto')
+        if requested not in ('auto','docker','podman'): raise ValueError('MVP_ENGINE must be auto, docker or podman')
+        if requested!='auto': return requested
+        if shutil.which('docker') and subprocess.run(['docker','compose','version'],capture_output=True,timeout=10).returncode==0:
+            return 'docker'
+        return 'podman' if shutil.which('podman') else 'docker'
     if project in ES_LIKE:
         provider=data.get('COMPOSE_PROVIDER','auto')
         if provider.startswith('podman'): return 'podman'
@@ -56,6 +63,10 @@ def engine_for(project,data):
 
 def compose_command(project,engine,data):
     """Mirror the compose provider each lab will actually use."""
+    if project=='mvp':
+        if engine=='docker': return ['docker','compose']
+        if shutil.which('podman-compose'): return ['podman-compose']
+        return ['podman','compose']
     if project in ES_LIKE:
         provider=data.get('COMPOSE_PROVIDER','auto')
         if provider=='podman-compose': return ['podman-compose']
@@ -66,7 +77,9 @@ def compose_command(project,engine,data):
     return [engine,'compose']
 
 def planned_ports(project,data):
-    if project=='elasticsearch':
+    if project=='mvp':
+        bind='127.0.0.1'; keys=('API_PORT',); defaults=(18090,)
+    elif project=='elasticsearch':
         bind=data.get('ES_BIND_IP','127.0.0.1')
         keys=('ES_PORT','CEREBRO_PORT','KIBANA_PORT')
         defaults=(9200,9000,5601)
@@ -152,6 +165,14 @@ def health(projects):
     for project in projects:
         start=time.monotonic();row={'project':project,'ready':False}
         try:
+            if project=='mvp':
+                data=settings(project); url='http://127.0.0.1:'+data.get('API_PORT','18090')+'/api/diagnostics'
+                opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                with opener.open(url,timeout=8) as response: info=json.load(response)
+                row['ready']=info.get('dependencies_reachable') is True
+                row['details']={'dependencies_reachable':info.get('dependencies_reachable')}
+                if not row['ready']: row['reason']='one or more MVP dependencies are unavailable'
+                row['elapsed_seconds']=round(time.monotonic()-start,3);checks.append(row);continue
             if not (ROOT/DIRS[project]/'.env').is_file():raise ValueError('not initialized')
             if project in ES_LIKE:
                 data=settings(project);url=data.get('ES_URL','http://127.0.0.1:9200').rstrip('/')

@@ -60,7 +60,7 @@ bash scripts/test-helm.sh
 ./all.sh status kafka mariadb
 ```
 
-처음부터 네 프로젝트를 동시에 띄우지 말고 한 프로젝트씩 검증한 뒤 누적 자원을 확인합니다. Kafka/Redis는 Podman 중심이며 이름만 바꾸어 Docker 지원을 주장하지 않습니다. Elasticsearch와 MariaDB는 각 프로젝트의 provider 선택에 맞추어 실제 지원 조합별로 검증합니다.
+기본 `all.sh up`은 네 HA 실습과 MVP를 차례로 기동합니다. 첫 실기동 검증은 프로젝트 대상을 좁혀 한 스택씩 수행한 뒤, 기본 전체 배치의 누적 자원과 포트 상태를 확인합니다. Kafka/Redis는 Podman 중심이며 이름만 바꾸어 Docker 지원을 주장하지 않습니다. Elasticsearch와 MariaDB는 각 프로젝트의 provider 선택에 맞추어 실제 지원 조합별로 검증합니다.
 
 | 시험 | 합격 기준 |
 |---|---|

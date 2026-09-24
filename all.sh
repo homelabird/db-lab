@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Root controller for four existing labs and independent MVP/Helm deployments.
+# Root controller for four labs, the integrated MVP, and Helm deployments.
 # Never source a child lab: each one owns its environment, runtime and safeguards.
 set -Eeuo pipefail
 
@@ -20,6 +20,7 @@ CALLER_DIR=$PWD
 DRY_RUN=0
 FAIL_FAST=0
 PROJECTS=(elasticsearch kafka mariadb redis)
+LIFECYCLE_PROJECTS=("${PROJECTS[@]}" mvp)
 SELECTED=()
 RUN_FILE=
 RUN_ACTION=
@@ -78,23 +79,23 @@ Usage:
 
 Projects:
   elasticsearch (es) | kafka (kafka-lab) | mariadb (mariadb-ha-lab)
-  redis (redis-lab)  | elasticsearch-9 (es9, opt-in, 9.x; NOT in default batches)
-  all
+  redis (redis-lab)  | mvp (integrated six-container study stack)
+  elasticsearch-9 (es9, opt-in, 9.x; NOT in default batches) | all
 
-Common commands (default: all four Compose/container labs):
+Common commands (up/down/restart include the four labs and MVP; other commands default to the four labs):
   list                    List project directories and entrypoints
   init                    Initialize .env; preserve existing settings/secrets
   preflight [--json]      Read-only engine/settings/port-plan checks
   health [--json]         Application/topology checks; nonzero when unhealthy
   doctor | check          Run each lab's prerequisite checks
   benchmark DATABASE     Run bounded workload; --repeat 3 compares fresh runs
-  up | start             Initialize and start labs, sequentially
+  up | start             Initialize and start four labs plus MVP, sequentially
   status | ps            Run each lab's native status command
-  down | stop            Stop labs in reverse order; retain database volumes
-  restart                For each lab: down -> init -> up; retain volumes
+  down | stop            Stop four labs and MVP in reverse order; retain volumes
+  restart                Restart four labs and MVP; retain volumes
   test | offline-tests   Run the existing host-only test suites
   self-test              Test all.sh itself, without container runtimes
-  reset PROJECT... --yes  Delete selected labs' data; explicit scope required
+  reset PROJECT... --yes  Delete selected HA-lab data; MVP is not reset here
   logs PROJECT [ARGS...] Forward log arguments to ONE lab
   help                    Show this help
 
@@ -110,7 +111,7 @@ Project-specific operations are passed through without rewriting arguments:
 Benchmark operations target an already-running lab; they do not start, reset,
 or delete its services. See ./all.sh benchmark --help for workload options.
 
-MVP (independent six-container order system; NOT included in common up/down):
+MVP (independent six-container order system; included in common up/down/restart):
   ./all.sh mvp up                   Build/start the small integrated study lab
   ./all.sh mvp diagnose             Dependency status, outbox and Kafka lag
   ./all.sh mvp smoke                Write one fake order and verify search delivery
@@ -153,6 +154,7 @@ Examples:
   ./all.sh k8s up -f ./my-values.yaml --set kafka.enabled=false
 
 No arguments means help, never automatic startup or deletion.
+MVP is included only in default up/down/restart batches; other defaults remain the four HA labs. Common reset does not delete MVP data.
 The root controller does not use sudo, prune, or delete PVCs/namespaces.
 Native project commands retain their OWN meanings and confirmation flags.
 Native relative file arguments resolve inside that project's directory;
@@ -169,6 +171,7 @@ canonical_project() {
     kafka|kafka-lab) printf '%s\n' kafka ;;
     maria|mariadb|mariadb-ha-lab) printf '%s\n' mariadb ;;
     redis|redis-lab) printf '%s\n' redis ;;
+    mvp) printf '%s\n' mvp ;;
     *) return 1 ;;
   esac
 }
@@ -180,6 +183,7 @@ project_dir() {
     kafka) printf '%s/kafka-lab\n' "$ROOT" ;;
     mariadb) printf '%s/mariadb-ha-lab\n' "$ROOT" ;;
     redis) printf '%s/redis-lab\n' "$ROOT" ;;
+    mvp) printf '%s/mvp-lab\n' "$ROOT" ;;
     *) error "Unknown project: $1"; return 2 ;;
   esac
 }
@@ -243,24 +247,31 @@ init_project() {
   case "$project" in
     elasticsearch|elasticsearch9|kafka) copy_env_if_missing "$dir" ;;
     # Native initializers generate random passwords and preserve valid ones.
-    mariadb|redis) run_lab "$project" init ;;
+    mariadb|redis|mvp) run_lab "$project" init ;;
   esac
 }
 
 select_projects() {
   local item project seen existing
   if (( $# == 0 )); then
-    SELECTED=("${PROJECTS[@]}")
+    case "$action" in
+      up|down|restart) SELECTED=("${LIFECYCLE_PROJECTS[@]}") ;;
+      *) SELECTED=("${PROJECTS[@]}") ;;
+    esac
     return
   fi
   SELECTED=()
   for item in "$@"; do
     if [[ "$item" == all ]]; then
       (( $# == 1 )) || usage_error "Use 'all' alone, not with other project names."
-      SELECTED=("${PROJECTS[@]}")
+      case "$action" in
+        up|down|restart) SELECTED=("${LIFECYCLE_PROJECTS[@]}") ;;
+        *) SELECTED=("${PROJECTS[@]}") ;;
+      esac
       return
     fi
     project=$(canonical_project "$item") || usage_error "Unknown project: $item"
+    [[ "$action" != reset || "$project" != mvp ]] || usage_error "Common reset does not delete MVP data; use './all.sh mvp down' to stop it."
     seen=0
     for existing in "${SELECTED[@]}"; do
       [[ "$existing" != "$project" ]] || seen=1
@@ -277,7 +288,11 @@ preflight() {
     require_file "$dir/lab.sh" || return
     case "$action" in
       init|up|restart)
-        if [[ "$project" == elasticsearch || "$project" == elasticsearch9 || "$project" == kafka ]]; then
+        if [[ "$project" == mvp ]]; then
+          [[ ! -L "$dir/.env" ]] || { error 'Symlinked MVP .env is refused.'; return 1; }
+          if [[ -e "$dir/.env" ]]; then require_file "$dir/.env" || return
+          else require_file "$dir/.env.example" || return; fi
+        elif [[ "$project" == elasticsearch || "$project" == elasticsearch9 || "$project" == kafka ]]; then
           if [[ ! -e "$dir/.env" && ! -L "$dir/.env" ]]; then
             require_file "$dir/.env.example" || return
           else
@@ -286,6 +301,7 @@ preflight() {
         fi
         ;;
       test)
+        [[ "$project" != mvp ]] || continue
         script=$(test_script "$project") || return
         require_file "$dir/$script" || return
         ;;
@@ -307,7 +323,14 @@ perform_project() {
       init_project "$project" || return
       run_lab "$project" up
       ;;
-    doctor|status|down) run_lab "$project" "$action" ;;
+    doctor|status) run_lab "$project" "$action" ;;
+    down)
+      if [[ "$project" == mvp && ! -e "$ROOT/mvp-lab/.env" && ! -L "$ROOT/mvp-lab/.env" ]]; then
+        printf 'MVP is not initialized; nothing to stop.\n' >&2
+        return 0
+      fi
+      run_lab "$project" down
+      ;;
     reset)
       case "$project" in
         elasticsearch|elasticsearch9) run_lab "$project" down --purge --yes ;;
@@ -317,6 +340,7 @@ perform_project() {
       esac
       ;;
     test)
+      if [[ "$project" == mvp ]]; then run_lab mvp test; return; fi
       dir=$(project_dir "$project") || return
       script=$(test_script "$project") || return
       run_at "$dir" bash "$dir/$script"
@@ -529,7 +553,7 @@ main() {
       done
       printf '%-16s %-24s %s\n' elasticsearch9 elasticsearch-9/ 'all.sh es9 (opt-in; not in the default batch)'
       printf '%-16s %-24s %s\n' k8s helmchart/ 'all.sh k8s (separate deployment)'
-      printf '%-16s %-24s %s\n' mvp mvp-lab/ 'all.sh mvp (separate order system)'
+      printf '%-16s %-24s %s\n' mvp mvp-lab/ 'all.sh mvp (included in default up/down/restart)'
       return
       ;;
     self-test)
