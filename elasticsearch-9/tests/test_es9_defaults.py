@@ -120,6 +120,11 @@ class Es9DefaultsTests(unittest.TestCase):
         self.assertIn('x-es9-node: &es9-node', text)
         self.assertEqual(text.count('<<: *es9-node'), 5)
 
+    def test_install_failure_diagnostics_use_provider_portable_ps(self):
+        common = (SHARED / 'common.sh').read_text()
+        self.assertIn('compose ps >&2 || true', common)
+        self.assertNotIn('compose ps "$service"', common)
+
 
 if __name__ == '__main__':
     unittest.main()

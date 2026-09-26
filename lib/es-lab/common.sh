@@ -373,7 +373,10 @@ verify_install() {
   for service in "${services[@]}"; do
     if ! container_running "$service"; then
       printf '[FAIL] Container for %s is not running.\n' "$service" >&2
-      compose ps "$service" >&2 || true
+      # podman-compose's `ps` command does not accept a service positional
+      # argument; print the whole stack so failure diagnostics work for every
+      # supported provider.
+      compose ps >&2 || true
       compose logs --tail=80 "$service" >&2 || true
       return 1
     fi
