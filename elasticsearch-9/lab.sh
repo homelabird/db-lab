@@ -32,8 +32,9 @@ Data:
   size               Show dataset storage sizes
   purge --yes        Delete only the five lab seed indices
   query [args...]    Run a catalog query example (no args: list)
-  features [--clean] ES9-only modern scenarios: data stream+ILM, ES|QL,
+  features [--clean] ES9-only modern features: data stream+ILM, ES|QL,
                      kNN vector search, async search (writes reports/features.json)
+  drills <command>   Recoverable ES9 node-outage and master-quorum simulations
   snapshot           (Re)register + verify the shared snapshot repository
 
 Tests:
@@ -69,8 +70,8 @@ Quick start:
   ./lab.sh query list
 
 seed creates the same five deterministic indices as the legacy lab and writes
-reports/seed-manifest.json. ES9 does not run fault scenarios or topology drills;
-use the legacy elasticsearch/ lab for those.
+reports/seed-manifest.json. ES9 drills are bounded node-outage and master-quorum
+exercises; they do not modify legacy seed indices and require explicit --yes.
 EOF
 }
 
@@ -115,6 +116,7 @@ case "$command" in
   verify) run_python verify_seed.py "$@" ;;
   size|dataset-size) run_script "$ROOT/scripts/07-dataset-size.sh" "$@" ;;
   features) run_python features.py "$@" ;;
+  drills) run_python drills.py "$@" ;;
   purge) run_script "$ROOT/scripts/06-purge-lab-indices.sh" "$@" ;;
   query|queries)
     if [[ "${1:-}" == "" ]]; then
