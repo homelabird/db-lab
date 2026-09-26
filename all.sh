@@ -24,6 +24,7 @@ LIFECYCLE_PROJECTS=("${PROJECTS[@]}" mvp)
 SELECTED=()
 RUN_FILE=
 RUN_ACTION=
+LOCK_PID=
 JSON_OUTPUT=0
 
 trap 'printf "\nInterrupted; no further projects will be started.\n" >&2; exit 130' INT
@@ -34,6 +35,11 @@ usage_error() { error "$*"; exit 2; }
 
 finish_run() {
   local code=$1
+  if [[ -n "${LOCK_PID:-}" ]]; then
+    kill "$LOCK_PID" 2>/dev/null || true
+    wait "$LOCK_PID" 2>/dev/null || true
+    LOCK_PID=
+  fi
   [[ -n "$RUN_FILE" ]] || return 0
   python3 "$ROOT/scripts/control.py" record "$RUN_FILE" "$RUN_ACTION" __finish__ "$code" || true
   printf 'Run receipt: %s\n' "$RUN_FILE" >&2
@@ -53,12 +59,23 @@ begin_operation() {
     [[ ! -e "$storage" || -d "$storage" ]] || { error 'Runtime storage must be a directory.'; return 1; }
   done
   (umask 077; mkdir -p "$ROOT/.state" "$ROOT/reports") || return
-  exec 9>>"$ROOT/.state/all.lock"
-  flock -n 9 || { error 'Another root lifecycle operation is active; no stale lock deletion is necessary.'; return 1; }
+  # Hold the lock in a background subshell so child labs/containers never
+  # inherit it. Holding it on a shell fd (exec 9>>...) leaks into every
+  # child via fork, and container supervisors keep it open after all.sh
+  # exits, blocking all later lifecycle operations.
+  ( flock -n 200 || exit 1; exec sleep infinity ) 200>>"$ROOT/.state/all.lock" &
+  LOCK_PID=$!
+  sleep 0.2
+  if ! kill -0 "$LOCK_PID" 2>/dev/null; then
+    wait "$LOCK_PID" 2>/dev/null || true
+    LOCK_PID=
+    error 'Another root lifecycle operation is active; no stale lock deletion is necessary.'
+    return 1
+  fi
   RUN_ACTION=$1
   RUN_FILE="$ROOT/reports/all-$(date -u +%Y%m%dT%H%M%SZ)-$$.json"
-  python3 "$ROOT/scripts/control.py" record "$RUN_FILE" "$RUN_ACTION" __start__ 0 || return
   trap 'finish_run "$?"' EXIT
+  python3 "$ROOT/scripts/control.py" record "$RUN_FILE" "$RUN_ACTION" __start__ 0 || return
 }
 record_project() {
   [[ -n "$RUN_FILE" ]] || return 0
