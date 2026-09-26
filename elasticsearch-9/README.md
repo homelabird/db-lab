@@ -2,9 +2,9 @@
 
 Elasticsearch **9.5.x** 기반 5노드 클러스터와 Kibana 9를 올리는 실습 랩입니다.
 legacy 7.x 랩(`elasticsearch/`)과 **같은 공용 코어**(`../lib/es-lab/`)를 공유하며,
-범위는 **코어 스택 + 스냅샷 저장소 + 시드(현실적) 데이터 + 쿼리 검증**입니다.
-장애 시나리오/샤드/시드 토폴로지 드릴은 legacy 랩 전용입니다. **Cerebro는 의도적으로
-포함하지 않습니다**(legacy 7.x 보조 UI용) — 화면 검색과 관리는 Kibana를 사용합니다.
+코어 스택·snapshot·seed·query 외에 ES9 전용 노드 장애/마스터 정족수 실습을 제공합니다.
+샤드 배치·allocation 정책 등 ES7 전용 토폴로지 드릴은 legacy 랩에 남습니다.
+**Cerebro는 의도적으로 포함하지 않습니다**(legacy 7.x 보조 UI용) — 화면 검색과 관리는 Kibana를 사용합니다.
 
 보안 인증이 필요한 read-only cluster/shard 조회는 [공통 시나리오 대응 가이드](../docs/SCENARIO-RESPONSE-QUERIES.md)를 참고하세요.
 
@@ -14,7 +14,8 @@ legacy 7.x 랩(`elasticsearch/`)과 **같은 공용 코어**(`../lib/es-lab/`)�
 - 기본 포트: Elasticsearch **9201**, Kibana **5602**. legacy 7.x 랩(9200/9000/5601)과
   충돌하지 않아 두 랩을 동시에 기동할 수 있습니다.
 - 같은 ES9 랩의 별도 사본을 동시에 실행하려면 `.env`의 `COMPOSE_PROJECT_NAME`과
-  `LAB_CONTAINER_PREFIX`를 모두 고유하게 지정하세요.
+  `LAB_CONTAINER_PREFIX`를 모두 고유하게 지정하세요. `COMPOSE_PROJECT_NAME`을 바꾸면 기존 명명 볼륨은
+  이전 프로젝트 이름으로 남으며 자동 이동/연결되지 않습니다. 이전 데이터를 쓰려면 볼륨을 확인하고 복원 절차를 따르세요.
 - 기본 보안은 꺼져 있으며(무인증, loopback 바인딩), `XPACK_SECURITY_ENABLED=true`는
   옵트인입니다(아래 한계 참고).
 
@@ -30,6 +31,8 @@ legacy 7.x 랩(`elasticsearch/`)과 **같은 공용 코어**(`../lib/es-lab/`)�
 ./lab.sh seed --size-mb 5       # 빠른 확인용 데이터 적재
 ./lab.sh verify                 # 데이터·샤드·쿼리 검증
 ./lab.sh verify-install         # 설치 전체 확인
+./lab.sh drills list             # ES9 장애 실습 목록
+./lab.sh drills plan node-outage # 실제 변경 없이 계획 확인
 ./lab.sh ui                     # 접속 주소 출력
 ```
 
@@ -43,6 +46,7 @@ legacy 7.x 랩(`elasticsearch/`)과 **같은 공용 코어**(`../lib/es-lab/`)�
 | 로그 보기 | `./lab.sh logs es02` |
 | 쿼리 예제 | `./lab.sh query list` |
 | ES9 기능 예제 | `./lab.sh features` |
+| 장애 실습 목록/계획 | `./lab.sh drills list` / `./lab.sh drills plan node-outage` |
 | 시드 인덱스만 삭제 | `./lab.sh purge --yes` |
 | 중지하고 데이터 보존 | `./lab.sh down` |
 | 컨테이너와 프로젝트 볼륨 삭제 | `./lab.sh down --purge --yes` |
@@ -89,14 +93,16 @@ scripts/common.sh       공용 코어 로더 (LAB_ROOT/LAB_CONTAINER_PREFIX=es9-
 scripts/lablib.py       공용 lablib_core 임포트 + INDICES/LAYOUT + bulk/catalog 헬퍼
 scripts/generate_and_load.py  시드 생성·적재 (../lib/es-lab/datagen/realistic 공용 생성기 위임)
 scripts/verify_seed.py  시드·샤드·쿼리 예제 26종 라이브 검증
-scripts/features.py     ES9 전용 현대 기능: 데이터스트림+ILM, ES|QL, kNN, async search
+scripts/features.py     ES9 전용 기능: 데이터스트림+ILM, ES|QL, kNN, async search
+scripts/drills.py       journal 기반 node-outage/quorum-loss 및 복구 검증
 scripts/01-up.sh        [기동: 인증서/스냅샷 준비 → 5노드 green → Kibana → 설치 검증]
-scripts/12-offline-tests.sh  정적 회귀 테스트(실행 불필요)
+scripts/12-offline-tests.sh  셸 구문·호스트 회귀 테스트(실행 불필요)
 mappings/*.json         5개 시드 인덱스 매핑 (legacy와 동일 스키마)
 queries/*.json          쿼리 예제 26종 (legacy와 동일 카탈로그)
 tests/test_es9_defaults.py   compose/.env/공용 코어 배선에 대한 정적 테스트
 tests/test_es9_seed.py       생성기·매핑 타입·양 랩 동일성·카덴스 정적 테스트
 tests/test_es9_features.py   features 스크립트·공용 카탈로그 비오염·kNN 픽스처 정적 테스트
+tests/test_es9_drills.py     drill 계획·동의·보고서 권한·symlink 안전성 호스트 테스트
 .env.example           포트/이름/보안 옵트인 기본값
 ```
 
@@ -170,6 +176,32 @@ curl -XDELETE "$BASE/_snapshot/lab-snapshots/snap-1"
 ./all.sh es9 features        # 루트 통로
 ```
 
+## ES9 장애 시뮬레이션
+
+두 실습은 green 상태의 정확한 ES9 5노드 클러스터에서만 시작합니다. 실행 전용 canary 인덱스에 합성 문서 하나를 쓰고,
+장애 상태를 관찰한 뒤 원래 노드 수·cluster UUID·green 상태와 문서를 검증합니다. canary의 owner marker를 확인한 다음
+해당 인덱스만 삭제하며 기존 시드/사용자 인덱스는 변경하지 않습니다. 보고서는 `reports/drills/`에 권한 600으로 기록됩니다.
+
+```bash
+./lab.sh drills list
+./lab.sh drills plan node-outage --node auto
+./lab.sh drills run node-outage --node auto --hold 5 --yes
+./lab.sh drills plan quorum-loss
+./lab.sh drills run quorum-loss --hold 5 --yes
+./lab.sh drills status
+./lab.sh drills recover --yes   # 중단 뒤 active journal이 남은 경우
+```
+
+- `node-outage`: canary shard copy가 실제 배치된 es02–es05 중 한 노드를 정지하고, 생존 copy의 strict GET/search와
+  4노드 상태를 확인한 뒤 같은 컨테이너를 복구합니다. `auto`는 실행 직전 대상을 고릅니다.
+- `quorum-loss`: master-eligible 노드 5개 중 es02/es03/es04를 정지해 과반수 상실을 관찰한 뒤 세 노드를 복구합니다.
+  es01은 host API 접속용으로 유지합니다.
+- 실제 실행과 수동 복구에는 `--yes`가 필요합니다. 정상 종료/예외에서는 자동 복구를 시도합니다. SIGKILL/호스트 종료 뒤에는
+  journal이 남을 수 있으므로 `status`로 확인하고 `recover --yes`를 실행하세요. 컨테이너 ID나 project/cluster identity가
+  바뀌면 자동 기동·삭제를 거부합니다.
+- 동일 실습의 복제본에서는 `recover`에도 실행 당시와 같은 project/prefix 설정을 사용해야 합니다. 이 도구는 로컬 교육용이지
+  운영 클러스터용 chaos 도구가 아닙니다.
+
 ## 오프라인 테스트
 
 ```bash
@@ -179,17 +211,30 @@ curl -XDELETE "$BASE/_snapshot/lab-snapshots/snap-1"
 `tests/test_es9_defaults.py::test_no_cerebro_and_no_docker_only_network_opts`가 compose에
 Cerebro가 없음을 정적으로 강제합니다.
 
-## 검증 상태 (2026-09-23)
+## 검증 상태
+
+### 2026-09-25 — 현재 작업 환경의 실제 실행
+
+- Podman 5.8.7 + `podman-compose` 1.6.0에서 **새 Compose project/prefix/포트와 새 볼륨**을 사용해 ES 9.5.3 5노드를 기동했습니다.
+  cluster green, 5/5 snapshot verification, Kibana `available` 및 설치 검증이 통과했습니다.
+- 5MiB seed 6,017건, ES9 쿼리 예제 26개, `features`, `node-outage`, `quorum-loss` 실행과 자동 복구가 통과했습니다.
+- 기존 `elasticsearch-9` project 라벨의 볼륨은 재사용하거나 삭제하지 않았습니다. 현재 기본 project 설정과 이전 볼륨을 연결하는
+  마이그레이션/복구 절차는 이 시험에 포함되지 않습니다.
+- Docker CLI는 설치되어 있지만 이 세션에서 daemon socket 권한 거부를 받았고 `docker compose` 플러그인도 없었습니다.
+  따라서 이 날짜의 실행 증거는 Docker provider 검증이 아닙니다.
+- `podman-compose`에서 `compose ps <service>`가 오류가 되는 것을 재현해 설치 실패 진단을 provider 호환 방식으로 수정했습니다.
+  현재 수정본의 오프라인 테스트 결과와 상세 실행 경계는 저장소 품질/런타임 보고서를 함께 참조하세요.
+
+### 2026-09-23 — 이전 실행 기록
 
 - Docker Compose: 기본 설치·재실행 및 보안 모드 설치를 확인했습니다.
 - Podman: `podman compose`로 ES 9 설치·재실행, green 상태, snapshot과 Kibana를 확인했습니다.
-- 별도 `podman-compose` 실행 파일은 검증 호스트에 없어 해당 provider 검증은 남아 있습니다.
-- 오프라인 테스트: ES 9 24개, ES 7 83개 통과.
-- `./lab.sh verify-install`은 실행할 때 현재 컨테이너·클러스터·snapshot·Kibana 상태를
-  확인하고 `reports/install-verification.json`에 결과를 기록합니다.
+- 당시 별도 `podman-compose` 실행 파일은 검증되지 않았습니다.
+- `./lab.sh verify-install`은 현재 컨테이너·클러스터·snapshot·Kibana 상태를 확인하고
+  `reports/install-verification.json`에 결과를 기록합니다.
 
-이 결과는 로컬 실행에 한정됩니다. WSL의 Podman 네트워크/방화벽 조합은 사용자 호스트에서
-`doctor`와 `verify-install`로 확인하세요.
+각 결과는 기록된 로컬 provider/호스트에 한정됩니다. WSL의 Podman 네트워크 조합과 기존 볼륨은 해당 호스트에서
+`doctor`, `verify-install`, 상태/로그 확인으로 별도 검증하세요.
 
 ## 한계
 
