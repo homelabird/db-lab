@@ -73,6 +73,13 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
             test.parent.mkdir(exist_ok=True)
             test.write_text('#!/usr/bin/env bash\n'
                             f'python3 -S "$ALL_TEST_RECORDER" "test:{project}" "$@"\n')
+        mvp = self.root / 'mvp-lab'
+        mvp.mkdir()
+        (mvp / 'lab.sh').write_text(
+            '#!/usr/bin/env bash\nset -euo pipefail\n'
+            'python3 -S "$ALL_TEST_RECORDER" "mvp" "$@"\n')
+        (mvp / '.env').write_text('SETTING=initialized\n')
+        (mvp / '.env.example').write_text('SETTING=original\n')
         # es9 (elasticsearch-9) is an opt-in project: it is NOT part of the
         # default batch or the PROJECT_DIRS mapping, but must be selectable.
         self.es9 = self.root / 'elasticsearch-9'
@@ -158,6 +165,20 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
                          [('mariadb', ['init']), ('mariadb', ['up']),
                           ('redis', ['init']), ('redis', ['up'])])
 
+    def test_default_up_includes_mvp(self):
+        self.run_all('up')
+        self.assertEqual([(c['name'], c['args']) for c in self.calls()], [
+            ('elasticsearch', ['up']), ('kafka', ['up']),
+            ('mariadb', ['init']), ('mariadb', ['up']),
+            ('redis', ['init']), ('redis', ['up']),
+            ('mvp', ['init']), ('mvp', ['up']),
+        ])
+
+    def test_default_restart_includes_mvp(self):
+        self.run_all('restart')
+        self.assertEqual([c['args'] for c in self.calls() if c['name'] == 'mvp'],
+                         [['down'], ['init'], ['up']])
+
     def test_up_creates_es_kafka_env_privately(self):
         self.run_all('up', 'es', 'kafka')
         for directory in ('elasticsearch', 'kafka-lab'):
@@ -181,7 +202,7 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
 
     def test_down_reverses_selection_without_purge(self):
         self.run_all('down')
-        self.assertEqual(self.names(), list(reversed(PROJECT_DIRS)))
+        self.assertEqual(self.names(), ['mvp', *reversed(PROJECT_DIRS)])
         self.assertTrue(all(c['args'] == ['down'] for c in self.calls()))
 
     def test_selected_order_and_alias_deduplication(self):
