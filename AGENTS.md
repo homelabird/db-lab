@@ -6,7 +6,7 @@
 
 - `all.sh`: root dispatcher; individual labs own their runtime and lifecycle.
 - `elasticsearch/`, `elasticsearch-9/`, `kafka-lab/`, `mariadb-ha-lab/`, `redis-lab/`: standalone labs.
-- `mvp-lab/`: separate six-container application, not part of the default `all.sh up` batch.
+- `mvp-lab/`: separate six-container application and data set; intentionally included in default `all.sh up/down/restart` lifecycle batches. Use `all.sh mvp ...` to manage it independently.
 - `lib/es-lab/`: shared Elasticsearch 7/9 shell and Python core.
 - `helmchart/`, `ansible/`: separate deployment paths.
 - `docs/QUALITY-GUIDE.md` and `docs/RUNTIME-ACCEPTANCE.md`: validation entry points and evidence boundaries.

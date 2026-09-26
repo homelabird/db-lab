@@ -10,7 +10,7 @@ Make the smallest change that fixes the owning project's demonstrated problem. K
 ## Find the owner first
 
 - Read the root `README.md` for entry points and project boundaries, then the affected lab's README and current troubleshooting/validation guide.
-- `all.sh` is a dispatcher. The independent lab owns its `lab.sh`, configuration, data, and safeguards. `all.sh up` means the four default HA labs; `all.sh mvp up` is a separate six-container application. Elasticsearch 9 is opt-in (`es9`).
+- `all.sh` is a dispatcher. Each lab owns its `lab.sh`, configuration, data, and safeguards. Default `all.sh up/down/restart` intentionally includes the four HA labs and the separate six-container MVP; `all.sh mvp ...` manages the MVP independently. Elasticsearch 9 is opt-in (`es9`).
 - Elasticsearch 7 and 9 share `lib/es-lab/`; trace both wrappers/callers before changing shared behavior. Each project's own `scripts/common.sh`, `.env`, and Compose files still define version-specific settings.
 - Preserve existing dirty-worktree changes. Inspect `git status` and relevant diffs before editing; don't clean or replace unrelated files.
 
