@@ -1,11 +1,11 @@
-# DB Lab — v12 MVP 시작·진단 후속 수정
+# DB Lab — 데이터베이스 운영 실습
 
-[시나리오별 dev/staging/prod 대응 쿼리](docs/SCENARIO-RESPONSE-QUERIES.md) · [이번 수정·실행 가이드](docs/FOLLOWUP-REPAIR-2026-09-21.md) · [v11 Redis/Kafka 수정](docs/STARTUP-REPAIR-2026-09-21.md) · [기존 품질 검사 명령](docs/QUALITY-GUIDE.md) · [Ansible](ansible/README.md)
+[학습 시작 경로](docs/STUDY-PATH.md) · [시나리오별 dev/staging/prod 대응 쿼리](docs/SCENARIO-RESPONSE-QUERIES.md) · [이번 수정·실행 가이드](docs/FOLLOWUP-REPAIR-2026-09-21.md) · [v11 Redis/Kafka 수정](docs/STARTUP-REPAIR-2026-09-21.md) · [저장소 품질 검사](docs/QUALITY-GUIDE.md) · [Ansible](ansible/README.md)
 
 [로컬 운영 자동화 목표와 단계별 로드맵](docs/LOCAL-OPS-AUTOMATION-ROADMAP.md)
 
-> **MVP와 HA 실습은 서로 다른 데이터·컨테이너 구성입니다.** `bash all.sh up`은 네 HA 실습과 독립형 6개 컨테이너 MVP를 순차 기동하고, `bash all.sh down`은 역순으로 종료합니다. MVP만 별도로 관리하려면 `bash all.sh mvp up/down`을 사용하세요.
-> 컨테이너 엔진 지원과 실기동 검증은 실습별로 다릅니다. Elasticsearch 9의 최신 Podman 검증은 [ES9 README](elasticsearch-9/README.md)에, Kafka/Redis의 범위는 [수정·검증 기록](docs/STARTUP-REPAIR-2026-09-21.md)에 있습니다. 한 실습의 결과를 전체 프로젝트의 지원 보증으로 간주하지 마세요.
+> 처음에는 [학습 경로](docs/STUDY-PATH.md)에서 목표 하나를 고르세요. `bash all.sh up`은 네 HA 실습과 독립형 6개 컨테이너 MVP를 모두 순차 기동합니다. **MVP와 HA 실습은 서로 다른 데이터·컨테이너 구성**이며, MVP만 실행하려면 `bash all.sh mvp up/down`을 사용하세요.
+> 컨테이너 엔진 지원과 실기동 검증은 실습별로 다릅니다. Elasticsearch 7/9, Kafka, MariaDB, Redis의 최신 실기동 범위는 각 lab README와 [런타임 인수 가이드](docs/RUNTIME-ACCEPTANCE.md)에 있습니다. 한 실습의 결과를 전체 프로젝트의 지원 보증으로 간주하지 마세요.
 > v12는 MVP의 HTTP 대상 확인, API/worker 준비 상태, 초기화 실패 증적, 진단 종료 코드와 실제 Helm CI 경로를 보강했습니다. v11의 Redis/Kafka 수정은 유지합니다.
 > 실제 수정 근거와 실행한 검사/실행하지 못한 검사는 위의 **이번 수정·실행 가이드**에서 확인하세요.
 > 오프라인 테스트는 실제 클러스터 기동·장애 복구를 증명하지 않습니다. 프로젝트별 문서에서 검증 날짜/provider를 확인하고, 전체 조합의 잔여 인수 항목은 [런타임 인수 가이드](docs/RUNTIME-ACCEPTANCE.md)를 따르세요.
