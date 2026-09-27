@@ -358,7 +358,8 @@ def benchmark_publish(args) -> None:
     finally:
         if created:
             try:
-                admin_client(args.bootstrap).delete_topics(
+                admin = admin_client(args.bootstrap)
+                admin.delete_topics(
                     [topic], request_timeout=20, operation_timeout=20)[topic].result(25)
                 deletion_verified = True
             except Exception:
@@ -649,7 +650,8 @@ def probe_failure(args) -> None:
     if len(ps) != 1 or ps[0]["leader"] < 0:
         raise LabError("probe requires one partition with a live leader")
     resource = ka.ConfigResource(ka.ResourceType.TOPIC, args.topic)
-    cfg = admin_client(args.bootstrap).describe_configs([resource], request_timeout=8)[resource].result(10)
+    admin = admin_client(args.bootstrap)
+    cfg = admin.describe_configs([resource], request_timeout=8)[resource].result(10)
     if args.kind == "isr":
         if len(ps[0]["isr"]) != 1 or cfg["min.insync.replicas"].value != "2":
             raise LabError("isr probe precondition: ISR=1 and min.insync.replicas=2")

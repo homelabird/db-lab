@@ -23,7 +23,7 @@ wait_zk_broker_ids_clear() {
     say "이전 broker 등록 정리 대기 (ZooKeeper 세션 만료, 최대 ${STARTUP_TIMEOUT}s)"
     while :; do
         lines=$(eng exec "$LAB_NAME-zk1" zookeeper-shell "zk1:2181" ls /brokers/ids 2>/dev/null || true)
-        ids=$(printf '%s\n' "$lines" | tr -d '\r' | grep -oE '^[[:space:]]*\[.*\][[:space:]]*$' | tail -1)
+        ids=$(printf '%s\n' "$lines" | tr -d '\r' | grep -oE '^[[:space:]]*\[.*\][[:space:]]*$' | tail -1 || true)
         if [[ -z "$ids" || "$ids" == '[]' ]]; then return 0; fi
         if (( SECONDS >= deadline )); then
             die "ZooKeeper /brokers/ids에 이전 broker 등록이 남아 있습니다: $ids"
