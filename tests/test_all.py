@@ -73,13 +73,6 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
             test.parent.mkdir(exist_ok=True)
             test.write_text('#!/usr/bin/env bash\n'
                             f'python3 -S "$ALL_TEST_RECORDER" "test:{project}" "$@"\n')
-        mvp = self.root / 'mvp-lab'
-        mvp.mkdir()
-        (mvp / 'lab.sh').write_text(
-            '#!/usr/bin/env bash\nset -euo pipefail\n'
-            'python3 -S "$ALL_TEST_RECORDER" "mvp" "$@"\n')
-        (mvp / '.env').write_text('SETTING=initialized\n')
-        (mvp / '.env.example').write_text('SETTING=original\n')
         # es9 (elasticsearch-9) is an opt-in project: it is NOT part of the
         # default batch or the PROJECT_DIRS mapping, but must be selectable.
         self.es9 = self.root / 'elasticsearch-9'
@@ -93,6 +86,17 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
         es9_test.parent.mkdir(exist_ok=True)
         es9_test.write_text('#!/usr/bin/env bash\n'
                             'python3 -S "$ALL_TEST_RECORDER" "test:es9" "$@"\n')
+        # mvp is in the default up/down/restart lifecycle batch (all.sh
+        # LIFECYCLE_PROJECTS). The fixture needs its entrypoint plus the
+        # template preflight checks, without a pre-created .env so the
+        # "not initialized; nothing to stop" down path stays testable.
+        self.mvp = self.root / 'mvp-lab'
+        self.mvp.mkdir()
+        (self.mvp / 'lab.sh').write_text(
+            '#!/usr/bin/env bash\nset -euo pipefail\n'
+            'python3 -S "$ALL_TEST_RECORDER" "mvp" "$@"\n'
+            'export CHILD_ONLY=must-not-leak\n')
+        (self.mvp / '.env.example').write_text('SETTING=original\n')
         (self.root / 'helmchart').mkdir()
         (self.root / 'helmchart/Chart.yaml').write_text('apiVersion: v2\nname: db-lab\nversion: 0.1.0\n')
         self.bin = self.base / 'bin'
@@ -175,6 +179,7 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
         ])
 
     def test_default_restart_includes_mvp(self):
+        (self.mvp / '.env').write_text('SETTING=initialized\n')
         self.run_all('restart')
         self.assertEqual([c['args'] for c in self.calls() if c['name'] == 'mvp'],
                          [['down'], ['init'], ['up']])
@@ -202,7 +207,13 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
 
     def test_down_reverses_selection_without_purge(self):
         self.run_all('down')
-        self.assertEqual(self.names(), ['mvp', *reversed(PROJECT_DIRS)])
+        self.assertEqual(self.names(), list(reversed(PROJECT_DIRS)))
+        self.assertTrue(all(c['args'] == ['down'] for c in self.calls()))
+
+    def test_down_visits_initialized_mvp_first(self):
+        (self.mvp / '.env').write_text('SETTING=initialized\n')
+        self.run_all('down')
+        self.assertEqual(self.names(), ['mvp'] + list(reversed(PROJECT_DIRS)))
         self.assertTrue(all(c['args'] == ['down'] for c in self.calls()))
 
     def test_selected_order_and_alias_deduplication(self):
