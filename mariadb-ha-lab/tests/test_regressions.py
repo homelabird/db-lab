@@ -149,7 +149,7 @@ class RegressionControllerTests(unittest.TestCase):
             self.assertTrue(self.obj.cleanup_benchmark_dataset(accounts,transfers))
         self.assertEqual(accounts,'lab_bench_0123456789abcdef_accounts')
         self.assertEqual(transfers,'lab_bench_0123456789abcdef_transfers')
-        self.assertIn('INSERT INTO `lab_bench_0123456789abcdef_accounts` SELECT * FROM lab_ops.account',sql.call_args_list[2].args[1])
+        self.assertIn('INSERT INTO lab_ops.`lab_bench_0123456789abcdef_accounts` SELECT * FROM lab_ops.account',sql.call_args_list[2].args[1])
         with patch.object(self.obj,'sql',side_effect=lab.LabError('database unavailable')):
             self.assertFalse(self.obj.cleanup_benchmark_dataset(accounts,transfers))
         with self.assertRaises(lab.LabError):self.obj.create_benchmark_dataset('unsafe` SQL')
@@ -374,7 +374,9 @@ class MariaBenchmarkReportTests(unittest.TestCase):
             self.assertGreaterEqual(report['environment']['runtime_observation']['sample_count'],2)
             self.assertTrue(report['verification']['dataset_state_verified'],report['verification'])
             self.assertTrue(report['verification']['run_dataset_invariant_passed'])
-            self.assertIn('removed and verified absent',report['verification']['dataset_state_note'])
+            self.assertTrue(report['verification']['source_dataset_unchanged'])
+            self.assertTrue(report['verification']['temporary_tables_cleanup_verified'])
+            self.assertIn('source fingerprint was unchanged',report['verification']['dataset_state_note'])
             self.assertFalse(any(value in files[0].read_text() for value in FakeLab.settings.values()))
 
 

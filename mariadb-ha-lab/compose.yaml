@@ -145,8 +145,7 @@ services:
 networks:
   labnet:
     driver: bridge
-    driver_opts:
-      com.docker.network.bridge.enable_icc: "true"
+    # Same-network container traffic is the bridge default; this Docker-only option breaks Podman.
   restore_net:
 volumes:
   galera1_data:

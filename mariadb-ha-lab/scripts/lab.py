@@ -552,11 +552,11 @@ class Lab:
         source = self.benchmark_account_snapshot(node, 'lab_ops.account')
         if source['account_rows'] < 2 or source['balance_total'] <= 0:
             raise LabError('Source synthetic account dataset is empty or invalid.')
-        self.sql(node, f'CREATE TABLE `{accounts}` LIKE lab_ops.account;')
+        self.sql(node, f'CREATE TABLE lab_ops.`{accounts}` LIKE lab_ops.account;')
         try:
-            self.sql(node, f'INSERT INTO `{accounts}` SELECT * FROM lab_ops.account;')
-            self.sql(node, f'CREATE TABLE `{transfers}` LIKE lab_ops.transfer;')
-            if self.benchmark_account_snapshot(node, f'`{accounts}`') != source:
+            self.sql(node, f'INSERT INTO lab_ops.`{accounts}` SELECT * FROM lab_ops.account;')
+            self.sql(node, f'CREATE TABLE lab_ops.`{transfers}` LIKE lab_ops.transfer;')
+            if self.benchmark_account_snapshot(node, f'lab_ops.`{accounts}`') != source:
                 raise LabError('Run-scoped account copy differs from the source account fingerprint.')
         except BaseException as exc:
             if not self.cleanup_benchmark_dataset(accounts, transfers, node):
@@ -566,10 +566,10 @@ class Lab:
 
     def cleanup_benchmark_dataset(self, accounts, transfers, node='galera1'):
         try:
-            transfer_drop = self.sql(node, f'DROP TABLE IF EXISTS `{transfers}`;', check=False)
-            account_drop = self.sql(node, f'DROP TABLE IF EXISTS `{accounts}`;', check=False)
+            transfer_drop = self.sql(node, f'DROP TABLE IF EXISTS lab_ops.`{transfers}`;', check=False)
+            account_drop = self.sql(node, f'DROP TABLE IF EXISTS lab_ops.`{accounts}`;', check=False)
             remaining = self.sql(node,
-                'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() '
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='lab_ops' "
                 f"AND table_name IN ('{accounts}','{transfers}');", check=False)
             return (transfer_drop.returncode == 0 and account_drop.returncode == 0
                     and remaining.returncode == 0 and remaining.stdout.strip() == '0')
@@ -794,17 +794,22 @@ def main():
             account_table, transfer_table, source_dataset = lab.create_benchmark_dataset(dataset_token, benchmark_node)
             pressure = HostPressureSampler()
             dataset_invariant_passed = False
+            source_dataset_unchanged = False
             try:
                 pressure.start()
                 result = lab.comp('run','--rm','--no-deps','tools',*toolcmd,
                                   '--account-table',account_table,'--transfer-table',transfer_table,
                                   capture=True,check=False)
-                after = lab.benchmark_account_snapshot(benchmark_node, f'`{account_table}`', check=False)
-                dataset_invariant_passed = result.returncode == 0 and after == source_dataset
+                after = lab.benchmark_account_snapshot(benchmark_node, f'lab_ops.`{account_table}`', check=False)
+                source_after = lab.benchmark_account_snapshot(benchmark_node, 'lab_ops.account', check=False)
+                dataset_invariant_passed = (result.returncode == 0 and after is not None
+                    and after['account_rows'] == source_dataset['account_rows']
+                    and after['balance_total'] == source_dataset['balance_total'])
+                source_dataset_unchanged = source_after == source_dataset
             finally:
                 runtime_observation = pressure.stop()
                 tables_removed = lab.cleanup_benchmark_dataset(account_table, transfer_table, benchmark_node)
-                dataset_state_verified = dataset_invariant_passed and tables_removed
+                dataset_state_verified = dataset_invariant_passed and source_dataset_unchanged and tables_removed
             print(result.stdout, end='')
             stderr = result.stderr or ''
             for key in PASSWORDS: stderr = stderr.replace(lab.settings[key], '<redacted>')
@@ -846,8 +851,10 @@ def main():
                                  'workload_and_invariant_passed': result.returncode == 0,
                                  'dataset_state_verified': dataset_state_verified,
                                  'run_dataset_invariant_passed': dataset_invariant_passed,
-                                 'dataset_state_note': ('Run-scoped account/transfer tables were removed and verified absent.'
-                                                        if dataset_state_verified else 'Run-scoped benchmark tables remain or cleanup could not be verified.'),
+                                 'source_dataset_unchanged': source_dataset_unchanged,
+                                 'temporary_tables_cleanup_verified': tables_removed,
+                                 'dataset_state_note': ('Temporary accounts conserved the source row count and balance total, the source fingerprint was unchanged, and run-scoped tables were removed.'
+                                                        if dataset_state_verified else 'Workload, account/source invariant, or temporary-table cleanup check failed; inspect the individual verification fields.'),
                                  'source_dataset': source_dataset,
                                  'version_observed': bool(version)},
                 'note': 'Lab workload measurement; same workload and controlled host/container state are required for comparison. Not production capacity evidence.'}
