@@ -21,9 +21,9 @@ DB Lab을 로컬에서 실제 운영 작업의 흐름을 연습하고 검증하�
 | 영역 | 이미 있는 기능 | 현재 한계 |
 |---|---|---|
 | 프로젝트 진입점 | `all.sh`가 개별 랩, MVP, Helm 경로와 `doctor`, `preflight`, `health`, `status`, `down` 등 공통 명령 일부를 제공 | DB별 인수·환경·검증 차이가 남아 있어 공통 명령의 의미와 지원 조합을 계속 문서화해야 함 |
-| 시나리오·성능 | Redis/MariaDB/Kafka/ES7/ES9의 versioned report, 공통 반복 비교기와 DB별 bounded workload를 호출하는 `scripts/benchmarks.py run <db>`가 있음 | runner는 이미 준비된 lab에만 workload를 보내며 lab 기동/정리는 하지 않음. 실제 Redis/MariaDB/Kafka/ES7 반복 실측, 전체 실행 구간 contention 계측, image digest 및 dataset 동일성 확인이 남아 있음. MVP comparative study는 실제 DB benchmark가 아님 |
+| 시나리오·성능 | Redis/MariaDB/Kafka/ES7/ES9 모두 2026-09-27 격리 환경에서 3회 반복 실측했고, comparator와 bounded workload는 `scripts/benchmarks.py run <db>`로 제공 | runner는 준비된 lab에만 workload를 보내며 기동/정리는 하지 않음. 반복 결과는 산포·scheduler skip·source 또는 container metadata 한계로 안정된 성능 기준선이 아님. 원격 실행 구간의 contention 격리와 MVP comparative study는 별도 과제 |
 | Ansible | SSH/local inventory, 허용 명령 정책, check mode, 명시적 동의, 단일 호스트 제한, 결과 수집, 새 content-addressed source release 배치, 전송 SHA-256 검증, 제한된 Ubuntu/Debian package bootstrap을 제공 | Debian 12 disposable SSH 컨테이너에서 비루트 `labops`의 task-scoped become, apt bootstrap 멱등성, source 배치 및 Redis `init/doctor/up/health/status/down`이 통과. Ubuntu 조합과 별도 원격 Linux 호스트의 runtime·DB 준비 및 복구는 미검증. 선언형 Ansible DB role이 아니라 기존 도구용 orchestration 계층임. |
-| Kubernetes/Helm | 통합 Helm chart와 ES 전용 Helm 경로, context 제한·preflight·Secret/PVC/bootstrap 보호가 있음 | 전용 kind 환경에서 Redis/Sentinel, PVC 보존, CNI NetworkPolicy, primary failover가 통과. MariaDB 전체 복구와 검증하지 않은 CNI/StorageClass 조합은 남아 있음. MariaDB 안전 후보 자동 선택은 의도적으로 미구현 |
+| Kubernetes/Helm | 통합 Helm chart와 ES 전용 Helm 경로, context 제한·preflight·Secret/PVC/bootstrap 보호가 있음 | 전용 kind에서 Redis/Sentinel 장애 전환과 MariaDB fresh bootstrap·3노드 복제·동일 PVC Pod 재합류·전체 정전 복구가 통과. Kubernetes node failure와 검증하지 않은 CNI/StorageClass 조합은 남아 있음. 안전 후보 선택은 운영 자동화로 제공하지 않음 |
 | 실행 증거 | MVP acceptance 및 study report, root quality/static/offline/tools 경로, Ansible 결과 수집 경계가 있음 | 프로젝트별 결과 스키마와 수집 수준이 다름. 일부 “pass”는 host/mock/static이고 실제 엔진, HA, 원격 실행과 분명히 구분해야 함 |
 
 세부 근거: [Ansible 구현 범위](ANSIBLE-IMPLEMENTATION.md), [Ansible 사용법](../ansible/README.md), [런타임 인수 기준](RUNTIME-ACCEPTANCE.md), [MVP 비교 실험의 측정 한계](../mvp-lab/docs/COMPARATIVE-STUDIES.md), [품질 검사](QUALITY-GUIDE.md).
@@ -97,7 +97,7 @@ Ansible을 다음 순서로 넓힌다.
 
 먼저 현재 Helm chart acceptance를 disposable kind/k3d/minikube 중 실제 지원 대상으로 통과시킨다. resource, PVC, DNS, service discovery, NetworkPolicy enforcement, readiness, restart, clean install/upgrade/uninstall을 기록한다. 이후 control interface에서 Compose와 Helm을 같은 환경으로 가장하지 않고 backend/profile로 명시한다.
 
-**완료 기준:** 최소 한 disposable cluster에서 chart 설치/검증/제거, Redis failover 및 MariaDB 복구 acceptance를 실제 수행. Redis failover/PVC/CNI acceptance는 통과했으며 MariaDB 복구가 남았다. PVC 보존/삭제와 bootstrap 확인을 시나리오마다 검증. 검증되지 않은 CNI/StorageClass/provider 조합은 지원이라고 표시하지 않는다.
+**완료 기준:** 최소 한 disposable cluster에서 chart 설치/검증/제거, Redis failover 및 MariaDB 복구 acceptance를 실제 수행. Redis failover/PVC/CNI와 MariaDB bootstrap·복제·Pod/PVC 재합류·전체 정전 복구를 disposable 환경에서 확인했다. Kubernetes node failure와 검증되지 않은 CNI/StorageClass/provider 조합은 지원이라고 표시하지 않는다.
 
 ### 5. 시나리오형 운영 훈련과 결과 공유
 
@@ -122,9 +122,9 @@ DB Lab의 최종 목표는 **개발 PC 한 대에서 시작할 수 있고, 필�
 
 ## 지금 착수할 우선순위
 
-1. **가장 먼저:** 공통 benchmark adapter가 연결된 Redis/MariaDB/Kafka/ES7에서 동일 조건 반복 측정을 하고 산포·데이터 상태·실행 중 host load를 같이 남긴다. ES9의 시끄러운 3회 결과만으로 성능 비교를 승인하지 않는다.
-2. **두 번째:** disposable 별도 Linux SSH 대상에서 source 배포 후 DB `init/doctor/up/verify/collect`, 실패 중단과 재개 경계를 검증한다.
-3. **세 번째:** disposable Kubernetes에서 MariaDB 복구/보존 경로를 acceptance하고 Redis acceptance와 같은 수준으로 CNI/PVC/정리 경계를 기록한다.
+1. **가장 먼저:** disposable 별도 Linux SSH 대상에서 source 배포 후 DB `init/doctor/up/verify/collect`, 실패 중단과 재개 경계를 검증한다.
+2. **완료 (2026-09-27):** disposable rootless Podman kind에서 MariaDB 전체 정전 복구/보존 경로를 acceptance했다. Kubernetes node failure와 다른 CNI/StorageClass/provider 조합은 별도 지원 주장에 포함하지 않는다.
+3. **세 번째:** 반복 benchmark 결과는 산포와 metadata 한계가 있어 기준선으로 쓰지 않는다. 안정된 성능 기준이 필요할 때 격리 부하와 source/image/resource 식별을 갖춘 재측정을 계획한다.
 4. **네 번째:** 확인된 command/runtime capability와 executable gates를 문서 및 benchmark report 수준과 동기화한다.
 5. **마지막:** 여러 호스트/cluster orchestration, 자동 capacity recommendation, 공통 dashboard는 실제 반복 사용 사례와 데이터가 생긴 뒤 결정한다.
 
@@ -136,9 +136,9 @@ DB Lab의 최종 목표는 **개발 PC 한 대에서 시작할 수 있고, 필�
 - `./all.sh --dry-run up es9`에서 ES9 plan만 생성했다. 고정 `ansible-core==2.21.4`를 임시 virtualenv에 설치해 실제 Ansible playbook fixture 10개와 ES9 `health`의 `--check` 계획 경로를 통과했다. `tests/test_ansible_control.py` 87개도 통과했다. SSH 대상·DB·HA 실기동은 증명하지 않는다.
 - `scripts/test-helm.sh`는 Helm 4.1.1에서 7개 프로필 lint/render, beta 별도 release contract, 6개 unsafe value 거부를 통과했다. Helm 4에서 제거된 `helm list --all` 인수는 Helm 3 help를 확인해 조건부로 넣도록 고쳤다.
 - 기존 업무 context `k3d-board-msa`를 건드리지 않고 전용 kind v1.31.2 단일 노드 클러스터에서 Redis+Sentinel 설치, 6 PVC, CNI NetworkPolicy, 복제 ACK, PVC 유지 재생성, primary 장애 전환과 복귀를 실제 확인했다. 상세 환경과 명시적 제외 범위는 [런타임 수용 결과](RUNTIME-ACCEPTANCE.md)에 기록했다.
-- MariaDB Helm 이미지 경로가 pull 불가하고 init Secret이 MariaDB 32자 제한보다 길게 생성되는 문제를 수정했다. 추가 실기동에서 `runAsGroup: 1001`이 이미지의 설정 파일 수정을 막는 점도 재현해 제거했다. 이제 Pod 준비 검사는 configured replica 수와 실제 `wsrep_cluster_size` 일치를 요구한다. node 0은 Primary/ready에 도달했지만 다른 두 노드가 primary view에 합류하지 않아 acceptance는 계속 미통과다. 시험 클러스터/PVC는 삭제했다. 자세한 한계는 [런타임 수용 결과](RUNTIME-ACCEPTANCE.md)에 기록했다.
+- MariaDB Helm 이미지 경로가 pull 불가하고 init Secret이 MariaDB 32자 제한보다 길게 생성되는 문제를 수정했다. 추가 실기동에서 `runAsGroup: 1001`이 이미지의 설정 파일 수정을 막는 점도 재현해 제거했다. 당시 node 0은 Primary/ready에 도달했지만 joiner 둘은 primary view에 합류하지 못했다. 이후 2026-09-27에 Galera group-name 길이 제한을 원인으로 확인하고 fresh bootstrap·복제·동일 PVC Pod 재합류를 통과했다. 당시 실패 기록과 최신 범위는 [런타임 수용 결과](RUNTIME-ACCEPTANCE.md)에 기록했다.
 
-공통 benchmark report/compare와 반복 분산 계산, Ansible opt-in bootstrap/artifact 배치, 격리 Redis Helm acceptance가 구현·검증됐다. 남은 핵심은 나머지 DB의 실제 반복 실행/산포 근거, 별도 Linux 대상의 Ansible lifecycle acceptance, MariaDB Kubernetes 복구 acceptance다.
+공통 benchmark report/compare와 반복 분산 계산, 다섯 대상의 격리 반복 실측, Ansible opt-in bootstrap/artifact 배치, 격리 Redis Helm acceptance, MariaDB 전체 정전 복구 acceptance가 확인됐다. 남은 핵심은 별도 Linux 대상의 Ansible lifecycle acceptance다. 반복 측정 결과는 안정된 성능 기준선이 아니다.
 
 ### 공통 benchmark 실행 명령: 2026-09-24
 
@@ -292,13 +292,21 @@ DB Lab의 최종 목표는 **개발 PC 한 대에서 시작할 수 있고, 필�
 - To make nested Podman usable, the fixture disables child cgroups and inherits the disposable outer cgroup. The test proves lifecycle behavior but not resource-limit enforcement and is not acceptance on a Debian VM or external host. Run that separately before extending the support claim.
 - Bootstrap fixture tests (14), Redis provider tests (2), two focused argv/provider regressions, shell syntax, and whitespace checks passed. Existing host services were left running.
 
+## 진행 기록: 2026-09-27
+
+### MariaDB Helm Galera group-name fix and recovery acceptance
+
+- Galera GMCAST의 `group_name` wire field는 32 bytes인데, 긴 Helm release 이름으로 34-byte cluster name을 만들고 있었다. chart helper가 긴 이름을 8자리 SHA-256 suffix로 32자 이내에 제한하도록 수정했다.
+- 4-node kind v1.31.2 runtime에서 세 MariaDB 노드 `Primary/Synced`, cluster_size 3, synthetic row 복제를 확인했다. node 2 Pod를 재생성한 뒤 같은 PVC identity와 데이터를 보존하며 재합류했다. receipts: `reports/all-20260927T151943Z-833731.json` 및 `reports/all-20260927T151944Z-833909.json`. 이 실행은 host inotify limit을 128에서 1024로 임시 상향한 뒤 원복했다.
+- `scripts/test-helm-mariadb-runtime.sh`에 순차 전체 종료, read-only UUID/seqno/`safe_to_bootstrap` 검토, 확인된 후보로 재기동, 데이터/PVC identity 검사를 추가했다. 첫 재현에서 status 파이프의 awk 조기 종료(SIGPIPE)와 Helm 사후 조회의 기본 kubeconfig 사용을 찾아 수정했다. 최종 rootless Podman 5.8.7 / kind v1.31.2 4-node run은 host inotify limit 128을 바꾸지 않고 fresh bootstrap, replicated row, same-PVC Pod rejoin, full-cluster shutdown/recovery, UUID/data/PVC 보존, recovery flag seal을 모두 통과했다. receipts는 `reports/all-20260927T161724Z-1117725.json`, `reports/all-20260927T161725Z-1117839.json`, `reports/all-20260927T162235Z-1148191.json`이다. disposable kind와 kubeconfig는 제거했고 Docker kind의 `cilium`은 보존했다.
+
 ## 다음 수행 항목
 
 이 목록은 구현/fixture 검증과 실제 런타임 acceptance를 구분한다. 아래 runtime 항목이 증거를 남기기 전까지 이 로드맵을 완료로 표시하지 않는다.
 
-1. **DB별 반복 벤치마크 실측:** 이미 구현된 `./all.sh benchmark <db> --seconds 30 --repeat 3`을 준비된 격리 lab에서 실행한다. ES7, Redis, MariaDB, Kafka와 ES9 각각 새 `live_database` report 세 개, 동일 workload/image/resource 조건, dataset postcondition 및 full-window host observation을 확인한다. 비교 JSON의 `performance_comparison_ready`와 blockers를 검토하고, host 부하가 비교를 무효화하면 결과를 성능 기준선으로 승격하지 않는다. 현재까지 반복 runner는 fixture/dry-run으로만 확인했다.
+1. **DB별 반복 벤치마크 실측 (2026-09-27 완료):** ES7, ES9, Redis, Kafka, MariaDB 모두 격리 provider/project에서 30초 반복 3회씩 실행했고 comparator readiness gates와 dataset postcondition을 검토했다. ES7 p95 CV 80.11%, ES9 p95 CV 50.27%, Redis p99 CV 36.9% 및 한 run의 77 skipped dispatch로 성능 기준선은 아니다. Kafka p95 ack CV 15.25% / host CPU busy 52.7–57.5%, MariaDB TPS CV 6.13%·p95 CV 18.49%였지만 source revision 및 container limits가 누락됐다. 어떤 결과도 capacity/SLO 주장으로 승격하지 않는다. 세부 raw reports와 comparators는 각 lab `reports/benchmarks/` 및 로컬 git-ignored root `reports/benchmarks/`에 있으며 실제 provider/runtime는 [런타임 인수 결과](RUNTIME-ACCEPTANCE.md)에 기록했다.
 2. **별도 원격 Linux의 Ansible 인수:** disposable VM 또는 사용자가 소유한 격리 Linux host를 대상으로 실제 SSH Ansible을 실행한다. source artifact 배포, 승인된 prerequisite, `init → doctor → up → verify → collect`, 두 번째 멱등 실행, 실패 시 중단과 명시적 재개, report/secret 경계를 확인한다. Debian 12 컨테이너 acceptance와 loopback SSH fixture를 외부 host 증거로 대체하지 않는다.
-3. **MariaDB Helm Galera acceptance:** joiner의 `failed to reach primary view` 원인을 추가 계측으로 특정하고, 새 disposable kind에서 3노드 `Primary/Synced`·cluster size 3, 합성 row 복제, Pod 재생성 후 동일 PVC/data 재합류를 모두 확인한다. 이후 계획된 full-cluster recovery/보존 절차도 격리 PVC에서 별도 확인한다. 기존 시도들은 모두 실패했으며 현재 원인은 미확인 상태다.
+3. **MariaDB Helm recovery acceptance (2026-09-27 완료):** Galera group name 32-byte 한도가 원인이었고 chart fix 뒤 rootless Podman kind에서 fresh bootstrap·3노드 복제·Pod/PVC 재합류·순차 전체 종료 후 안전 후보 복구·UUID/데이터/PVC 보존·flag seal이 통과했다. Kubernetes node failure, 다른 provider/StorageClass, production 복구는 미검증이다.
 4. **최종 검토와 publication:** 위 runtime 결과를 `docs/RUNTIME-ACCEPTANCE.md`, 이 로드맵, 해당 lab/Ansible 사용 문서와 대조한다. 현재 dirty worktree의 기존 변경과 이번 로드맵 변경을 먼저 구분하고, 논리 단위별 검토·커밋·푸시를 수행한다. 현재 문서화 시점에는 commit/push하지 않았다.
 
 다음 재개 시 먼저 host/context/resource 상태와 선택한 disposable target의 소유권을 확인한다. 실행 증거가 준비되지 않았으면 항목을 미완료로 남기고 기존 데이터를 대상으로 시험하지 않는다.

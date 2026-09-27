@@ -6,7 +6,7 @@
 
 각 장애 시나리오의 dev 재현과 staging/prod 읽기 전용 진단 명령은 [시나리오별 대응 쿼리](../docs/SCENARIO-RESPONSE-QUERIES.md#kafka-failure-scenarios)를 참고하세요.
 
-> **검증 범위:** 제작 환경에서 75개 단위·모의 테스트 및 Bash/YAML 검사가 통과했습니다. 이 환경에는 Podman/Docker가 없어 이미지 다운로드, 실제 Kafka 기동·장애 전환, UI 접속은 실행하지 못했습니다. 실제 실행 검증용 `smoke`와 `scripts/test-live.sh`가 포함되어 있습니다. 자세한 내역은 `reports/VALIDATION.md`에 있습니다.
+> **검증 범위 (2026-09-27):** 격리 Podman 5.8.7 / Confluent Platform 7.9.0 ZooKeeper mode에서 3 broker + 3 ZooKeeper 기동과 30초 bounded producer benchmark 3회를 실행했습니다. 각 run의 30,000건 전달, topic offset span과 삭제 postcondition이 통과했습니다. p95 ack latency CV 15.25%, 실행 중 host CPU busy 평균 52.7–57.5%이고 archive에 source revision도 없어 성능 기준선은 아닙니다. 이번 시험은 장애 전환, KRaft, Docker provider, UI를 검증하지 않았습니다. 자세한 내역은 [런타임 인수 기록](../docs/RUNTIME-ACCEPTANCE.md#2026-09-27-isolated-kafka-repeat-benchmark)에 있으며 raw report/comparator는 로컬 git-ignored `kafka-lab/reports/benchmarks/`와 `reports/benchmarks/kafka-comparison-2e7ac2d246f5.json`에 보존했습니다. `reports/VALIDATION.md`는 별도의 static 검사 기록입니다.
 
 ## 2026-09-21 실행 수정
 

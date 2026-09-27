@@ -4,7 +4,7 @@
 
 > **2026-09-17 수정본** — [수정 내역·검증 결과](docs/FIXES-VALIDATION.md)를 먼저 확인하세요.
 > 쉘 9개/Python 14개 문법 검사와 호스트 테스트 182개는 통과했습니다.
-> **실제 MariaDB/Galera 컨테이너 검사는 런타임 미설치로 BLOCKED이며 완료했다고 주장하지 않습니다.**
+> **런타임 경계 (2026-09-27):** 격리 Podman 5.8.7 / MariaDB Galera 11.8.9에서 3노드 `Primary/Synced`, cluster_size=3과 synthetic-transfer benchmark 반복 3회를 확인했습니다. 임시 데이터 불변조건·원본 미변경·cleanup을 통과했으며 p95 latency CV 18.49%, source revision과 container limits가 없어 성능 기준선은 아닙니다. 세부 범위는 [런타임 인수 기록](../docs/RUNTIME-ACCEPTANCE.md#2026-09-27-isolated-mariadb-repeat-benchmark)을 보세요. Failover/rebuild/복구 acceptance는 별도 수행해야 합니다.
 > 수정 코드 적용: 기존 `.env`·`.state`·볼륨을 유지하고 `bash lab.sh down → build → up` 순서로 실행하세요.
 > 호스트 검사는 `bash tests/validate.sh`, 실제 실습 검사는 `RUN_DISRUPTIVE_TESTS=1 bash tests/run-real.sh`입니다.
 > 실제 실습 검사는 합성 데이터 교체·노드 중단/재구축을 포함하므로 폐기 가능한 실습에서만 실행하세요.
@@ -65,7 +65,7 @@ MariaDB를 **SQL, InnoDB 내부 동작, 복제, 장애 전환, 재동기화, 전
 
 **용어 구분:** InnoDB는 스토리지 엔진입니다. **MySQL InnoDB Cluster**는 MySQL Group Replication + MySQL Shell + MySQL Router를 사용하는 MySQL 제품 구성입니다. 여기서는 MariaDB에 맞는 **Galera Cluster**를 구축합니다. MySQL InnoDB Cluster 자체를 설치하거나 두 제품이 같은 구현이라고 가정하지 않습니다.
 
-> 이 패키지에서 수행한 검증과 아직 수행하지 못한 검증은 `docs/VALIDATION.md`에 구분했습니다. 제작 환경에는 Podman/Docker와 MariaDB 실행 파일이 없어 실제 이미지 빌드·SST·장애 전환의 종단 간 실행은 하지 못했습니다. 실행 결과를 조작한 모의 DB가 아니라 실제 MariaDB/Galera를 시작하는 구성입니다. 첫 실행 후 `./lab.sh verify`로 본인 호스트에서 확인하세요.
+> `docs/VALIDATION.md`는 과거 정적 검증 기록입니다. 위의 2026-09-27 runtime 결과는 실제 disposable Podman 환경에서 새로 수행한 범위만 추가로 입증합니다. 현재 호스트에서 시작할 때는 먼저 `./lab.sh doctor`와 `./lab.sh verify`로 조건을 확인하세요.
 
 ## 1. 구성
 
@@ -290,7 +290,7 @@ API 로그 JSON에는 기본 256바이트 payload를 추가합니다. 실제 데
 ./lab.sh recover --execute --confirm-recovery
 ```
 
-각 `load` 실행은 원본 계정 테이블을 복사한 run별 임시 계정/송금 테이블에서만 workload를 실행합니다. 정렬한 계정 ID/잔액의 SHA-256 fingerprint를 기록하고 실행 후 복사 데이터가 동일한지와 임시 테이블 제거를 확인합니다. 확인하지 못하면 report를 FAIL로 남기고 명령도 실패합니다. 비밀 제외 JSON은 `reports/benchmarks/`에 저장됩니다. 같은 host, 자원 제한, workload 설정, 데이터 fingerprint로 반복한 뒤 공통 비교기를 사용하세요. 이 보고서는 부하 측정 증거이지 production capacity 보증은 아닙니다.
+각 `load` 실행은 원본 계정 테이블을 복사한 run별 임시 계정/송금 테이블에서만 workload를 실행합니다. workload가 임시 계정 잔액을 이동하므로 종료 뒤에는 임시 계정 row count와 총 잔액을 확인하고, 원본 계정 fingerprint가 변하지 않았는지와 임시 테이블 제거를 검사합니다. 확인하지 못하면 report를 FAIL로 남기고 명령도 실패합니다. 비밀 제외 JSON은 `reports/benchmarks/`에 저장됩니다. 같은 host, 자원 제한, workload 설정, 데이터 fingerprint로 반복한 뒤 공통 비교기를 사용하세요. 이 보고서는 부하 측정 증거이지 production capacity 보증은 아닙니다.
 
 `recover`는 매번 실제 `--wsrep-recover`를 다시 수행합니다. 과거 보고서의 숫자를 그대로 신뢰해 bootstrap하지 않습니다. UUID 불일치, 일부 노드 상태 미확인, 음수 위치, 실행 중/paused 노드는 거부합니다. 복구 로그는 `reports/recovery.json`에 남습니다. `--wsrep-recover`는 InnoDB 복구를 수행할 수 있어 **완전한 읽기 전용 작업은 아닙니다.** 중요한 데이터를 대상으로는 먼저 디스크 복사본을 확보해야 합니다.
 

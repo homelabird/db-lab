@@ -4,6 +4,8 @@
 
 운영 조회/대응 학습은 [시나리오별 dev/staging/prod 대응 쿼리](../docs/SCENARIO-RESPONSE-QUERIES.md)의 Elasticsearch 절을 참고하세요.
 
+> **2026-09-27 런타임 범위:** 격리 Podman 5.8.7 / Elasticsearch 7.17.29 5노드 green cluster에서 30초 bulk benchmark 3회가 3,000건 색인·count·temporary index cleanup을 통과했습니다. p95 batch latency CV 80.11%라 성능 기준선은 아닙니다. search latency와 장애 복구 acceptance는 별도이며, 자세한 수치는 [런타임 인수 기록](../docs/RUNTIME-ACCEPTANCE.md#2026-09-27-isolated-es7-repeat-benchmark)에 있습니다.
+
 ## 시작하기
 
 Linux/WSL2, Bash, Python 3.9+, curl, Docker Compose 또는 Podman Compose가 필요합니다.

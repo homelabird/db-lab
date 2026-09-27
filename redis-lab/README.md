@@ -4,7 +4,7 @@ Redis 기본 동작과 Sentinel 장애조치에 **지속 부하, 병목, 메모�
 
 각 perf scenario의 dev 재현과 staging/prod Redis 조회 명령은 [시나리오별 대응 쿼리](../docs/SCENARIO-RESPONSE-QUERIES.md#redis-perf-scenario-대응)를 참고하세요.
 
-> **검증 경계:** 제작 환경의 170개 정적·단위·회귀·로컬 TCP 검사는 통과했습니다. TCP 검사는 작은 테스트 서버/echo 서버를 사용합니다. 실제 Redis 서버와 Podman은 실행기가 없어 **BLOCKED(미검증)**입니다. `TESTING.md`와 `tests/evidence/`에 실제 실행 결과를 구분해 두었습니다. 이 압축파일은 소스·설정·교재이며 컨테이너 이미지나 사전 생성 데이터셋을 포함하지 않습니다.
+> **검증 경계 (2026-09-27):** 격리 Podman 5.8.7 / Redis 7.4.11 실행에서 3 Redis + 3 Sentinel topology, authenticated write/read, `WAIT 2` ACK와 30초 mixed-load 반복 3회를 확인했습니다. 세부 결과와 한계는 [런타임 인수 기록](../docs/RUNTIME-ACCEPTANCE.md#2026-09-27-isolated-redis-repeat-benchmark)에 있습니다. 원시 export와 comparator는 각각 local git-ignored `redis-lab/output/ops-20260927T133838-44638/` 및 `reports/benchmarks/redis-comparison-5fea6a8db28d.json`에 보존했습니다. p99 산포와 scheduler skip이 있어 성능 기준선은 아니며 failover/PVC 복구는 이번 시험 범위에 없습니다. `TESTING.md`와 `tests/evidence/`는 별도의 과거 검증 기록입니다. 이 압축파일은 소스·설정·교재이며 컨테이너 이미지나 사전 생성 데이터셋을 포함하지 않습니다.
 
 ## 2026-09-21 실행 수정
 

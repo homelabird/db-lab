@@ -1,6 +1,6 @@
 # db-lab Helm chart 0.2.0 — 격리된 실습용
 
-이 chart는 Compose 실습의 모든 복구 기능을 이식한 제품이 아닙니다. 2026-09-24에 Helm lint/render와 disposable kind v1.31.2에서 Redis failover, MariaDB 3노드 bootstrap/복제/PVC 재합류를 acceptance했습니다. MariaDB 전체 클러스터 정전 후 복구, 다른 DB와 provider 조합은 검증되지 않았습니다. 사용자 데이터나 운영 자격 증명을 넣지 마세요. 실행 범위는 [`../docs/RUNTIME-ACCEPTANCE.md`](../docs/RUNTIME-ACCEPTANCE.md)를 참고하세요.
+이 chart는 Compose 실습의 모든 복구 기능을 이식한 제품이 아닙니다. 2026-09-27 disposable rootless Podman kind v1.31.2 4-node 환경에서 MariaDB 3노드 bootstrap·Galera 복제·동일 PVC Pod 재합류·순차 전체 정전 복구 acceptance를 통과했습니다. 32-byte Galera group name 제한보다 긴 이름을 원인으로 찾아 chart helper에서 제한했습니다. 전체 정전 후 읽기 전용 상태를 비교하고 확인된 후보로 복구한 시험에서 UUID·행·PVC identity와 flag 봉인을 확인했습니다. Kubernetes node failure, 다른 provider/StorageClass, 운영 복구는 미검증입니다. 사용자 데이터나 운영 자격 증명을 넣지 마세요. 실행 범위와 최신 결과는 [`../docs/RUNTIME-ACCEPTANCE.md`](../docs/RUNTIME-ACCEPTANCE.md)를 참고하세요.
 
 Redis failover/DB 복구 시나리오의 읽기 전용 대응 쿼리는 [시나리오별 dev/staging/prod 대응 가이드](../docs/SCENARIO-RESPONSE-QUERIES.md)를 참고하세요.
 
@@ -65,7 +65,7 @@ NetworkPolicy 사용 시 같은 namespace의 클라이언트 Pod에 `db-lab/clie
 
 영속 볼륨은 `/bitnami/mariadb`, 데이터 디렉터리는 이미지 계약상 `/bitnami/mariadb/data`입니다. 실제 선택한 이미지에서 `SELECT @@datadir`와 mount를 먼저 확인하세요. 최초 fresh-bootstrap 또는 명시적 recovery에서는 선택된 bootstrap 노드가 SQL 상태 `Primary/Synced`가 될 때까지 다른 ordinal의 initContainer가 기다린 뒤 join합니다. bootstrap/recovery가 꺼진 평상시 시작은 이 gate를 건너뛰며 DB 자동 복구를 시도하지 않습니다.
 
-전체 중단 후에는 **모든 노드의 UUID/seqno 및 recover 결과를 비교하고 최신의 안전한 후보를 결정**해야 합니다. 이 자동 판정은 구현하지 않았습니다. 사전 검토 후에만 `mariadb.recovery.bootstrapOrdinal=<0|1|2>`와 `mariadb.recovery.confirmed=true`를 사용합니다. 대상 데이터가 존재하고 해당 파일의 `safe_to_bootstrap: 1` 조건이 있어야 하며, 스크립트는 값을 강제로 변경하지 않습니다. 노드 번호만으로 최신 데이터를 판단하지 마세요. 다른 노드의 살아 있는 Primary와 충돌하는 독립 cluster를 만들지 않도록 먼저 모두 확인해야 합니다.
+전체 중단 후에는 **모든 노드의 UUID/seqno 및 recover 결과를 비교하고 최신의 안전한 후보를 결정**해야 합니다. 운영용 자동 판정은 구현하지 않았습니다. acceptance script는 disposable Podman kind에서 UUID/seqno/`safe_to_bootstrap`를 읽기 전용으로 비교하고 확인된 후보로 복구하는 경로를 통과했습니다. 운영에서는 이 결과를 자동 판단 기능으로 간주하지 말고 실제 노드 상태를 직접 검토한 뒤 `mariadb.recovery.bootstrapOrdinal=<0|1|2>`와 `mariadb.recovery.confirmed=true`를 사용합니다. 대상 데이터가 존재하고 해당 파일의 `safe_to_bootstrap: 1` 조건이 있어야 하며, 스크립트는 값을 강제로 변경하지 않습니다. 노드 번호만으로 최신 데이터를 판단하지 마세요. 다른 노드의 살아 있는 Primary와 충돌하는 독립 cluster를 만들지 않도록 먼저 모두 확인해야 합니다.
 
 기본 MariaDB 이미지는 `bitnamilegacy/mariadb-galera`의 immutable digest로 고정했습니다. 기존 `bitnami/mariadb-galera:11.4.5`는 현재 pull되지 않았고, 기본 legacy 이미지는 실제 pull 및 UID 1001/entrypoint 경로를 확인했지만 upstream에서 보안 업데이트되는 이미지로 간주하면 안 됩니다. 실습용 격리 클러스터에서만 사용하고, 다른 이미지로 바꿀 때는 entrypoint, UID/GID, 데이터 경로와 Galera SST를 먼저 검증하세요. `mariadb.image`는 Helm values로 재정의할 수 있습니다.
 
