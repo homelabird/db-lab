@@ -7,6 +7,13 @@
 {{- printf "%s-%s" ($name | trunc 31 | trimSuffix "-") ($name | sha256sum | trunc 8) -}}
 {{- else -}}{{ $name }}{{- end -}}
 {{- end -}}
+{{- define "db-lab.mariadbClusterName" -}}
+{{/* Galera GMCAST serializes group_name in a fixed 32-byte field. */}}
+{{- $name := printf "%s-mariadb" (include "db-lab.fullname" .) -}}
+{{- if gt (len $name) 32 -}}
+{{- printf "%s-%s" ($name | trunc 23 | trimSuffix "-") ($name | sha256sum | trunc 8) -}}
+{{- else -}}{{ $name }}{{- end -}}
+{{- end -}}
 {{- define "db-lab.labels" -}}
 app.kubernetes.io/name: {{ include "db-lab.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}

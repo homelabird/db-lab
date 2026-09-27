@@ -143,7 +143,7 @@ spec:
             - name: MARIADB_GALERA_MARIABACKUP_USER
               value: "mariabackup"
             - name: MARIADB_GALERA_CLUSTER_NAME
-              value: "{{ include "db-lab.fullname" . }}-mariadb"
+              value: {{ include "db-lab.mariadbClusterName" . | quote }}
             - name: EXPECTED_CLUSTER_SIZE
               value: {{ .Values.mariadb.replicas | quote }}
             - name: GALERA_PEERS
