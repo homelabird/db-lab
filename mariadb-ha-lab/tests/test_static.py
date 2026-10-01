@@ -323,7 +323,9 @@ class ComposeTests(unittest.TestCase):
         env=self.cfg['services']['dashboard'].get('environment',{})
         self.assertNotIn('MARIADB_ROOT_PASSWORD',env)
     def test_galera_network_allows_intercontainer_traffic(self):
-        opts=self.cfg['networks']['labnet']['driver_opts']
-        self.assertEqual(opts['com.docker.network.bridge.enable_icc'],'true')
+        network=self.cfg['networks']['labnet']
+        self.assertEqual(network['driver'],'bridge')
+        opts=network.get('driver_opts',{})
+        self.assertEqual(str(opts.get('com.docker.network.bridge.enable_icc','true')).lower(),'true')
 
 if __name__=='__main__': unittest.main(verbosity=2)
