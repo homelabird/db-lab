@@ -15,7 +15,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 DIRS = {'elasticsearch':'elasticsearch','elasticsearch9':'elasticsearch-9','kafka':'kafka-lab','mariadb':'mariadb-ha-lab','redis':'redis-lab','mvp':'mvp-lab'}
@@ -161,33 +160,28 @@ def preflight(projects):
     return {'kind':'preflight','checked_at':now(),'ok':not errors,'projects':projects,'errors':errors,'warnings':warnings,'published_ports':plans,'resources':resources}
 
 def health(projects):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib/es-lab'))
+    from lablib_core import APIError, ESClient
     checks=[]
     for project in projects:
         start=time.monotonic();row={'project':project,'ready':False}
         try:
-            if project=='mvp':
-                data=settings(project); url='http://127.0.0.1:'+data.get('API_PORT','18090')+'/api/diagnostics'
-                opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
-                with opener.open(url,timeout=8) as response: info=json.load(response)
-                row['ready']=info.get('dependencies_reachable') is True
-                row['details']={'dependencies_reachable':info.get('dependencies_reachable')}
-                if not row['ready']: row['reason']='one or more MVP dependencies are unavailable'
-                row['elapsed_seconds']=round(time.monotonic()-start,3);checks.append(row);continue
             if not (ROOT/DIRS[project]/'.env').is_file():raise ValueError('not initialized')
             if project in ES_LIKE:
-                data=settings(project);url=data.get('ES_URL','http://127.0.0.1:9200').rstrip('/')
-                opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
-                with opener.open(url+'/_cluster/health',timeout=8) as response: info=json.load(response)
-                row['ready']=(info.get('cluster_name')==data.get('LAB_CLUSTER_NAME','cerebro-shard-lab') and info.get('status')=='green' and info.get('number_of_nodes',0)>=5 and not info.get('timed_out'))
+                data=settings(project)
+                info=ESClient(timeout=8,settings=data).request('GET','/_cluster/health')
+                if not isinstance(info,dict):raise ValueError('invalid Elasticsearch health response')
+                row['ready']=(info.get('cluster_name')==data.get('LAB_CLUSTER_NAME','cerebro-shard-lab') and info.get('status')=='green' and type(info.get('number_of_nodes')) is int and info['number_of_nodes']>=5 and info.get('timed_out') is False)
                 row['details']={k:info.get(k) for k in ('cluster_name','status','number_of_nodes','unassigned_shards')}
             else:
-                args=['bash',str(ROOT/DIRS[project]/'lab.sh'),'health']
-                if project!='kafka':args.append('--json')
-                p=subprocess.run(args,cwd=ROOT/DIRS[project],capture_output=True,text=True,timeout=45,
+                args=['bash',str(ROOT/DIRS[project]/'lab.sh'),'diagnose' if project=='mvp' else 'health']
+                if project not in ('kafka','mvp'):args.append('--json')
+                p=subprocess.run(args,cwd=ROOT/DIRS[project],capture_output=True,text=True,timeout=120 if project=='mvp' else 45,
                                  env=dict(os.environ,STARTUP_TIMEOUT='20'))
                 row['ready']=p.returncode==0;row['exit_code']=p.returncode
                 # Native output may contain data or credentials; do not mirror it into receipts.
                 if p.returncode:row['reason']='native health probe failed; inspect the project health command'
+        except APIError as exc:row['reason']=f'Elasticsearch health request failed (HTTP {exc.status})'
         except subprocess.TimeoutExpired:row['reason']='health probe timed out'
         except (OSError,ValueError) as exc:row['reason']=str(exc)[:200]
         row['elapsed_seconds']=round(time.monotonic()-start,3);checks.append(row)

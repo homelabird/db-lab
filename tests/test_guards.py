@@ -10,7 +10,9 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -46,7 +48,7 @@ class ControlTests(unittest.TestCase):
         self.assertTrue(any('ES_ALLOW_PUBLIC_BIND' in x for x in data['errors']))
     def test_uninitialized_health_never_starts_children(self):
         with tempfile.TemporaryDirectory() as tmp,patch.object(control,'ROOT',Path(tmp)),patch.object(control.subprocess,'run') as run:
-            result=control.health(['redis','mariadb'])
+            result=control.health(['redis','mariadb','mvp'])
         self.assertFalse(result['ready']);run.assert_not_called()
     def test_health_failure_does_not_echo_native_secrets(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -54,6 +56,53 @@ class ControlTests(unittest.TestCase):
             with patch.object(control,'ROOT',root),patch.object(control.subprocess,'run',return_value=subprocess.CompletedProcess([],1,'secret-password','secret-stderr')):
                 result=control.health(['redis'])
         self.assertNotIn('secret-password',json.dumps(result));self.assertFalse(result['ready'])
+    def test_mvp_health_delegates_to_guarded_diagnostics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/'mvp-lab').mkdir();(root/'mvp-lab/.env').touch()
+            for code in (0,1):
+                with self.subTest(code=code),patch.object(control,'ROOT',root),patch.object(control.subprocess,'run',return_value=subprocess.CompletedProcess([],code,'private-output','private-stderr')) as run:
+                    result=control.health(['mvp'])
+                    self.assertEqual(result['ready'],code==0)
+                    self.assertEqual(run.call_args.args[0],['bash',str(root/'mvp-lab/lab.sh'),'diagnose'])
+                    self.assertEqual(run.call_args.kwargs['timeout'],120)
+                    self.assertNotIn('private-',json.dumps(result))
+    def test_es_health_uses_auth_and_rejects_invalid_or_redirected_results(self):
+        reply={'cluster_name':'audit-es','status':'green','number_of_nodes':5,'timed_out':False}
+        observed=[];redirect=False
+        authorization='Basic '+base64.b64encode(b'elastic:fixture-password').decode()
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_GET(self):
+                observed.append(self.path)
+                if self.headers.get('Authorization')!=authorization:
+                    self.send_response(401);self.end_headers();self.wfile.write(b'fixture-password');return
+                if redirect:
+                    self.send_response(302);self.send_header('Location','/other-target');self.end_headers();return
+                raw=json.dumps(reply).encode()
+                self.send_response(200);self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
+        server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'http_proxy':'http://127.0.0.1:1','no_proxy':''},clear=True):
+                root=Path(tmp)
+                for project in control.ES_LIKE:
+                    directory=root/control.DIRS[project];directory.mkdir()
+                    config=f'ES_URL=http://127.0.0.1:{server.server_port}\nLAB_CLUSTER_NAME=audit-es\nXPACK_SECURITY_ENABLED=true\nELASTIC_PASSWORD=fixture-password\n'
+                    (directory/'.env').write_text(config)
+                    with self.subTest(project=project),patch.object(control,'ROOT',root):
+                        self.assertTrue(control.health([project])['ready'])
+                        for field,value in (('timed_out',True),('number_of_nodes','5'),('cluster_name','foreign'),('status','yellow')):
+                            old=reply[field];reply[field]=value
+                            self.assertFalse(control.health([project])['ready']);reply[field]=old
+                        redirect=True;observed.clear()
+                        self.assertFalse(control.health([project])['ready'])
+                        self.assertEqual(observed,['/_cluster/health']);redirect=False
+                        (directory/'.env').write_text(config.replace('true','false'))
+                        result=control.health([project]);self.assertFalse(result['ready'])
+                        self.assertIn('401',result['checks'][0]['reason'])
+                        self.assertNotIn('fixture-password',json.dumps(result))
+        finally:
+            server.shutdown();server.server_close();thread.join(timeout=2)
     def test_receipts_are_private_and_not_health_claims(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'run.json';control.record(path,'up','__start__',0);control.record(path,'up','kafka',7);control.record(path,'up','__finish__',1)

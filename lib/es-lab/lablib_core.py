@@ -25,6 +25,11 @@ class APIError(RuntimeError):
         super().__init__(f'HTTP {status} {method} {path}: {detail}')
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None  # Never forward lab credentials or writes to another endpoint.
+
+
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -34,8 +39,9 @@ def write_json(path, value):
 
 
 class ESClient:
-    def __init__(self, url=None, timeout=120):
-        self.url = (url or os.getenv('ES_URL', 'http://127.0.0.1:9200')).rstrip('/')
+    def __init__(self, url=None, timeout=120, *, settings=None):
+        self.settings = os.environ if settings is None else settings
+        self.url = (url or self.settings.get('ES_URL', 'http://127.0.0.1:9200')).rstrip('/')
         if not self.url.startswith(('http://', 'https://')):
             raise ValueError('ES_URL must begin with http:// or https://')
         self.timeout = timeout
@@ -43,15 +49,15 @@ class ESClient:
     def request(self, method, path, body=None, content_type='application/json', timeout=None):
         data = body if isinstance(body, bytes) else (compact(body) if body is not None else None)
         headers = {'Content-Type': content_type}
-        if os.getenv('XPACK_SECURITY_ENABLED', 'false').lower() in ('true', '1', 'yes'):
+        if self.settings.get('XPACK_SECURITY_ENABLED', 'false').lower() in ('true', '1', 'yes'):
             import base64
-            user = os.getenv('ELASTIC_USERNAME', 'elastic')
-            password = os.getenv('ELASTIC_PASSWORD', '')
+            user = self.settings.get('ELASTIC_USERNAME', 'elastic')
+            password = self.settings.get('ELASTIC_PASSWORD', '')
             token = base64.b64encode(f'{user}:{password}'.encode('ascii')).decode('ascii')
             headers['Authorization'] = 'Basic ' + token
         request = urllib.request.Request(self.url + path, data=data, method=method, headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=timeout or self.timeout) as response:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()).open(request, timeout=timeout or self.timeout) as response:
                 raw = response.read()
                 if not raw:
                     return None
@@ -65,7 +71,7 @@ class ESClient:
 
     def assert_lab(self):
         info = self.request('GET', '/')
-        expected = os.getenv('LAB_CLUSTER_NAME', 'cerebro-shard-lab')
+        expected = self.settings.get('LAB_CLUSTER_NAME', 'cerebro-shard-lab')
         if info.get('cluster_name') != expected:
             raise RuntimeError(f'Wrong cluster: {info.get("cluster_name")!r}; expected {expected!r}. No writes allowed.')
         if info.get('cluster_uuid') in (None, '_na_'):
