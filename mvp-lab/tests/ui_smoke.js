@@ -1,3 +1,4 @@
+// Automated: python scripts/test-ui.py from the repository root.
 // Browser-only regression check. Open the MVP page, then paste this whole
 // expression in DevTools (or evaluate_script). Uses fake responses; reload after.
 // No requests reach a real database while the check runs.

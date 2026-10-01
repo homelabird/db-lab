@@ -75,6 +75,47 @@ class GateTests(unittest.TestCase):
     def test_clean_manifest_passes(self):
         (self.root/'x.py').write_text('x=1\n');self.manifest()
         self.assertEqual(quality.release_check(self.root)['status'],'passed')
+    def test_explicit_manifest_refresh_preserves_evidence_and_ignores_new_runtime(self):
+        source=self.root/'x.py';source.write_text('x=1\n')
+        self.manifest()
+        evidence=self.root/'reports/historical.json';evidence.parent.mkdir();evidence.write_text('{}')
+        data=json.loads((self.root/quality.MANIFEST).read_text())
+        data['files']['reports/historical.json']={'sha256':hashlib.sha256(evidence.read_bytes()).hexdigest(),'mode':0o644}
+        (self.root/quality.MANIFEST).write_text(json.dumps(data))
+        source.write_text('x=2\n');(self.root/'new.py').write_text('y=3\n')
+        (self.root/'reports/new-runtime.json').write_text('private')
+        (self.root/'.env').write_text('PASSWORD=private')
+        (self.root/'.env.backup').write_text('PASSWORD=private-backup')
+        (self.root/'certs').mkdir();(self.root/'certs/node.key').write_text('private-key')
+        quality.refresh_manifest(self.root,'test-release')
+        first=(self.root/quality.MANIFEST).read_bytes()
+        records=json.loads(first)
+        self.assertIn('reports/historical.json',records['files'])
+        self.assertIn('new.py',records['files'])
+        self.assertNotIn('reports/new-runtime.json',records['files'])
+        self.assertNotIn('.env',records['files'])
+        self.assertNotIn('.env.backup',records['files'])
+        self.assertNotIn('certs/node.key',records['files'])
+        self.assertEqual(quality.release_check(self.root)['status'],'passed')
+        quality.refresh_manifest(self.root,'test-release')
+        self.assertEqual(first,(self.root/quality.MANIFEST).read_bytes())
+    def test_manifest_refresh_refuses_traversal_and_symlinks(self):
+        (self.root/quality.MANIFEST).write_text(json.dumps({'schema':1,'files':{'../outside':{}}}))
+        with self.assertRaises(ValueError):quality.refresh_manifest(self.root,'test')
+        (self.root/quality.MANIFEST).unlink()
+        (self.root/quality.MANIFEST).symlink_to(self.root/'missing-manifest')
+        with self.assertRaises(ValueError):quality.refresh_manifest(self.root,'test')
+        (self.root/quality.MANIFEST).unlink()
+        (self.root/'linked.py').symlink_to(self.root/'missing.py')
+        with self.assertRaises(ValueError):quality.refresh_manifest(self.root,'test')
+        self.assertFalse((self.root/quality.MANIFEST).exists())
+    def test_manifest_cli_requires_explicit_release_label(self):
+        for extra in ([],['--release','../invalid']):
+            with self.subTest(extra=extra):
+                result=subprocess.run([sys.executable,str(ROOT/'scripts/quality.py'),'manifest','--root',str(self.root),*extra],capture_output=True)
+                self.assertEqual(result.returncode,2)
+                self.assertFalse((self.root/quality.MANIFEST).exists())
+                self.assertFalse((self.root/'.quality').exists())
     def test_modified_source_detected(self):
         p=self.root/'x.py';p.write_text('x=1\n');self.manifest();p.write_text('x=2\n')
         self.assertEqual(quality.release_check(self.root)['issues'][0]['error'],'sha256_mismatch')
@@ -130,6 +171,15 @@ class GateTests(unittest.TestCase):
 
 
 class AnsibleAndCIQualityTests(unittest.TestCase):
+    def test_es9_is_in_both_offline_entrypoints(self):
+        self.assertIn(('elasticsearch9','elasticsearch-9'),quality.SUITES)
+        self.assertIn('bash ./all.sh test es9',(ROOT/'scripts/test-offline.sh').read_text())
+    def test_browser_ci_runs_existing_smoke_with_pinned_dependency(self):
+        flow=yaml.safe_load((ROOT/'.github/workflows/quality.yml').read_text())
+        commands='\n'.join(step.get('run','') for step in flow['jobs']['browser-ui']['steps'])
+        self.assertIn('python scripts/test-ui.py',commands)
+        self.assertIn('python -m playwright install --with-deps chromium',commands)
+        self.assertIn('playwright==',(ROOT/'scripts/requirements-ui.txt').read_text())
     def test_play_does_not_shadow_inventory_defaults(self):
         play=yaml.safe_load((ROOT/'ansible/control.yml').read_text())[0]
         self.assertFalse(play.get('vars'))

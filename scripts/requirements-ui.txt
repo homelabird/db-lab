@@ -1,0 +1,2 @@
+# Browser checks only; application images and host-only suites do not need this.
+playwright==1.63.0

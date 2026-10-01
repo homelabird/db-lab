@@ -14,7 +14,9 @@
 앱은 Python, 화면은 HTML 한 장입니다. `redis-spare` 실험에서만 Redis 하나가 추가됩니다.
 
 웹 첫 화면은 실습용 상품 4개를 보여주는 스토어입니다. 카테고리·상품 검색 → 상품 선택 → 수량·합계 확인 → 주문 확정 후 주문 내역에서 조회합니다. 상품과 원화 표시는 화면의 고정 예시이며 별도 상품·재고·결제 API는 없습니다. 주문 내역의 직접 입력과 저장소 비교, 연결 상태, 실습 가이드는 계속 사용할 수 있습니다.
-브라우저 UI 회귀 검사는 [tests/ui_smoke.js](tests/ui_smoke.js)의 실행 안내를 따릅니다. 모의 응답 검사이며 실제 DB 연동 증거는 아닙니다.
+브라우저 UI 회귀 검사는 프로젝트 루트에서 `python scripts/test-ui.py`로 Chromium의 데스크톱·모바일 크기에서 실행합니다.
+[품질 가이드](../docs/QUALITY-GUIDE.md)의 브라우저 의존성을 준비하세요. 기존 [tests/ui_smoke.js](tests/ui_smoke.js)를 재사용하며
+모든 HTTP 요청은 모의 응답으로 처리합니다. 실제 DB 연동 증거는 아닙니다. DevTools 수동 실행도 유지합니다.
 
 > 기존 `mariadb-ha-lab`, `kafka-lab`, `elasticsearch`, `redis-lab`의 실행 중인 클러스터에 자동 연결하지 않습니다.
 > 같은 네 가지 기술을 사용하는 **별도 단일 노드 MVP**이며, 프로젝트·네트워크·볼륨·암호가 분리됩니다.

@@ -2,9 +2,10 @@
 """Small, offline-first quality entrypoint. Never starts DBs or repairs failures.
 
 static: syntax, duplicate test names/YAML keys, local documentation links.
-offline: static + all six host suites (their doubles are not live DB evidence).
-tools: actual Ansible fixture and Helm renderer, missing tools => blocked/127.
+offline: static + all seven host suites (their doubles are not live DB evidence).
+tools: actual Ansible fixture, Helm renderer and Chromium UI, missing tools => blocked/127.
 release: compare the supplied release manifest; not a signature/attestation.
+manifest: explicitly refresh the release baseline after reviewing source changes.
 all: static + host suites + real tool checks. Runtime remains `mvp verify`.
 """
 from __future__ import annotations
@@ -22,6 +23,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from urllib.parse import unquote, urlsplit
@@ -29,9 +31,10 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = (('root', '.'), ('mvp', 'mvp-lab'), ('elasticsearch', 'elasticsearch'),
+          ('elasticsearch9', 'elasticsearch-9'),
           ('kafka', 'kafka-lab'), ('mariadb', 'mariadb-ha-lab'), ('redis', 'redis-lab'))
 IGNORED_DIRS = {'.git', '__pycache__', '.state', 'reports', 'artifacts', '.quality',
-                'node_modules', 'htmlcov', '.pytest_cache', '.lab'}
+                'node_modules', 'htmlcov', '.pytest_cache', '.lab', 'certs'}
 MANIFEST = 'RELEASE-MANIFEST.json'
 
 
@@ -47,7 +50,8 @@ def source_files(root):
             relative_dir = Path(directory).relative_to(root).parts
             if relative_dir[:2] == ('redis-lab', 'output') and filename != '.gitkeep':
                 continue
-            if filename == '.env' or filename.startswith('.coverage') or filename.endswith(('.pyc', '.pyo')):
+            if (filename == '.env' or (filename.startswith('.env.') and filename != '.env.example')
+                    or filename.startswith('.coverage') or filename.endswith(('.pyc', '.pyo'))):
                 continue
             yield Path(directory) / filename
 
@@ -189,6 +193,35 @@ def release_check(root):
             'scope': 'local integrity, not authenticity; runtime-generated paths excluded'}
 
 
+def refresh_manifest(root, release):
+    """Keep previously listed historical evidence; never adopt new runtime output."""
+    path = root / MANIFEST
+    no_links(path)
+    files = {}
+    if path.exists():
+        release_check(root)  # Validate old paths/links; source hash changes are expected here.
+        files.update({name: root / name for name in json.loads(path.read_text())['files']})
+    files.update({p.relative_to(root).as_posix(): p for p in source_files(root) if p.name != MANIFEST})
+    records = {}
+    for name, item in sorted(files.items()):
+        no_links(item)
+        if not item.is_file():
+            raise ValueError('missing_manifest_file')
+        records[name] = {'sha256': hashlib.sha256(item.read_bytes()).hexdigest(),
+                         'mode': item.stat().st_mode & 0o777}
+    fd, temporary = tempfile.mkstemp(prefix='.release-manifest-', dir=root)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            json.dump({'schema': 1, 'release': release, 'files': records}, stream, ensure_ascii=False, indent=2)
+            stream.write('\n')
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary): os.unlink(temporary)
+    return {'name': 'manifest', 'status': 'passed', 'files': len(records),
+            'scope': 'new local integrity baseline; NOT source validation or authenticity'}
+
+
 def command_check(name, argv, cwd, output, timeout=600):
     """Run real tools once, preserve rc. No retries or mocked fallback."""
     log = output / (name + '.log')
@@ -259,10 +292,16 @@ def write_report(output, mode, results):
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode',choices=('static','offline','tools','release','all'))
+    parser.add_argument('mode',choices=('static','offline','tools','release','manifest','all'))
     parser.add_argument('--root',type=Path,default=ROOT)
     parser.add_argument('--output',type=Path,help='New private directory; never overwrite old evidence')
+    parser.add_argument('--release',help='Required release label for explicit manifest refresh only')
     args=parser.parse_args(argv)
+    if args.mode == 'manifest':
+        if not args.release or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,79}', args.release):
+            parser.error('manifest requires --release with a 1..80 character release label')
+    elif args.release is not None:
+        parser.error('--release is only valid for manifest')
     root=args.root.absolute();no_links(root)
     output=(args.output or root/'.quality'/('quality-'+uuid.uuid4().hex[:12])).absolute()
     no_links(output);output.mkdir(mode=0o700,parents=True,exist_ok=False)
@@ -275,7 +314,9 @@ def main(argv=None):
         if args.mode in ('tools','all'):
             for name in ('ansible','helm'):
                 results.append(command_check(name,['bash',str(root/'scripts'/('test-'+name+'.sh'))],root,output))
+            results.append(command_check('ui',[sys.executable,str(root/'scripts/test-ui.py')],root,output))
         if args.mode=='release':results.append(release_check(root))
+        if args.mode=='manifest':results.append(refresh_manifest(root,args.release))
     except (OSError,ValueError,TypeError,KeyError) as exc:
         results.append({'name':'quality-runner','status':'failed','error':type(exc).__name__})
     code=write_report(output,args.mode,results)

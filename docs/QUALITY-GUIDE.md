@@ -21,7 +21,7 @@ python -m pip install -r scripts/requirements-checks.txt
 # DB 변경 없는 소스 검사
 python scripts/quality.py static
 
-# 여섯 호스트 테스트 묶음. 테스트 안의 명시적 double/SQLite 어댑터를 사용
+# ES9를 포함한 일곱 호스트 테스트 묶음. 명시적 double/SQLite 어댑터를 사용
 python scripts/quality.py offline
 ```
 
@@ -29,7 +29,7 @@ python scripts/quality.py offline
 타입 검사, 보안 취약점 스캔, Compose 스키마 검사, 실제 Helm 렌더링과 같지 않습니다.
 100줄 이상 함수는 개선 후보로 표시할 뿐 자동으로 품질 불합격 점수를 매기지 않습니다.
 
-`offline`은 기존 root/MVP/Elasticsearch/Kafka/MariaDB/Redis 테스트를 모두 실행합니다.
+`offline`은 기존 root/MVP/Elasticsearch 7/Elasticsearch 9/Kafka/MariaDB/Redis 테스트를 모두 실행합니다.
 이 단계에서 스택을 기동하거나 원격 SSH를 실행하지 않습니다. 임시 파일과 loopback HTTP 소켓은 사용합니다.
 Go는 기존 제한된 chart 계약 검사에 필요하며, 이것도 실제 Helm 실행은 아닙니다.
 테스트 의존성은 `scripts/requirements-checks.txt`에 모았고 Requests도 명시했습니다.
@@ -39,14 +39,19 @@ Go는 기존 제한된 chart 계약 검사에 필요하며, 이것도 실제 Hel
 ```bash
 # Ansible 자체를 설치한 제어기에서. Helm은 별도로 준비된 바이너리를 사용합니다.
 python -m pip install -r ansible/requirements.txt
+python -m pip install -r scripts/requirements-ui.txt
+python -m playwright install chromium
 python scripts/quality.py tools
 
-# 소스/호스트/실제 Ansible fixture/실제 Helm 검사를 한 번에
+# 소스/호스트/실제 Ansible fixture/실제 Helm/Chromium 검사를 한 번에
 python scripts/quality.py all
 ```
 
-`tools`는 `scripts/test-ansible.sh`와 `scripts/test-helm.sh`를 실제 호출합니다.
+`tools`는 `scripts/test-ansible.sh`, `scripts/test-helm.sh`, `scripts/test-ui.py`를 실제 호출합니다.
 Ansible 검사는 무해한 로컬 제어기 fixture이며, Helm 검사는 lint/render입니다.
+Chromium은 기존 MVP UI smoke를 데스크톱·모바일 크기에서 실행합니다. 모든 HTTP 요청을 가로채
+로컬 HTML과 모의 응답만 제공하며 실제 API/DB에는 접속하지 않습니다. 직접 실행은 `python scripts/test-ui.py`입니다.
+브라우저 설치 조건은 [Playwright 공식 안내](https://playwright.dev/python/docs/intro)를 따릅니다.
 SSH 원격 서버, 컨테이너 엔진, DB 쿼럼·영속성까지 검증하지 않습니다.
 도구가 없으면 `blocked`, 종료 127입니다. 모의 모듈이나 Go 부분 렌더러로 실제 검사를 대체하지 않습니다.
 테스트가 하나도 없거나 실패하면 성공으로 계산하지 않으며, 호스트 skip이 있으면 완전 통과로 표시하지 않습니다.
@@ -115,15 +120,29 @@ python scripts/quality.py release
 일반 실행이 만든 `.env`, `.state`, `reports`, `.quality`, 가상환경은 새로운 배포 파일로 취급하지 않습니다.
 manifest에 원래 들어 있던 보고서는 해당 경로가 reports 안이어도 계속 검증합니다.
 소스를 수정했다면 release 검사는 실패하는 것이 정상입니다. 서명·출처 진위·이미지 공급망 검증이 아닙니다.
+새 배포물을 만들 때는 변경 검토와 품질 검사 후 `python scripts/quality.py manifest --release RELEASE_LABEL`로
+새 기준을 명시적으로 생성한 다음 `release`를 실행합니다. 기존 목록의 역사적 증거는 유지하고 새 런타임 출력은 제외합니다.
+`manifest`는 기준 파일을 갱신하는 명령이며 코드의 안전성이나 출처를 검증하지 않습니다. 자동 CI에서는 호출하지 않습니다.
 Windows 압축 도구가 실행 비트를 보존하지 않은 경우 mode 오류를 조사하고 Linux 환경에서 재해제하세요.
 
 ## 5. CI 구분
 
 - `.github/workflows/quality.yml`: push/PR/수동 실행에서 소스·호스트 테스트(Python 3.12/3.13)와 실제 Ansible 로컬 fixture 검사.
-  DB 기동, SSH 대상, 장애 주입, secrets 사용은 없습니다. 최초 실행의 runner/네트워크/패키지 가용성은 실제 CI에서 확인해야 합니다.
+  ES9 호스트 테스트, 실제 Helm 렌더링, Chromium 데스크톱·모바일 UI smoke도 각 검사 경로에서 수행합니다.
+  Ansible SSH 검사는 loopback 전용 일회용 sshd fixture이며 외부 SSH 대상·DB 기동·장애 주입·secrets 사용은 없습니다.
+  최초 실행의 runner/네트워크/패키지 가용성은 실제 CI에서 확인해야 합니다.
 - `.github/workflows/mvp-runtime.yml`: 기존처럼 명시적 동의가 필요한 수동 DB 인수시험. 자동 push/PR 기동으로 바꾸지 않았습니다.
 
 workflow 파일을 추가한 것은 원격 저장소에서 실행 완료했다는 뜻이 아닙니다.
+
+## 2026-10-01 health 계약 수정
+
+공통 `./all.sh health mvp`는 개별 `mvp diagnose`의 엔진 pin·컨테이너 소유권·HTTP 프로젝트 identity와
+응답 일관성 검사를 재사용합니다. 초기화하지 않은 MVP나 다른 프로젝트의 응답은 정상으로 계산하지 않습니다.
+이는 의존 서비스 접근성 검사이며 worker의 end-to-end 전달·DB 내구성 검증은 아닙니다.
+ES7/ES9 공통 health는 공유 ESClient에 해당 랩의 설정을 전달하므로 보안 모드의 인증도 반영합니다.
+공유 ESClient는 환경의 HTTP proxy를 우회해 지정한 ES_URL로 직접 접속하고 HTTP redirect를 따르지 않습니다.
+인증 정보와 쓰기를 다른 endpoint로 보내지 않습니다.
 
 ## 6. 유지보수 규칙
 
