@@ -157,6 +157,20 @@ class InitializationTests(unittest.TestCase):
     def test_budget_input_checked(self):
         with self.assertRaises(ValueError): manage.Compose.wait_initialized(self.compose,seconds=-1)
 
+    def test_database_gate_waits_and_records_only_selected_services(self):
+        rows=[{'service':'mariadb','state':'running','health':'starting'}]
+        ready=[dict(rows[0],health='healthy')]
+        with patch.object(startup,'collect',side_effect=[{'ready':False,'containers':rows},{'ready':True,'containers':ready}]) as observe,redirect_stdout(io.StringIO()):
+            manage.Compose.wait_services(self.compose,('mariadb',),stage='databases',seconds=4)
+        self.assertEqual(self.evidence()['status'],'ready')
+        self.assertTrue(all(c.kwargs['services']==('mariadb',) for c in observe.call_args_list))
+
+    def test_database_gate_failure_preserves_sanitized_evidence(self):
+        rows=[{'service':'kafka','state':'exited','signals':['configuration_rejected']}]
+        with patch.object(startup,'collect',return_value={'ready':False,'containers':rows}),self.assertRaisesRegex(RuntimeError,'later stages'):
+            manage.Compose.wait_services(self.compose,('kafka',),stage='databases',seconds=2)
+        self.assertEqual(self.evidence()['status'],'failed');self.assertEqual(self.evidence()['containers'],rows)
+
     def test_remote_docker_legacy_init_is_not_claimed_as_local_readiness(self):
         self.compose.guard_engine.return_value={'local_docker':False}
         with patch.object(startup,'collect') as inspect,redirect_stdout(io.StringIO()):

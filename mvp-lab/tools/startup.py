@@ -54,10 +54,13 @@ def sanitize_container(raw: dict, project: str, service: str) -> dict:
             'ready': ready, 'signals': []}
 
 
-def collect(compose, *, include_logs=True, log_services=(), budget=30.0) -> dict:
+def collect(compose, *, include_logs=True, log_services=(), budget=30.0, services=None) -> dict:
     """Observations, not a DB I/O/replication proof. Engine pin is mandatory."""
     if not 0 < budget <= 60:
         raise ValueError('diagnostic_budget_out_of_range')
+    services = BASE_SERVICES if services is None else tuple(services)
+    if not services or len(set(services)) != len(services) or set(services) - {*BASE_SERVICES, 'redis-spare'}:
+        raise ValueError('invalid_diagnostic_services')
     deadline = time.monotonic() + budget
     compose.guard_target()
     binding = compose.guard_engine()
@@ -75,7 +78,7 @@ def collect(compose, *, include_logs=True, log_services=(), budget=30.0) -> dict
         if len(result.stdout) > 4 * 1024**2:
             raise RuntimeError('diagnostic_output_exceeded')
         return result.stdout + result.stderr if argv[0] == 'logs' else result.stdout
-    for service in BASE_SERVICES:
+    for service in services:
         row = {'service': service, 'ready': False, 'state': 'unknown', 'signals': []}
         try:
             result = compose.run('ps', '-a', '-q', service, capture=True, timeout=remaining())
@@ -100,6 +103,6 @@ def collect(compose, *, include_logs=True, log_services=(), budget=30.0) -> dict
             # Do not serialize exception strings, command args or subprocess output.
             row['state'] = 'observation_failed'
         rows.append(row)
-    return {'schema': 1, 'ready': all(r['ready'] for r in rows), 'containers': rows,
+    return {'schema': 1, 'ready': all(r['ready'] for r in rows), 'containers': rows, 'services': list(services),
             'scope': 'read-only container state; not database correctness or durability',
             'raw_logs_included': False, 'environment_included': False}

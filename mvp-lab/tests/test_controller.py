@@ -144,6 +144,37 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(manage.main(["up"]), 1)
         cls.return_value.run.assert_not_called()
 
+    def test_doctor_rejects_saved_experiment_and_does_not_bind_new_identity(self):
+        compose = self.compose(); compose.guard_identity(create=False)
+        self.assertFalse((self.root / '.state/identity.json').exists())
+        manage.atomic_json(self.root / '.state/experiment.json', {'mode':'bad-db-password'})
+        with patch.object(manage,'Compose') as cls:
+            self.assertEqual(manage.main(['doctor']),1)
+        cls.return_value.run.assert_not_called()
+
+    def test_up_stages_databases_before_api_initialization_and_worker(self):
+        with patch.object(manage,'Compose') as cls:
+            self.assertEqual(manage.main(['up']),0)
+        compose = cls.return_value
+        self.assertEqual([c.args for c in compose.run.call_args_list], [
+            ('build','api','worker'), ('up','-d','mariadb','kafka','elasticsearch','redis'),
+            ('up','-d','--no-deps','api'), ('up','-d','--no-deps','worker')])
+        self.assertLess(compose.mock_calls.index(unittest.mock.call.wait_initialized(services=('mariadb','kafka','elasticsearch','redis','api'))),
+                        compose.mock_calls.index(unittest.mock.call.run('up','-d','--no-deps','worker')))
+
+    def test_failed_database_gate_prevents_api_and_worker_start(self):
+        with patch.object(manage,'Compose') as cls:
+            cls.return_value.wait_services.side_effect=RuntimeError('databases not ready')
+            self.assertEqual(manage.main(['up']),1)
+        self.assertEqual(len(cls.return_value.run.call_args_list),2)
+        cls.return_value.wait_initialized.assert_not_called()
+
+    def test_failed_api_initialization_prevents_worker_start(self):
+        with patch.object(manage,'Compose') as cls:
+            cls.return_value.wait_initialized.side_effect=RuntimeError('initialization failed')
+            self.assertEqual(manage.main(['up']),1)
+        self.assertFalse(any(c.args==('up','-d','--no-deps','worker') for c in cls.return_value.run.call_args_list))
+
     def test_normal_mode_never_restarts_stopped_databases(self):
         with patch.object(manage, "Compose") as cls:
             self.assertEqual(manage.main(["experiment", "normal", "--yes"]), 0)

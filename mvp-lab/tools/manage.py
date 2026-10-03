@@ -276,18 +276,52 @@ class Compose:
             if previous.get("MVP_PROJECT") != current:
                 raise RuntimeError("MVP project target changed; restore the original .env before lifecycle operations")
 
-    def guard_identity(self):
+    def guard_identity(self, create=True):
         path = ROOT / ".state" / "identity.json"
         guarded = {key: hashlib.sha256(self.config[key].encode()).hexdigest()
                    for key in (*SECRET_KEYS, "KRAFT_CLUSTER_ID", "MVP_PROJECT")}
         guarded["_engine_selector"] = self.engine_selector()
         if path.exists() and json.loads(path.read_text()) != guarded:
             raise RuntimeError("Saved project/credentials/cluster ID changed. Restore .env; no automatic secret rotation or volume reset")
-        if not path.exists():
+        if not path.exists() and create:
             atomic_json(path, guarded)
 
-    def wait_initialized(self, seconds=180):
-        from tools.startup import collect, log_signals
+    def wait_services(self, services, *, stage, seconds=180):
+        from tools.startup import collect
+        if type(seconds) not in (int, float) or not 0 < seconds <= 600:
+            raise ValueError("Readiness budget must be 0..600 seconds")
+        path = ROOT / "reports/startup" / ("startup-" + stage + "-" + uuid.uuid4().hex[:12] + ".json")
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        evidence = {"schema": 1, "stage": stage, "services": list(services), "status": "waiting"}
+        if self.engine != ["docker"] or not self.guard_engine().get("local_docker"):
+            evidence.update(status="not_certified", scope="container readiness requires pinned local Docker")
+            atomic_json(path, evidence)
+            print(stage + ": container readiness not certified for this provider/target.")
+            return
+        deadline = time.monotonic() + seconds
+        previous = None
+        while time.monotonic() < deadline:
+            left = deadline - time.monotonic()
+            if left <= 0: break
+            observed = collect(self, services=services, include_logs=True, budget=min(15, left))
+            evidence.update(observed)
+            summary = ", ".join(r["service"] + ":" + r.get("health", r["state"]) for r in observed["containers"])
+            if summary != previous:
+                print(stage + ": " + summary, flush=True); previous = summary
+            evidence["status"] = "ready" if observed["ready"] else "waiting"
+            atomic_json(path, evidence)
+            if observed["ready"]:
+                print("Readiness evidence:", path)
+                return
+            left = deadline - time.monotonic()
+            if left > 0: time.sleep(min(3, left))
+        evidence["status"] = "failed"
+        atomic_json(path, evidence)
+        raise RuntimeError(stage + " readiness deadline exceeded; later stages were not started. "
+                           "Containers/volumes retained. Inspect mvp logs and evidence: " + str(path))
+
+    def wait_initialized(self, seconds=180, services=None):
+        from tools.startup import collect, log_signals, BASE_SERVICES
         if type(seconds) not in (int, float) or not 0 < seconds <= 600:
             raise ValueError("Initialization budget must be 0..600 seconds")
         deadline = time.monotonic() + seconds
@@ -295,6 +329,7 @@ class Compose:
         docker_readiness = self.engine == ["docker"] and bool(self.guard_engine().get("local_docker"))
         work_deadline = deadline - min(10, seconds / 4) if docker_readiness else deadline
         evidence = {"schema": 1, "status": "waiting", "admin_initialized": False,
+                    "stage": "api_initialization", "services": list(services or BASE_SERVICES),
                     "attempts": 0, "last_error": None, "admin_signals": [], "containers": []}
         directory = ROOT / "reports/startup"
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -322,7 +357,7 @@ class Compose:
             left = deadline - time.monotonic()
             if left > 0:
                 if docker_readiness:
-                    observed = collect(self, include_logs=False, budget=min(15, left))
+                    observed = collect(self, include_logs=False, budget=min(15, left), services=services)
                     evidence["containers"] = observed["containers"]
                     ready = initialized and observed["ready"]
                 else:
@@ -343,7 +378,7 @@ class Compose:
             if left > 0:
                 try:
                     observed = collect(self, include_logs=True, log_services=("api", "worker"),
-                                       budget=min(10, left))
+                                       budget=min(10, left), services=services)
                     evidence["containers"] = observed["containers"]
                     if initialized and observed["ready"]:
                         evidence["status"] = "initialized_and_ready"
@@ -449,10 +484,20 @@ def main(argv=None):
                 # A deliberate wrong API password should not look like successful startup.
                 if mode() == "bad-db-password":
                     raise RuntimeError("Wrong-password experiment active. Restore with experiment normal --yes first")
+                print("[1/4] Build API/worker before starting services", flush=True)
+                compose.run("build", "api", "worker")
+                databases = ("mariadb", "kafka", "elasticsearch", "redis")
                 if mode() == "redis-spare":
-                    compose.run("up", "-d", "redis-spare", profile=True)
-                compose.run("up", "-d", "--build")
-                compose.wait_initialized()
+                    databases += ("redis-spare",)
+                print("[2/4] Start and wait for databases", flush=True)
+                compose.run("up", "-d", *databases, profile=mode() == "redis-spare")
+                compose.wait_services(databases, stage="databases")
+                print("[3/4] Start API and initialize schema/topic/index", flush=True)
+                compose.run("up", "-d", "--no-deps", "api")
+                compose.wait_initialized(services=(*databases, "api"))
+                print("[4/4] Start worker and wait for all services", flush=True)
+                compose.run("up", "-d", "--no-deps", "worker")
+                compose.wait_services((*databases, "api", "worker"), stage="worker")
                 print("Open http://127.0.0.1:" + config["API_PORT"] + " ; run smoke to verify end-to-end delivery.")
             return 0
         if not (ROOT / ".env").exists():
@@ -496,6 +541,11 @@ def main(argv=None):
                 print("Engine target pinned without changing containers, volumes or credentials.")
         elif args.action == "doctor":
             compose.ready()
+            require_no_active_fault()
+            if mode() == "bad-db-password":
+                raise RuntimeError("Wrong-password experiment active. Restore with experiment normal --yes first")
+            compose.guard_target(); compose.guard_identity(create=False)
+            if (ROOT / ".state/engine-target.json").exists(): compose.guard_engine()
             print("Engine and Compose config OK. This is not an image-pull, capacity or DB health certification.")
             print("Only API loopback port", config["API_PORT"], "is published. No DB host ports.")
         elif args.action == "status":
