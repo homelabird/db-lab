@@ -14,7 +14,13 @@
 앱은 Python, 화면은 HTML 한 장입니다. `redis-spare` 실험에서만 Redis 하나가 추가됩니다.
 
 웹 첫 화면은 실습용 상품 4개를 보여주는 스토어입니다. 카테고리·상품 검색 → 상품 선택 → 수량·합계 확인 → 주문 확정 후 주문 내역에서 조회합니다. 상품과 원화 표시는 화면의 고정 예시이며 별도 상품·재고·결제 API는 없습니다. 주문 내역의 직접 입력과 저장소 비교, 연결 상태, 실습 가이드는 계속 사용할 수 있습니다.
-브라우저 UI 회귀 검사는 프로젝트 루트에서 `python scripts/test-ui.py`로 Chromium의 데스크톱·모바일 크기에서 실행합니다.
+[디자인·기능 개선 분석](docs/UI-IMPROVEMENTS.md)에서 화면의 아쉬운 점, 적용한 개선과 검증 범위를 확인하세요.
+주문 내역과 연결 상태는 화면에 들어갈 때 갱신합니다. 원본 목록은 최신순 **25개씩 이전·다음 페이지**로 읽고, 상품 이름·주문 ID의 부분 검색과 상태 필터는 전체 MariaDB 주문을 대상으로 합니다. 입력 후 검색/Enter를 누르세요. 전체 주문 ID를 넣고 **주문 ID 조회**를 누르면 상세 원본으로 열 수 있으며 이 조회는 캐시도 채웁니다. 상세에서 주문 ID를 복사할 수 있습니다.
+상세의 **읽기 전용 대조**는 MariaDB·Redis·Elasticsearch의 상태·버전과 다른 항목을 보여줍니다. 관찰 중 원본 변경이나 원본 검증 실패는 비교 불가로 표시합니다. 연결 성공과 처리 완료는 별도로 확인하세요.
+**검색 반영 자동 확인**을 켜면 5초마다 읽기 전용 대조를 실행하고, 관찰 중 안정된 SQL 원본과 ES가 일치하면 종료합니다. 연결 상태의 자동 갱신도 선택 사항입니다. 숨긴 화면·닫힌 상세·백그라운드 탭에서는 요청하지 않고 진행 중인 요청과 겹치지 않습니다. 대조는 원자적 스냅샷이 아닙니다.
+[화면·기동 고도화 기록](docs/UI-UPGRADE.md)에서 추가 기능과 실제 Docker 연동 검증 범위를 확인하세요.
+웹 요청은 20초 후 대기를 중단합니다. 쓰기가 이미 처리됐을 수 있으므로, 주문 생성은 같은 내용으로 재시도해 기존 요청 키를 유지하고 상태 변경은 원본 조회 후 확인하세요.
+브라우저 UI 회귀 검사는 프로젝트 루트에서 `python scripts/test-ui.py`로 Chromium의 1280px·390px·320px 화면과 키보드 동작을 확인합니다.
 [품질 가이드](../docs/QUALITY-GUIDE.md)의 브라우저 의존성을 준비하세요. 기존 [tests/ui_smoke.js](tests/ui_smoke.js)를 재사용하며
 모든 HTTP 요청은 모의 응답으로 처리합니다. 실제 DB 연동 증거는 아닙니다. DevTools 수동 실행도 유지합니다.
 
@@ -52,8 +58,8 @@ Kafka는 비동기 전달 경로이지 SQL과 하나의 트랜잭션을 공유�
 ## 2. 시작하기
 
 Linux 또는 WSL2, Python 3.10 이상, 루트 진입점용 Bash 4.4+, 컨테이너 엔진과 Compose provider가 필요합니다.
-우선 대상은 Docker Compose v2이며 Podman + Compose provider 감지도 제공합니다. 이번 작업 환경에서는
-어느 provider도 실기동 검증하지 않았습니다. Podman에서는 `doctor`로 해당 버전의 profile/build 지원부터 확인하세요.
+우선 대상은 Docker Compose v2이며 Podman + Compose provider 감지도 제공합니다. 2026-10-03에는 별도 로컬 Docker 29.7.2 / Compose v2.40.3 MVP에서 단계별 기동·실제 화면·재시작을 검증했습니다.
+Podman의 이번 변경에 대한 실기동은 미검증입니다. Podman에서는 `doctor`로 해당 버전의 profile/build 지원부터 확인하세요.
 앱의 Python 패키지는 이미지 빌드 중 설치합니다. 호스트에 Flask/React/DB 드라이버를 설치할 필요는 없습니다.
 이미지와 패키지를 처음 받을 때 인터넷 연결이 필요합니다.
 
@@ -62,13 +68,20 @@ Linux 또는 WSL2, Python 3.10 이상, 루트 진입점용 Bash 4.4+, 컨테이�
 ```bash
 bash ./all.sh mvp init       # 암호·KRaft ID 생성; 기존 .env 보존
 bash ./all.sh mvp doctor     # 엔진 및 실제 Compose config 검사
-bash ./all.sh mvp up         # 이미지 빌드, 6개 컨테이너 기동, schema/topic/index 준비
+bash ./all.sh mvp up         # 빌드 → DB 준비 → API 초기화 → worker 준비
 bash ./all.sh mvp diagnose   # 읽기 전용; 의존 서비스 장애면 exit 1
 bash ./all.sh mvp smoke      # 정확한 대상 확인 후 합성 주문 1건 → Kafka → ES 검색 확인
 ```
 
 브라우저에서 `http://127.0.0.1:18090`을 엽니다. 실습용 스토어에서 상품을 고르고 주문한 뒤, 주문 내역·상세 조회·검색 인덱스를 비교하세요. 일반 조회를 두 번 누르면 응답의 `source`가 `mariadb`에서 `redis`로 바뀌는지 확인할 수 있습니다.
-일반 조회의 `source`가 `mariadb`에서 `redis`로 바뀌는지 확인합니다. 검색은 비동기라 잠시 늦을 수 있습니다.
+검색은 비동기라 잠시 늦을 수 있습니다. 첫 장애 실습은 화면의 **실습 가이드 → Kafka 중단과 검색 지연** 순서로 진행하세요.
+
+`mvp up`은 API/worker를 먼저 빌드한 뒤 DB 4개를 시작하고, 준비되면 API의 schema/topic/index 초기화, 마지막으로 worker 준비를 확인합니다. 선택한 `redis-spare` 실험의 보조 Redis도 DB 준비 검사에 포함됩니다.
+핀된 로컬 Docker에서는 각 준비 단계에 180초 한도를 적용하고 `reports/startup/`에 단계·대상 서비스·준비 상태를 저장합니다. 실패하면 뒤 단계는 시작하지 않으며 이미 실행 중인 컨테이너와 볼륨을 보존합니다.
+다른 provider에서는 컨테이너 단계별 준비를 `not_certified`로 기록하므로 같은 검증 범위로 해석하지 마세요. API 초기화 확인은 계속 실행합니다. `doctor`는 기존 대상 identity·엔진 pin·미완료 실습과 잘못된 암호 실험을 검사하며, 새 환경의 identity를 고정하지 않습니다.
+루트 공통 `all.sh up mvp`는 이에 더해 읽기 전용 애플리케이션 health를 확인합니다. `READY`여도 실제 SQL → Kafka → ES 전달은 `mvp smoke`로 별도 확인하세요.
+
+목록 API는 기존 `GET /api/orders`의 최근 100개 응답을 유지합니다. `GET /api/orders?limit=25&q=키보드&status=paid`는 `orders`, `has_more`, `next_cursor`를 반환합니다. 다음 페이지에는 같은 필터와 반환된 `cursor`를 전달하세요. `limit`은 1–100, 검색은 최대 100자이며 중복·알 수 없는 파라미터나 필터가 다른 cursor는 HTTP 400입니다. 목록은 원자적 스냅샷이 아니므로 페이지 사이에 주문 상태가 바뀔 수 있습니다.
 
 `smoke`/`diagnose` 명령은 엔진이 설치된 실습 호스트에서 실행합니다. 원격 Docker/Podman
 선택 상태에서는 로컬 HTTP 명령을 거부합니다. 원격 실습 서버의 브라우저 접근은 DB/API
@@ -135,7 +148,7 @@ API만 호스트 loopback에 공개됩니다. DB 포트는 호스트에 공개�
 ./all.sh mvp sql outbox
 
 ./all.sh mvp resume kafka
-# 잠시 후 진단과 검색 새로고침
+# 상세에서 검색 반영 자동 확인을 켜고, 진단과 smoke도 확인
 ./all.sh mvp diagnose
 ./all.sh mvp smoke
 ```
