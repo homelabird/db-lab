@@ -8,7 +8,7 @@ import sqlite3
 import tempfile
 import unittest
 from mvp_app.adapters import SQL, Settings
-from mvp_app.core import Problem
+from mvp_app.core import Problem, order_page_input
 
 DATA = {"item": "adapter study", "quantity": 3, "unit_price": 10}
 
@@ -115,3 +115,40 @@ class SQLContractTests(unittest.TestCase):
         items = list(self.repo.scan())
         self.assertEqual(len(items), 205)
         self.assertEqual([i["id"] for i in items], sorted(i["id"] for i in items))
+
+    def test_order_pages_cover_more_than_100_rows_with_timestamp_ties(self):
+        for n in range(103):
+            self.repo.create(dict(DATA, item=f"page {n}"), f"page-{n}")
+        with closing(sqlite3.connect(self.path)) as con:
+            con.execute("UPDATE orders SET created_at='2026-01-01T00:00:00+00:00'"); con.commit()
+        found, cursor = [], None
+        while True:
+            query = {"limit": ["17"]}
+            if cursor: query["cursor"] = [cursor]
+            page = self.repo.list_page(**order_page_input(query))
+            found.extend(o["id"] for o in page["orders"])
+            if not page["has_more"]: break
+            cursor = page["next_cursor"]
+        self.assertEqual(len(found), 103)
+        self.assertEqual(found, sorted(set(found), reverse=True))
+
+    def test_page_filters_treat_wildcards_and_sql_as_literal_text(self):
+        a, _ = self.repo.create(dict(DATA, item="Special %_! Keyboard"), "literal")
+        b, _ = self.repo.create(dict(DATA, item="Keyboard normal"), "normal")
+        self.repo.update(b["id"], {"status":"paid", "expected_version":1})
+        self.assertEqual([o["id"] for o in self.repo.list_page(q="%_!")["orders"]], [a["id"]])
+        self.assertEqual(len(self.repo.list_page(q="keyboard")["orders"]), 2)
+        self.assertEqual([o["id"] for o in self.repo.list_page(status="paid")["orders"]], [b["id"]])
+        self.assertEqual(self.repo.list_page(q="' OR 1=1 --")["orders"], [])
+        self.assertEqual(len(self.repo.list_orders()), 2)
+
+    def test_newer_insert_between_pages_does_not_shift_the_cursor(self):
+        for n in range(4): self.repo.create(DATA, f"before-{n}")
+        first = self.repo.list_page(limit=2)
+        new, _ = self.repo.create(DATA, "newer")
+        with closing(sqlite3.connect(self.path)) as con:
+            con.execute("UPDATE orders SET created_at='2099-01-01T00:00:00+00:00' WHERE id=?", (new["id"],)); con.commit()
+        second = self.repo.list_page(**order_page_input({"limit":["2"], "cursor":[first["next_cursor"]]}))
+        self.assertFalse(set(o["id"] for o in first["orders"]) & set(o["id"] for o in second["orders"]))
+        self.assertEqual(len(second["orders"]), 2)
+        self.assertNotIn(new["id"], [o["id"] for o in second["orders"]])

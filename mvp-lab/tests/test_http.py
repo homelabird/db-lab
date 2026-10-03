@@ -86,6 +86,26 @@ class HTTPTests(unittest.TestCase):
         code, data, _ = self.request("GET", "/api/search")
         self.assertEqual(code, 503); self.assertEqual(data["error"], "elasticsearch_unavailable")
 
+    def test_paged_list_search_and_status_filter(self):
+        for n in range(31): self.repo.create(dict(DATA, item=f"old page {n}"), f"page-{n}")
+        code, first, _ = self.request("GET", "/api/orders?limit=25&q=old")
+        self.assertEqual(code, 200); self.assertEqual(len(first["orders"]), 25)
+        second = self.request("GET", "/api/orders?limit=25&q=old&cursor=" + first["next_cursor"])[1]
+        self.assertEqual(len(second["orders"]), 6); self.assertFalse(second["has_more"])
+        ids = {o["id"] for o in first["orders"] + second["orders"]}
+        self.assertEqual(len(ids), 31)
+        order = first["orders"][0]
+        self.repo.update(order["id"], {"status":"paid", "expected_version":1})
+        self.assertEqual(len(self.request("GET", "/api/orders?limit=25&status=paid")[1]["orders"]), 1)
+
+    def test_page_input_rejects_invalid_and_mismatched_cursor(self):
+        for query in ("limit=0", "limit=101", "limit=25&limit=25", "limit=&limit=25", "q=&q=x",
+                      "status=unknown", "cursor=bad", "limit=2&extra=x", "extra="):
+            with self.subTest(query=query): self.assertEqual(self.request("GET", "/api/orders?" + query)[0], 400)
+        for n in range(3): self.repo.create(DATA, f"cursor-{n}")
+        cursor = self.request("GET", "/api/orders?limit=1&q=web")[1]["next_cursor"]
+        self.assertEqual(self.request("GET", "/api/orders?limit=1&q=changed&cursor=" + cursor)[0], 400)
+
     def test_patch_and_version_conflict(self):
         order = self.create(); path = "/api/orders/" + order["id"]
         self.assertEqual(self.request("PATCH", path, {"status": "paid", "expected_version": 1})[0], 200)

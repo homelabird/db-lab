@@ -11,7 +11,7 @@ import socket
 from urllib.parse import parse_qs, urlsplit
 import uuid
 from .adapters import dependencies
-from .core import Problem, Storefront, emit, request_key, REQUEST_CONTEXT
+from .core import Problem, Storefront, emit, request_key, REQUEST_CONTEXT, order_page_input
 from .observability import safe_error
 from .inspection import inspect_order
 from .http_policy import BoundedHTTPServer, body_fields, decode_json, json_body_length, local_host
@@ -76,6 +76,8 @@ class Application:
         if method == "GET" and path == "/api/diagnostics":
             return 200, self.diagnostics()
         if method == "GET" and path == "/api/orders":
+            if query:
+                return 200, backend("mariadb", self.repo.list_page, **order_page_input(query))
             return 200, {"orders": backend("mariadb", self.repo.list_orders), "source": "mariadb"}
         if method == "POST" and path == "/api/orders":
             body_fields(data, ("item", "quantity", "unit_price"))
@@ -153,7 +155,7 @@ def make_handler(app_factory):
                         raise Problem(400, "invalid_json")
                     data = decode_json(raw)
                 try:
-                    query = parse_qs(parsed.query, max_num_fields=20)
+                    query = parse_qs(parsed.query, max_num_fields=20, keep_blank_values=True)
                 except ValueError as exc:
                     raise Problem(400, "too_many_query_parameters") from exc
                 # Per-request clients avoid sharing requests.Session across HTTP threads.

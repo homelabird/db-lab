@@ -6,7 +6,7 @@ import json
 import os
 import re
 from typing import Callable
-from .core import Problem, emit, envelope, new_order, transition, ORDER_FIELDS
+from .core import Problem, emit, envelope, new_order, transition, ORDER_FIELDS, order_page_result
 
 
 @dataclass(frozen=True)
@@ -149,6 +149,25 @@ class SQL:
         with self.transaction() as conn, conn.cursor() as cur:
             cur.execute(f"SELECT {COLUMNS} FROM orders ORDER BY created_at DESC, id DESC LIMIT 100")
             return cur.fetchall()
+
+    def list_page(self, limit=25, q="", status="", after=None):
+        clauses, args = [], []
+        if q:
+            pattern = "%" + q.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+            clauses.append("(LOWER(item) LIKE LOWER(%s) ESCAPE '!' OR id LIKE %s ESCAPE '!')")
+            args.extend((pattern, pattern))
+        if status:
+            clauses.append("status=%s")
+            args.append(status)
+        if after:
+            clauses.append("(created_at<%s OR (created_at=%s AND id<%s))")
+            args.extend((after[0], after[0], after[1]))
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        # ponytail: small lab scans/sorts; add a measured index plan for large datasets.
+        with self.transaction() as conn, conn.cursor() as cur:
+            cur.execute(f"SELECT {COLUMNS} FROM orders{where} ORDER BY created_at DESC, id DESC LIMIT %s",
+                        tuple(args) + (limit + 1,))
+            return order_page_result(cur.fetchall(), limit, q, status)
 
     def update(self, order_id, data):
         with self.transaction() as conn, conn.cursor() as cur:

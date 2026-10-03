@@ -25,8 +25,9 @@ def main():
                 return 127
             raise
         try:
-            for width, height in ((1280, 900), (390, 844)):
-                context = browser.new_context(viewport={'width': width, 'height': height}, service_workers='block')
+            for width, height in ((1280, 900), (390, 844), (320, 740)):
+                context = browser.new_context(viewport={'width': width, 'height': height}, service_workers='block',
+                                              permissions=['clipboard-read', 'clipboard-write'])
                 try:
                     errors = []
                     def fixture(route):
@@ -44,13 +45,23 @@ def main():
                     result = page.evaluate('() => Promise.race([' + smoke +
                                            ", new Promise((_, reject) => setTimeout(() => reject(Error('UI smoke timed out')), 30000))])")
                     assert isinstance(result, str) and result.startswith('PASS:'), result
+                    page.goto('https://db-lab.invalid/')
+                    buy = page.get_by_role('button', name='데일리 무선 키보드 주문하기')
+                    buy.focus()
+                    page.keyboard.press('Enter')
+                    assert page.locator('#createDialog').evaluate('(dialog) => dialog.open')
+                    page.keyboard.press('Shift+Tab')
+                    assert page.locator('#createDialog').evaluate('(dialog) => dialog.contains(document.activeElement)')
+                    page.keyboard.press('Escape')
+                    assert not page.locator('#createDialog').evaluate('(dialog) => dialog.open')
+                    assert buy.evaluate('(button) => document.activeElement === button')
                     assert not errors, errors
-                    print(f'Chromium {width}x{height}: {result}')
+                    print(f'Chromium {width}x{height}: {result}; keyboard open/trap/Escape/focus return')
                 finally:
                     context.close()
         finally:
             browser.close()
-    print(f'Ran 2 tests in {time.monotonic() - started:.3f}s')
+    print(f'Ran 3 tests in {time.monotonic() - started:.3f}s')
     print('PASS: mocked browser UI only; no DB or live API was contacted.')
     return 0
 

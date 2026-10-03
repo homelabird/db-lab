@@ -1,6 +1,6 @@
 """TEST ONLY. These doubles do not certify any real database, durability or HA."""
 import copy
-from mvp_app.core import Problem, new_order, envelope, transition
+from mvp_app.core import Problem, new_order, envelope, transition, order_page_result
 
 
 class MemoryRepo:
@@ -49,6 +49,14 @@ class MemoryRepo:
     def list_orders(self):
         self.check()
         return list(copy.deepcopy(self.orders).values())
+
+    def list_page(self, limit=25, q="", status="", after=None):
+        self.check()
+        rows = sorted(self.list_orders(), key=lambda o: (o["created_at"], o["id"]), reverse=True)
+        rows = [o for o in rows if (not q or q.casefold() in (o["item"] + " " + o["id"]).casefold())
+                and (not status or o["status"] == status)
+                and (not after or (o["created_at"], o["id"]) < after)]
+        return order_page_result(rows[:limit + 1], limit, q, status)
 
     def pending_one(self):
         self.check()

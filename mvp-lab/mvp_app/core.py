@@ -1,6 +1,7 @@
 """Business rules, deliberately independent of database drivers for unit tests."""
 from __future__ import annotations
 import json
+import base64
 import re
 import uuid
 from datetime import datetime, timezone
@@ -12,6 +13,47 @@ ORDER_FIELDS = ("id", "item", "quantity", "unit_price", "total", "status", "vers
 
 STATES = {"created": {"paid", "cancelled"}, "paid": {"shipped", "cancelled"},
           "shipped": set(), "cancelled": set()}
+
+def order_page_input(query):
+    if set(query) - {"limit", "cursor", "q", "status"} or any(
+            not isinstance(v, list) or len(v) != 1 or not isinstance(v[0], str) for v in query.values()):
+        raise Problem(400, "invalid_order_page_parameters")
+    value = lambda key, default="": query.get(key, [default])[0]
+    raw_limit, q, status = value("limit", "25"), value("q").strip(), value("status")
+    if not re.fullmatch(r"[0-9]{1,3}", raw_limit) or not 1 <= int(raw_limit) <= 100:
+        raise Problem(400, "invalid_page_limit")
+    if len(q) > 100 or status and status not in STATES:
+        raise Problem(400, "invalid_order_filter")
+    try:
+        q.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as exc:
+        raise Problem(400, "invalid_order_filter") from exc
+    after = None
+    cursor = value("cursor")
+    if cursor:
+        try:
+            if len(cursor) > 1024 or not re.fullmatch(r"[A-Za-z0-9_-]+", cursor):
+                raise ValueError()
+            parts = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+            if (not isinstance(parts, list) or len(parts) != 4 or not isinstance(parts[0], str)
+                    or len(parts[0]) > 40 or parts[2:] != [q, status]):
+                raise ValueError()
+            datetime.fromisoformat(parts[0])
+            identifier(parts[1])
+            after = tuple(parts[:2])
+        except (ValueError, TypeError, Problem) as exc:
+            raise Problem(400, "invalid_order_cursor") from exc
+    return {"limit": int(raw_limit), "q": q, "status": status, "after": after}
+
+
+def order_page_result(rows, limit, q="", status=""):
+    more, rows = len(rows) > limit, rows[:limit]
+    cursor = None
+    if more:
+        last = rows[-1]
+        value = json.dumps([last["created_at"], last["id"], q, status], ensure_ascii=False).encode()
+        cursor = base64.urlsafe_b64encode(value).decode().rstrip("=")
+    return {"orders": rows, "source": "mariadb", "has_more": more, "next_cursor": cursor}
 
 class Problem(Exception):
     def __init__(self, status: int, code: str):
