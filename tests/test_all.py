@@ -166,23 +166,23 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
     def test_start_initializes_before_up(self):
         self.run_all('up', 'mariadb', 'redis')
         self.assertEqual([(c['name'], c['args']) for c in self.calls()],
-                         [('mariadb', ['init']), ('mariadb', ['up']),
-                          ('redis', ['init']), ('redis', ['up'])])
+                         [('mariadb', ['init']), ('redis', ['init']),
+                          ('mariadb', ['doctor']), ('redis', ['doctor']),
+                          ('mariadb', ['up']), ('redis', ['up'])])
 
     def test_default_up_includes_mvp(self):
         self.run_all('up')
         self.assertEqual([(c['name'], c['args']) for c in self.calls()], [
-            ('elasticsearch', ['up']), ('kafka', ['up']),
-            ('mariadb', ['init']), ('mariadb', ['up']),
-            ('redis', ['init']), ('redis', ['up']),
-            ('mvp', ['init']), ('mvp', ['up']),
+            ('mariadb', ['init']), ('redis', ['init']), ('mvp', ['init']),
+            *[(p, ['doctor']) for p in (*PROJECT_DIRS, 'mvp')],
+            *[(p, ['up']) for p in (*PROJECT_DIRS, 'mvp')],
         ])
 
     def test_default_restart_includes_mvp(self):
         (self.mvp / '.env').write_text('SETTING=initialized\n')
         self.run_all('restart')
         self.assertEqual([c['args'] for c in self.calls() if c['name'] == 'mvp'],
-                         [['down'], ['init'], ['up']])
+                         [['init'], ['doctor'], ['down'], ['up']])
 
     def test_up_creates_es_kafka_env_privately(self):
         self.run_all('up', 'es', 'kafka')
@@ -190,7 +190,7 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
             path = self.root / directory / '.env'
             self.assertEqual(path.read_text(), 'SETTING=original\n')
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-        self.assertEqual(self.names(), ['elasticsearch', 'kafka'])
+        self.assertEqual(self.names(), ['elasticsearch', 'kafka', 'elasticsearch', 'kafka'])
 
     def test_init_preserves_existing_env(self):
         path = self.root / 'elasticsearch/.env'
@@ -232,8 +232,8 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
         self.assertIn('redis: OK', p.stderr)
 
     def test_fail_fast_marks_unattempted_projects(self):
-        p = self.run_all('--fail-fast', 'up', env={'ALL_TEST_FAIL': 'kafka'}, code=1)
-        self.assertEqual(self.names(), ['elasticsearch', 'kafka'])
+        p = self.run_all('--fail-fast', 'up', env={'ALL_TEST_FAIL': 'kafka', 'ALL_TEST_FAIL_CMD':'up'}, code=1)
+        self.assertEqual([c['name'] for c in self.calls() if c['args']==['up']], ['elasticsearch', 'kafka'])
         self.assertIn('mariadb: SKIPPED', p.stderr)
         self.assertIn('redis: SKIPPED', p.stderr)
 
@@ -252,11 +252,26 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
 
     def test_restart_is_down_init_up(self):
         self.run_all('restart', 'redis')
-        self.assertEqual([c['args'] for c in self.calls()], [['down'], ['init'], ['up']])
+        self.assertEqual([c['args'] for c in self.calls()], [['init'], ['doctor'], ['down'], ['up']])
 
     def test_failed_shutdown_prevents_restart_start(self):
         self.run_all('restart', 'redis', env={'ALL_TEST_FAIL': 'redis', 'ALL_TEST_FAIL_CMD': 'down'}, code=1)
-        self.assertEqual([c['args'] for c in self.calls()], [['down']])
+        self.assertEqual([c['args'] for c in self.calls()], [['init'], ['doctor'], ['down']])
+
+    def test_later_init_or_doctor_failure_never_starts_or_stops_any_stack(self):
+        for action, phase in (('up','init'), ('restart','doctor')):
+            with self.subTest(action=action,phase=phase):
+                if self.log.exists(): self.log.unlink()
+                p = self.run_all(action, 'mariadb', 'redis', env={'ALL_TEST_FAIL':'redis','ALL_TEST_FAIL_CMD':phase}, code=1)
+                self.assertFalse(any(c['args'][0] in ('up','down') for c in self.calls()))
+                self.assertIn('no stack was started/stopped', p.stderr)
+
+    def test_successful_up_with_failed_health_is_a_failed_batch(self):
+        (self.root/'scripts/control.py').write_text('import sys\nfrom pathlib import Path\n'
+            "if sys.argv[1]=='record': Path(sys.argv[2]).touch()\n"
+            "if sys.argv[1]=='health': raise SystemExit(1)\n")
+        p = self.run_all('up','redis',code=1)
+        self.assertIn('redis: FAILED (health exit 1)',p.stderr)
 
     def test_reset_requires_scope_and_confirmation(self):
         for args in [('reset',), ('reset', 'all'), ('reset', 'redis'), ('reset', '--yes')]:
@@ -362,7 +377,7 @@ if name == os.environ.get('ALL_TEST_FAIL') and (not os.environ.get('ALL_TEST_FAI
         path = self.es9 / '.env'
         self.assertEqual(path.read_text(), 'SETTING=original\n')
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-        self.assertEqual(self.names(), ['es9'])
+        self.assertEqual([c['args'] for c in self.calls()], [['doctor'], ['up']])
 
     def test_es9_reset_uses_purge_guard(self):
         self.run_all('reset', 'es9', '--yes')

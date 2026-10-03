@@ -79,7 +79,7 @@ begin_operation() {
 }
 record_project() {
   [[ -n "$RUN_FILE" ]] || return 0
-  python3 "$ROOT/scripts/control.py" record "$RUN_FILE" "$RUN_ACTION" "$1" "$2"
+  python3 "$ROOT/scripts/control.py" record "$RUN_FILE" "$RUN_ACTION" "$1" "$2" "${3:-command}"
 }
 
 usage() {
@@ -106,10 +106,10 @@ Common commands (up/down/restart include the four labs and MVP; other commands d
   health [--json]         Application/topology checks; nonzero when unhealthy
   doctor | check          Run each lab's prerequisite checks
   benchmark DATABASE     Run bounded workload; --repeat 3 compares fresh runs
-  up | start             Initialize and start four labs plus MVP, sequentially
+  up | start             Initialize/doctor all, then start + health-check each
   status | ps            Run each lab's native status command
   down | stop            Stop four labs and MVP in reverse order; retain volumes
-  restart                Restart four labs and MVP; retain volumes
+  restart                Check all before shutdown, then restart + health; retain volumes
   test | offline-tests   Run the existing host-only test suites
   self-test              Test all.sh itself, without container runtimes
   reset PROJECT... --yes  Delete selected HA-lab data; MVP is not reset here
@@ -331,13 +331,11 @@ perform_project() {
   case "$action" in
     init) init_project "$project" ;;
     up)
-      init_project "$project" || return
       run_lab "$project" up
       ;;
     restart)
       # A failed shutdown must never be followed by an automatic startup.
       run_lab "$project" down || return
-      init_project "$project" || return
       run_lab "$project" up
       ;;
     doctor|status) run_lab "$project" "$action" ;;
@@ -367,7 +365,7 @@ perform_project() {
 }
 
 run_batch() {
-  local action=$1 project rc failed=0 stopped=0 i
+  local action=$1 project rc failed=0 stopped=0 i phase
   local ordered=("${SELECTED[@]}") results=()
   preflight "$action" || return
   case "$action" in
@@ -380,6 +378,23 @@ run_batch() {
       ;;
   esac
   case "$action" in init|up|restart|down|reset) begin_operation "$action" || return;; esac
+  if [[ "$action" == up || "$action" == restart ]]; then
+    printf 'Startup plan: initialize all → doctor all → %s + application health, in selected order.\n' "$action" >&2
+    # Fail before starting or stopping any stack if one selected configuration is invalid.
+    for phase in initialize doctor; do
+      for project in "${ordered[@]}"; do
+        printf '\n[%s] %s\n' "$phase" "$project" >&2
+        if { if [[ "$phase" == initialize ]]; then init_project "$project"; else run_lab "$project" doctor; fi; }; then
+          record_project "$project" 0 "$phase"
+        else
+          rc=$?; record_project "$project" "$rc" "$phase"
+          printf '%s: %s failed (exit %s); no stack was started/stopped. Fix this phase and rerun.\n' "$project" "$phase" "$rc" >&2
+          if (( rc == 130 || rc == 143 )); then return "$rc"; fi
+          return 1
+        fi
+      done
+    done
+  fi
   if [[ "$action" == down || "$action" == reset ]]; then
     ordered=()
     for (( i=${#SELECTED[@]}-1; i>=0; i-- )); do
@@ -396,12 +411,26 @@ run_batch() {
       continue
     fi
     printf '\n=== %s / %s ===\n' "$project" "$action" >&2
+    phase=command
+    if [[ "$action" == up || "$action" == restart ]]; then phase=start; fi
     if perform_project "$action" "$project"; then
-      if (( DRY_RUN )); then results+=("$project: PLANNED"); else results+=("$project: OK"); record_project "$project" 0; fi
+      record_project "$project" 0 "$phase"
+      if [[ "$action" == up || "$action" == restart ]]; then
+        if run_at "$ROOT" python3 "$ROOT/scripts/control.py" health "$project" --wait-seconds 60; then
+          record_project "$project" 0 health
+          if (( DRY_RUN )); then results+=("$project: PLANNED"); else results+=("$project: READY (application checks)"); fi
+        else
+          rc=$?; record_project "$project" "$rc" health
+          results+=("$project: FAILED (health exit $rc)"); failed=1
+          if (( rc == 130 || rc == 143 )); then return "$rc"; fi
+          (( ! FAIL_FAST )) || stopped=1
+        fi
+      elif (( DRY_RUN )); then results+=("$project: PLANNED")
+      else results+=("$project: OK"); fi
     else
       rc=$?
       results+=("$project: FAILED (exit $rc)")
-      record_project "$project" "$rc"
+      record_project "$project" "$rc" "$phase"
       failed=1
       # Never continue a batch after an interrupted child, even without fail-fast.
       if (( rc == 130 || rc == 143 )); then

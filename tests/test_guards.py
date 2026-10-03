@@ -107,6 +107,25 @@ class ControlTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'run.json';control.record(path,'up','__start__',0);control.record(path,'up','kafka',7);control.record(path,'up','__finish__',1)
             result=json.loads(path.read_text());self.assertEqual(result['status'],'failed');self.assertFalse(result['health_verified']);self.assertEqual(path.stat().st_mode&0o777,0o600)
+    def test_receipt_requires_health_for_every_started_project(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'run.json'
+            control.record(path,'up','__start__',0)
+            for project in ('mvp','redis'): control.record(path,'up',project,0,'start')
+            control.record(path,'up','mvp',0,'health')
+            control.record(path,'up','__finish__',0)
+            self.assertFalse(json.loads(path.read_text())['health_verified'])
+            control.record(path,'up','redis',0,'health');control.record(path,'up','__finish__',0)
+            self.assertTrue(json.loads(path.read_text())['health_verified'])
+            control.record(path,'up','__finish__',1)
+            self.assertFalse(json.loads(path.read_text())['health_verified'])
+    def test_startup_health_retries_transient_failure_with_one_deadline(self):
+        with patch.object(control,'health',side_effect=[{'ready':False},{'ready':True}]) as probe,patch.object(control.time,'sleep'):
+            self.assertTrue(control.wait_health(['redis'],1)['ready'])
+        self.assertEqual(probe.call_count,2)
+        self.assertEqual(probe.call_args_list[0].kwargs['deadline'],probe.call_args_list[1].kwargs['deadline'])
+        for seconds in (-1,float('nan'),float('inf'),301):
+            with self.subTest(seconds=seconds),self.assertRaises(ValueError):control.wait_health(['redis'],seconds)
     def test_cli_default_selection_parses(self):
         p=subprocess.run([os.sys.executable,str(ROOT/'scripts/control.py'),'health','--json'],capture_output=True,text=True)
         self.assertNotEqual(p.returncode,2);self.assertEqual(len(json.loads(p.stdout)['checks']),4)

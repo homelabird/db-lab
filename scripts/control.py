@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import ipaddress
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -159,24 +160,26 @@ def preflight(projects):
     if len(projects)>1:warnings.append('All selected labs accumulate CPU/RAM/storage usage; this is not a capacity or port-ownership certification')
     return {'kind':'preflight','checked_at':now(),'ok':not errors,'projects':projects,'errors':errors,'warnings':warnings,'published_ports':plans,'resources':resources}
 
-def health(projects):
+def health(projects, deadline=None):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib/es-lab'))
     from lablib_core import APIError, ESClient
     checks=[]
     for project in projects:
         start=time.monotonic();row={'project':project,'ready':False}
         try:
+            remaining = deadline - start if deadline is not None else 120
+            if remaining <= 0: raise subprocess.TimeoutExpired('health', 0)
             if not (ROOT/DIRS[project]/'.env').is_file():raise ValueError('not initialized')
             if project in ES_LIKE:
                 data=settings(project)
-                info=ESClient(timeout=8,settings=data).request('GET','/_cluster/health')
+                info=ESClient(timeout=min(8, remaining),settings=data).request('GET','/_cluster/health')
                 if not isinstance(info,dict):raise ValueError('invalid Elasticsearch health response')
                 row['ready']=(info.get('cluster_name')==data.get('LAB_CLUSTER_NAME','cerebro-shard-lab') and info.get('status')=='green' and type(info.get('number_of_nodes')) is int and info['number_of_nodes']>=5 and info.get('timed_out') is False)
                 row['details']={k:info.get(k) for k in ('cluster_name','status','number_of_nodes','unassigned_shards')}
             else:
                 args=['bash',str(ROOT/DIRS[project]/'lab.sh'),'diagnose' if project=='mvp' else 'health']
                 if project not in ('kafka','mvp'):args.append('--json')
-                p=subprocess.run(args,cwd=ROOT/DIRS[project],capture_output=True,text=True,timeout=120 if project=='mvp' else 45,
+                p=subprocess.run(args,cwd=ROOT/DIRS[project],capture_output=True,text=True,timeout=min(remaining, 120 if project=='mvp' else 45),
                                  env=dict(os.environ,STARTUP_TIMEOUT='20'))
                 row['ready']=p.returncode==0;row['exit_code']=p.returncode
                 # Native output may contain data or credentials; do not mirror it into receipts.
@@ -187,12 +190,28 @@ def health(projects):
         row['elapsed_seconds']=round(time.monotonic()-start,3);checks.append(row)
     return {'kind':'health','checked_at':now(),'ready':all(c['ready'] for c in checks),'scope':'read-only application/topology checks; not a write durability or failover test','checks':checks}
 
-def record(path,action,project,code):
+def wait_health(projects, seconds):
+    if not math.isfinite(seconds) or not 0 <= seconds <= 300: raise ValueError('health wait must be 0..300 seconds')
+    if not seconds: return health(projects)
+    deadline=time.monotonic()+seconds
+    result=health(projects,deadline=deadline)
+    while not result['ready'] and time.monotonic()<deadline:
+        time.sleep(min(2, max(0, deadline-time.monotonic())))
+        if time.monotonic()>=deadline: break
+        result=health(projects,deadline=deadline)
+    return result
+
+def record(path,action,project,code,phase='command'):
     if path.exists():data=json.loads(path.read_text())
     else:data={'run_id':path.stem,'started_at':now(),'action':action,'status':'running','results':[],
                'controller_sha256':hashlib.sha256((ROOT/'all.sh').read_bytes()).hexdigest(),'health_verified':False}
-    if project=='__finish__':data.update(status='completed' if code==0 else 'failed',exit_code=code,finished_at=now())
-    elif project!='__start__':data['results'].append({'project':project,'exit_code':code,'status':'command_ok' if code==0 else ('skipped' if code==-1 else 'failed'),'at':now()})
+    if project=='__finish__':
+        started={r['project'] for r in data['results'] if r.get('phase')=='start' and r['exit_code']==0}
+        healthy={r['project'] for r in data['results'] if r.get('phase')=='health' and r['exit_code']==0}
+        data.update(status='completed' if code==0 else 'failed',exit_code=code,finished_at=now(),
+                    health_verified=code==0 and bool(started) and started==healthy,
+                    health_scope='read-only application/topology checks; not data delivery, durability or failover')
+    elif project!='__start__':data['results'].append({'project':project,'phase':phase,'exit_code':code,'status':'command_ok' if code==0 else ('skipped' if code==-1 else 'failed'),'at':now()})
     fd,temp=tempfile.mkstemp(dir=path.parent,prefix='.receipt-')
     try:
         with os.fdopen(fd,'w') as stream:json.dump(data,stream,indent=2);stream.write('\n')
@@ -202,10 +221,12 @@ def record(path,action,project,code):
 
 def main():
     if len(sys.argv)>1 and sys.argv[1]=='record':
-        record(Path(sys.argv[2]),sys.argv[3],sys.argv[4],int(sys.argv[5]));return
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=('preflight','health'));p.add_argument('--json',action='store_true');p.add_argument('projects',nargs='*');a=p.parse_args()
+        record(Path(sys.argv[2]),sys.argv[3],sys.argv[4],int(sys.argv[5]),sys.argv[6] if len(sys.argv)>6 else 'command');return
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=('preflight','health'));p.add_argument('--json',action='store_true');p.add_argument('--wait-seconds',type=float,default=0);p.add_argument('projects',nargs='*');a=p.parse_args()
     if any(x not in DIRS for x in a.projects):p.error('projects must be one of: '+', '.join(DIRS))
-    result=(preflight if a.command=='preflight' else health)(a.projects or list(DEFAULT_PROJECTS))
+    if not math.isfinite(a.wait_seconds) or not 0<=a.wait_seconds<=300 or (a.command=='preflight' and a.wait_seconds):p.error('--wait-seconds requires health and 0..300 seconds')
+    projects=a.projects or list(DEFAULT_PROJECTS)
+    result=preflight(projects) if a.command=='preflight' else wait_health(projects,a.wait_seconds)
     if a.json:print(json.dumps(result,indent=2))
     elif a.command=='preflight':
         for text in result['errors']:print('ERROR:',text)
