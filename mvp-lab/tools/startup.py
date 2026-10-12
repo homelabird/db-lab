@@ -62,36 +62,62 @@ def collect(compose, *, include_logs=True, log_services=(), budget=30.0, service
     if not services or len(set(services)) != len(services) or set(services) - {*BASE_SERVICES, 'redis-spare'}:
         raise ValueError('invalid_diagnostic_services')
     deadline = time.monotonic() + budget
-    compose.guard_target()
-    binding = compose.guard_engine()
-    if compose.engine != ['docker'] or not binding.get('local_docker'):
-        raise RuntimeError('diagnostics_require_pinned_local_docker')
-    rows = []
     def remaining():
         value = deadline - time.monotonic()
         if value <= 0:
             raise TimeoutError()
         return min(value, 5.0)
+    timeout_stage = None
+    stage = 'target_guard'
+    try:
+        compose.guard_target()
+        remaining()
+        stage = 'engine_guard'
+        binding = compose.guard_engine()
+        remaining()
+    except (TimeoutError, subprocess.TimeoutExpired):
+        timeout_stage = stage
+    if timeout_stage is None and (compose.engine != ['docker'] or not binding.get('local_docker')):
+        raise RuntimeError('diagnostics_require_pinned_local_docker')
+    rows = []
     def docker(*argv):
         result = subprocess.run([*compose.engine, *argv], env=compose.inherited,
                                 capture_output=True, text=True, timeout=remaining(), check=True)
         if len(result.stdout) > 4 * 1024**2:
             raise RuntimeError('diagnostic_output_exceeded')
         return result.stdout + result.stderr if argv[0] == 'logs' else result.stdout
+    values, unobserved_state = [], 'missing'
+    try:
+        if timeout_stage is not None:
+            raise TimeoutError()
+        stage = 'container_discovery'
+        ids = docker('ps', '-aq', '--filter',
+                     'label=com.docker.compose.project=' + compose.config['MVP_PROJECT']).split()
+        if any(not re.fullmatch(r'[a-f0-9]{12,64}', identity) for identity in ids):
+            raise RuntimeError('invalid_container_identity')
+        stage = 'container_inspection'
+        inspected = json.loads(docker('inspect', *ids)) if ids else []
+        if (not isinstance(inspected, list) or len(inspected) != len(ids) or any(
+                not isinstance(raw, dict) or
+                (raw.get('Config', {}).get('Labels') or {}).get('com.docker.compose.project')
+                != compose.config['MVP_PROJECT']
+                for raw in inspected)):
+            raise RuntimeError('invalid_inspect_response')
+        values = inspected
+    except (TimeoutError, subprocess.TimeoutExpired):
+        unobserved_state = 'observation_timeout'
+        timeout_stage = stage
+    except Exception:
+        unobserved_state = 'observation_failed'
     for service in services:
-        row = {'service': service, 'ready': False, 'state': 'unknown', 'signals': []}
+        row = {'service': service, 'ready': False, 'state': unobserved_state, 'signals': []}
         try:
-            result = compose.run('ps', '-a', '-q', service, capture=True, timeout=remaining())
-            ids = result.stdout.split()
-            if len(ids) != 1:
-                row['state'] = 'missing' if not ids else 'ambiguous'
-            else:
-                if not re.fullmatch(r'[a-f0-9]{12,64}', ids[0]):
-                    raise RuntimeError('invalid_container_identity')
-                values = json.loads(docker('inspect', ids[0]))
-                if not isinstance(values, list) or len(values) != 1:
-                    raise RuntimeError('invalid_inspect_response')
-                row = sanitize_container(values[0], compose.config['MVP_PROJECT'], service)
+            matches = [raw for raw in values if
+                       raw['Config']['Labels'].get('com.docker.compose.service') == service]
+            if len(matches) > 1:
+                row['state'] = 'ambiguous'
+            elif matches:
+                row = sanitize_container(matches[0], compose.config['MVP_PROJECT'], service)
                 if include_logs and (not row['ready'] or service in log_services):
                     try:
                         row['signals'] = log_signals(docker('logs', '--tail', '100', row['container_id']))
@@ -103,6 +129,8 @@ def collect(compose, *, include_logs=True, log_services=(), budget=30.0, service
             # Do not serialize exception strings, command args or subprocess output.
             row['state'] = 'observation_failed'
         rows.append(row)
+    complete = all(r['state'] in STATES | {'missing', 'ambiguous'} and r.get('health') != 'unknown' for r in rows)
     return {'schema': 1, 'ready': all(r['ready'] for r in rows), 'containers': rows, 'services': list(services),
+            'observation_complete': complete, 'timeout_stage': timeout_stage,
             'scope': 'read-only container state; not database correctness or durability',
             'raw_logs_included': False, 'environment_included': False}

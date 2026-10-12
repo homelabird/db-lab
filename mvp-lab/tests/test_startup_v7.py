@@ -70,16 +70,112 @@ class CollectTests(unittest.TestCase):
         c.guard_engine.return_value={'local_docker':True};c.run.return_value=types.SimpleNamespace(stdout='a'*64)
         return c
     def test_missing_containers_reported_without_inspecting_any_id(self):
-        c=self.compose();c.run.return_value.stdout=''
-        with patch.object(startup.subprocess,'run') as process: result=startup.collect(c)
-        process.assert_not_called();self.assertFalse(result['ready'])
+        c=self.compose()
+        with patch.object(startup.subprocess,'run',return_value=types.SimpleNamespace(stdout='',stderr='')) as process:
+            result=startup.collect(c)
+        process.assert_called_once();self.assertEqual(process.call_args.args[0][1],'ps')
+        self.assertFalse(result['ready'])
         self.assertTrue(all(r['state']=='missing' for r in result['containers']))
     def test_multiple_containers_are_not_arbitrarily_selected(self):
-        c=self.compose();c.run.return_value.stdout='a'*64+'\n'+'b'*64
-        result=startup.collect(c);self.assertTrue(all(r['state']=='ambiguous' for r in result['containers']))
+        c=self.compose()
+        second=container();second['Id']='b'*64
+        with patch.object(startup.subprocess,'run',side_effect=[
+                types.SimpleNamespace(stdout='a'*64+'\n'+'b'*64,stderr=''),
+                types.SimpleNamespace(stdout=json.dumps([container(),second]),stderr='')]):
+            result=startup.collect(c,services=('mariadb',))
+        self.assertEqual(result['containers'][0]['state'],'ambiguous')
+
+    def test_healthy_services_fit_budget_with_batched_discovery(self):
+        c=self.compose();clock=[0.0]
+        records={service:container(service) for service in startup.BASE_SERVICES}
+        for n,row in enumerate(records.values()):row['Id']=format(n+1,'064x')
+        def inspect(argv,**kwargs):
+            if argv[1]=='ps':
+                clock[0]+=2
+                return types.SimpleNamespace(stdout='\n'.join(row['Id'] for row in records.values()),stderr='')
+            clock[0]+=1
+            return types.SimpleNamespace(stdout=json.dumps(
+                [row for row in records.values() if row['Id'] in argv[2:]]),stderr='')
+        def guarded():clock[0]+=6;return {'local_docker':True}
+        c.guard_engine.side_effect=guarded
+        with patch.object(startup.time,'monotonic',side_effect=lambda:clock[0]),\
+                patch.object(startup.subprocess,'run',side_effect=inspect) as process:
+            result=startup.collect(c,budget=15)
+        self.assertTrue(result['ready'])
+        self.assertEqual([r['service'] for r in result['containers']],list(startup.BASE_SERVICES))
+        c.run.assert_not_called();self.assertEqual(process.call_count,2)
+        self.assertIn('label=com.docker.compose.project='+PROJECT,process.call_args_list[0].args[0])
+
+    def test_batched_discovery_keeps_missing_services_distinct(self):
+        c=self.compose()
+        with patch.object(startup.subprocess,'run',side_effect=[
+                types.SimpleNamespace(stdout='a'*64,stderr=''),
+                types.SimpleNamespace(stdout=json.dumps([container()]),stderr='')]):
+            result=startup.collect(c,services=('mariadb','worker'))
+        self.assertTrue(result['containers'][0]['ready'])
+        self.assertEqual(result['containers'][1]['state'],'missing')
     def test_timeout_is_unknown_not_unhealthy(self):
-        c=self.compose();c.run.side_effect=subprocess.TimeoutExpired(['fake'],1)
-        result=startup.collect(c);self.assertTrue(all(r['state']=='observation_timeout' for r in result['containers']))
+        c=self.compose()
+        with patch.object(startup.subprocess,'run',side_effect=subprocess.TimeoutExpired(['fake'],1)):
+            result=startup.collect(c)
+        self.assertTrue(all(r['state']=='observation_timeout' for r in result['containers']))
+        self.assertEqual(result['timeout_stage'],'container_discovery')
+        self.assertFalse(result['observation_complete'])
+
+    def test_inspection_timeout_reports_its_stage_without_subprocess_output(self):
+        c=self.compose()
+        with patch.object(startup.subprocess,'run',side_effect=[
+                types.SimpleNamespace(stdout='a'*64,stderr=''),
+                subprocess.TimeoutExpired(['private-command'],1,output='PRIVATE-SENTINEL')]):
+            result=startup.collect(c)
+        self.assertEqual(result['timeout_stage'],'container_inspection')
+        self.assertFalse(result['observation_complete']);self.assertFalse(result['ready'])
+        self.assertNotIn('PRIVATE',json.dumps(result))
+
+    def test_guard_budget_exhaustion_cannot_run_container_queries(self):
+        c=self.compose();clock=[0.0]
+        def guarded():clock[0]=16;return {'local_docker':True}
+        c.guard_engine.side_effect=guarded
+        with patch.object(startup.time,'monotonic',side_effect=lambda:clock[0]),\
+                patch.object(startup.subprocess,'run') as process:
+            result=startup.collect(c,budget=15)
+        process.assert_not_called();self.assertEqual(result['timeout_stage'],'engine_guard')
+        self.assertFalse(result['ready']);self.assertFalse(result['observation_complete'])
+
+    def test_target_guard_timeout_is_unknown_without_queries_or_private_output(self):
+        c=self.compose()
+        c.guard_target.side_effect=subprocess.TimeoutExpired(['PRIVATE-COMMAND'],1,output='PRIVATE-SENTINEL')
+        with patch.object(startup.subprocess,'run') as process:
+            result=startup.collect(c)
+        process.assert_not_called();c.guard_engine.assert_not_called()
+        self.assertEqual(result['timeout_stage'],'target_guard')
+        self.assertFalse(result['ready']);self.assertNotIn('PRIVATE',json.dumps(result))
+
+    def test_unselected_project_service_is_ignored(self):
+        c=self.compose();extra=container('redis-spare');extra['Id']='b'*64
+        extra['State']['Health']['Status']='unhealthy'
+        with patch.object(startup.subprocess,'run',side_effect=[
+                types.SimpleNamespace(stdout='a'*64+'\n'+'b'*64,stderr=''),
+                types.SimpleNamespace(stdout=json.dumps([container(),extra]),stderr='')]):
+            result=startup.collect(c,services=('mariadb',))
+        self.assertTrue(result['ready']);self.assertEqual(len(result['containers']),1)
+
+    def test_foreign_project_is_rejected_even_for_unselected_service(self):
+        c=self.compose();extra=container('redis-spare');extra['Id']='b'*64
+        extra['Config']['Labels']['com.docker.compose.project']='other'
+        with patch.object(startup.subprocess,'run',side_effect=[
+                types.SimpleNamespace(stdout='a'*64+'\n'+'b'*64,stderr=''),
+                types.SimpleNamespace(stdout=json.dumps([container(),extra]),stderr='')]):
+            result=startup.collect(c,services=('mariadb',))
+        self.assertFalse(result['ready']);self.assertEqual(result['containers'][0]['state'],'observation_failed')
+
+    def test_inspect_must_cover_all_discovered_ids(self):
+        c=self.compose()
+        with patch.object(startup.subprocess,'run',side_effect=[
+                types.SimpleNamespace(stdout='a'*64+'\n'+'b'*64,stderr=''),
+                types.SimpleNamespace(stdout=json.dumps([container()]),stderr='')]):
+            result=startup.collect(c,services=('mariadb',))
+        self.assertFalse(result['ready']);self.assertEqual(result['containers'][0]['state'],'observation_failed')
     def test_wrong_engine_refused_before_container_queries(self):
         c=self.compose();c.engine=['podman']
         with self.assertRaises(RuntimeError): startup.collect(c)
@@ -94,6 +190,7 @@ class CollectTests(unittest.TestCase):
     def test_stderr_log_signal_is_kept_without_raw_output(self):
         c=self.compose()
         def run(argv,**kwargs):
+            if argv[1]=='ps':return types.SimpleNamespace(stdout='a'*64,stderr='')
             if argv[1]=='inspect':
                 row=container();row['State']['Health']['Status']='unhealthy'
                 return types.SimpleNamespace(stdout=json.dumps([row]),stderr='')
@@ -106,6 +203,7 @@ class CollectTests(unittest.TestCase):
     def test_requested_healthy_service_logs_are_classified(self):
         c=self.compose()
         def run(argv,**kwargs):
+            if argv[1]=='ps':return types.SimpleNamespace(stdout='a'*64,stderr='')
             if argv[1]=='inspect': return types.SimpleNamespace(stdout=json.dumps([container('api')]),stderr='')
             return types.SimpleNamespace(stdout='private-token: Access denied',stderr='')
         with patch.object(startup,'BASE_SERVICES',('api',)),patch.object(startup.subprocess,'run',side_effect=run):
@@ -170,6 +268,37 @@ class InitializationTests(unittest.TestCase):
         with patch.object(startup,'collect',return_value={'ready':False,'containers':rows}),self.assertRaisesRegex(RuntimeError,'later stages'):
             manage.Compose.wait_services(self.compose,('kafka',),stage='databases',seconds=2)
         self.assertEqual(self.evidence()['status'],'failed');self.assertEqual(self.evidence()['containers'],rows)
+
+    def test_timeout_keeps_last_known_state_separate_without_stale_readiness(self):
+        known=[startup.sanitize_container(container(service),PROJECT,service) for service in ('mariadb','kafka')]
+        known[1].update(health='starting',ready=False)
+        unknown=[{'service':s,'ready':False,'state':'observation_timeout','signals':[]} for s in ('mariadb','kafka')]
+        first={'ready':False,'observation_complete':True,'containers':known,'timeout_stage':None}
+        later={'ready':False,'observation_complete':False,'containers':unknown,'timeout_stage':'container_inspection'}
+        with patch.object(startup,'collect',side_effect=[first]+[later]*20),\
+                self.assertRaisesRegex(RuntimeError,'later stages'),redirect_stdout(io.StringIO()):
+            manage.Compose.wait_services(self.compose,('mariadb','kafka'),stage='databases',seconds=2)
+        evidence=self.evidence();history=evidence['last_successful_observation']
+        self.assertEqual(evidence['status'],'failed');self.assertFalse(evidence['ready'])
+        self.assertEqual(evidence['containers'],unknown);self.assertEqual(history['containers'],known)
+        self.assertEqual(evidence['timeout_stage'],'container_inspection')
+        self.assertGreater(history['age_seconds'],0);self.assertTrue(history['recorded_at'])
+        self.assertNotIn('PRIVATE',json.dumps(evidence))
+
+    def test_later_complete_observation_replaces_history_and_reaches_ready(self):
+        row=startup.sanitize_container(container(),PROJECT,'mariadb')
+        starting=dict(row,health='starting',ready=False)
+        unknown={'service':'mariadb','ready':False,'state':'observation_timeout','signals':[]}
+        observations=[{'ready':False,'observation_complete':True,'containers':[starting],'timeout_stage':None},
+                      {'ready':False,'observation_complete':False,'containers':[unknown],'timeout_stage':'container_discovery'},
+                      {'ready':True,'observation_complete':True,'containers':[row],'timeout_stage':None}]
+        with patch.object(startup,'collect',side_effect=observations),redirect_stdout(io.StringIO()):
+            manage.Compose.wait_services(self.compose,('mariadb',),stage='databases',seconds=4)
+        evidence=self.evidence()
+        self.assertEqual(evidence['status'],'ready');self.assertTrue(evidence['ready'])
+        self.assertIsNone(evidence['timeout_stage'])
+        self.assertEqual(evidence['last_successful_observation']['containers'],[row])
+        self.assertEqual(evidence['last_successful_observation']['age_seconds'],0)
 
     def test_remote_docker_legacy_init_is_not_claimed_as_local_readiness(self):
         self.compose.guard_engine.return_value={'local_docker':False}

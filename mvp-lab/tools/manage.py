@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import base64
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -300,11 +301,21 @@ class Compose:
             return
         deadline = time.monotonic() + seconds
         previous = None
+        last_successful_at = None
         while time.monotonic() < deadline:
             left = deadline - time.monotonic()
             if left <= 0: break
             observed = collect(self, services=services, include_logs=True, budget=min(15, left))
             evidence.update(observed)
+            now = time.monotonic()
+            if observed.get("observation_complete") is True:
+                last_successful_at = now
+                evidence["last_successful_observation"] = {
+                    "recorded_at": datetime.now(timezone.utc).isoformat(),
+                    "containers": observed["containers"],
+                }
+            if last_successful_at is not None:
+                evidence["last_successful_observation"]["age_seconds"] = round(now - last_successful_at, 3)
             summary = ", ".join(r["service"] + ":" + r.get("health", r["state"]) for r in observed["containers"])
             if summary != previous:
                 print(stage + ": " + summary, flush=True); previous = summary
@@ -316,6 +327,8 @@ class Compose:
             left = deadline - time.monotonic()
             if left > 0: time.sleep(min(3, left))
         evidence["status"] = "failed"
+        if last_successful_at is not None:
+            evidence["last_successful_observation"]["age_seconds"] = round(time.monotonic() - last_successful_at, 3)
         atomic_json(path, evidence)
         raise RuntimeError(stage + " readiness deadline exceeded; later stages were not started. "
                            "Containers/volumes retained. Inspect mvp logs and evidence: " + str(path))
