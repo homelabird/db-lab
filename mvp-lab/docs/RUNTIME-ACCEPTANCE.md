@@ -56,7 +56,7 @@ MariaDB `/var/lib/mysql`, Kafka `/var/lib/kafka/data`, ES `/usr/share/elasticsea
 | Elasticsearch | 실제 HTTP GET, strict mapping/필드 타입, 1 shard/0 replica, index UUID |
 | Kafka | topic UUID/단일 partition, committed·low·high, 보존 범위 밖 checkpoint 여부 |
 
-소스 범위는 `mvp_app`의 Python/HTML, `requirements.txt`, `Containerfile`입니다. 호스트 테스트/도구 전체를 이미지에 넣거나 서명하는 기능은 아닙니다. SHA-256 일치는 소스 일치 검증이지 이미지 공급망 서명 인증이 아닙니다. 직접 패키지 버전만 고정 확인하며 전이 의존성 완전 잠금/CVE 검사/이미지 최신성 검사는 아닙니다.
+소스 범위는 `mvp_app`의 Python, React의 `frontend/src`·설정·HTML 진입점·`package.json`·`package-lock.json`, `requirements.txt`, `Containerfile`, `.dockerignore`입니다. 호스트는 Node.js나 빌드 결과 없이 소스 해시를 비교할 수 있습니다. 이미지 안의 생성된 HTML·JS·CSS는 별도 자산 manifest로 봉인하고 현재 제공 파일과 비교합니다. 호스트 테스트/도구 전체를 이미지에 넣거나 서명하는 기능은 아닙니다. SHA-256 일치는 소스·자산 일치 검증이지 이미지 공급망 서명 인증이 아닙니다. Python 직접 패키지 버전 확인과 npm lock을 사용하며, Python 전이 의존성 완전 잠금/CVE 검사/이미지 최신성 검사는 아닙니다.
 
 잘못된 이미지·패키지·설정이면 네 DB 검사까지 진행하지 않습니다. DB 검사에는 INSERT/DDL, Redis SET/DEL, ES 색인/refresh, Kafka produce/commit을 넣지 않았습니다. SQL은 세션 설정 후 READ ONLY 트랜잭션으로 metadata를 읽고 rollback/close합니다. 연결·로그·내부 진단 카운터 등 관측 비용까지 없다는 뜻은 아닙니다.
 

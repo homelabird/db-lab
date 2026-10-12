@@ -44,25 +44,51 @@ def canonical(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
 
 
-def source_manifest(root: Path) -> dict:
+def file_manifest(root: Path, paths) -> dict:
     root = Path(root)
-    paths = [root / 'requirements.txt', root / 'Containerfile']
-    paths += sorted(p for p in (root / 'mvp_app').rglob('*') if p.suffix in {'.py', '.html'})
-    if not (root / 'mvp_app/runtime_contract.py').is_file():
-        raise ContractError('runtime_contract_source_missing')
     files = {}
     for p in sorted(paths):
         if p.is_symlink() or not p.is_file() or p.stat().st_size > 2 * 1024**2:
             raise ContractError('source_not_a_bounded_regular_file')
-        # Do not follow a symlinked source-directory ancestor either.
-        if root.resolve() not in p.resolve().parents:
+        parts = p.relative_to(root).parts
+        if root.resolve() not in p.resolve().parents or any(
+                (root / Path(*parts[:i])).is_symlink() for i in range(1, len(parts))):
             raise ContractError('source_outside_project')
         files[p.relative_to(root).as_posix()] = hashlib.sha256(p.read_bytes()).hexdigest()
     return {'schema': SCHEMA, 'files': files, 'sha256': hashlib.sha256(canonical(files)).hexdigest()}
 
 
+def source_manifest(root: Path) -> dict:
+    root = Path(root)
+    paths = [root / name for name in ('requirements.txt', 'Containerfile', '.dockerignore')]
+    paths += sorted(p for p in (root / 'mvp_app').rglob('*')
+                    if (p.suffix == '.py' or p.is_symlink()) and
+                    'static' not in p.relative_to(root / 'mvp_app').parts)
+    paths += [root / 'frontend' / name for name in
+              ('package.json', 'package-lock.json', 'index.html', 'vite.config.js')]
+    paths += sorted(p for p in (root / 'frontend/src').rglob('*') if p.is_file() or p.is_symlink())
+    if (not (root / 'mvp_app/runtime_contract.py').is_file() or not (root / 'frontend/src').is_dir()
+            or (root / 'frontend/src').is_symlink()):
+        raise ContractError('runtime_contract_source_missing')
+    return file_manifest(root, paths)
+
+
+def asset_manifest(root: Path) -> dict:
+    root = Path(root) / 'mvp_app/static'
+    assets = root / 'assets'
+    if root.is_symlink() or assets.is_symlink() or not assets.is_dir():
+        raise ContractError('served_assets_missing_rebuild_required')
+    paths = [root / 'index.html', *assets.iterdir()]
+    if not {'.js', '.css'}.issubset({p.suffix for p in paths}) or any(
+            p != root / 'index.html' and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,180}', p.name)
+            for p in paths):
+        raise ContractError('invalid_served_asset_layout')
+    return file_manifest(root, paths)
+
+
 def seal(root: Path) -> dict:
     value = source_manifest(root)
+    value['assets'] = asset_manifest(root)
     # Build-only command; no DB libraries or network requests are used here.
     (root / BUILD_FILE).write_bytes(canonical(value) + b'\n')
     return value
@@ -82,11 +108,15 @@ def check_source(root: Path, expected: str) -> dict:
     if not path.is_file() or path.is_symlink() or path.stat().st_size > 128 * 1024:
         raise ContractError('image_build_manifest_missing_rebuild_required')
     built = json.loads(path.read_text())
-    if built != actual:
+    if not isinstance(built, dict) or {key: built.get(key) for key in actual} != actual:
         raise ContractError('image_files_differ_from_build_manifest')
+    assets = asset_manifest(root)
+    if built.get('assets') != assets:
+        raise ContractError('served_assets_differ_from_build_manifest')
     if actual['sha256'] != expected:
         raise ContractError('running_image_differs_from_host_source')
-    return {'source_sha256': actual['sha256'], 'file_count': len(actual['files']), 'build_manifest_matches': True}
+    return {'source_sha256': actual['sha256'], 'file_count': len(actual['files']),
+            'assets_sha256': assets['sha256'], 'asset_count': len(assets['files']), 'build_manifest_matches': True}
 
 
 def check_packages(root: Path) -> dict:

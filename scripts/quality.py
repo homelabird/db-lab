@@ -3,7 +3,7 @@
 
 static: syntax, duplicate test names/YAML keys, local documentation links.
 offline: static + all seven host suites (their doubles are not live DB evidence).
-tools: actual Ansible fixture, Helm renderer and Chromium UI, missing tools => blocked/127.
+tools: actual Ansible fixture, Helm renderer, React test/build and Chromium UI, missing tools => blocked/127.
 release: compare the supplied release manifest; not a signature/attestation.
 manifest: explicitly refresh the release baseline after reviewing source changes.
 all: static + host suites + real tool checks. Runtime remains `mvp verify`.
@@ -41,13 +41,14 @@ MANIFEST = 'RELEASE-MANIFEST.json'
 def source_files(root):
     """Exclude local environments/generated evidence, never follow symlinks."""
     for directory, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = sorted(d for d in dirs if d not in IGNORED_DIRS and not d.startswith('.venv'))
+        relative_dir = Path(directory).relative_to(root).parts
+        dirs[:] = sorted(d for d in dirs if d not in IGNORED_DIRS and not d.startswith('.venv')
+                         and relative_dir + (d,) != ('mvp-lab', 'mvp_app', 'static'))
         for dirname in list(dirs):
             if (Path(directory) / dirname).is_symlink():
                 yield Path(directory) / dirname
                 dirs.remove(dirname)
         for filename in sorted(files):
-            relative_dir = Path(directory).relative_to(root).parts
             if relative_dir[:2] == ('redis-lab', 'output') and filename != '.gitkeep':
                 continue
             if (filename == '.env' or (filename.startswith('.env.') and filename != '.env.example')
@@ -314,7 +315,12 @@ def main(argv=None):
         if args.mode in ('tools','all'):
             for name in ('ansible','helm'):
                 results.append(command_check(name,['bash',str(root/'scripts'/('test-'+name+'.sh'))],root,output))
-            results.append(command_check('ui',[sys.executable,str(root/'scripts/test-ui.py')],root,output))
+            frontend=root/'mvp-lab/frontend'
+            results.append(command_check('frontend-test',['npm','test'],frontend,output))
+            build=command_check('frontend-build',['npm','run','build'],frontend,output)
+            results.append(build)
+            if build['status']=='passed':
+                results.append(command_check('ui',[sys.executable,str(root/'scripts/test-ui.py')],root,output))
         if args.mode=='release':results.append(release_check(root))
         if args.mode=='manifest':results.append(refresh_manifest(root,args.release))
     except (OSError,ValueError,TypeError,KeyError) as exc:

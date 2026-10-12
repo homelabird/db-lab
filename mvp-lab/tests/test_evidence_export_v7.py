@@ -56,6 +56,13 @@ class ExportTests(unittest.TestCase):
     def test_unknown_error_code_dropped(self):
         checks=e.project_checks({'checks':[{'name':'redis','status':'failed','code':'private_secret_token'}]})
         self.assertIsNone(checks[0]['code'])
+    def test_served_asset_failures_are_exported_without_private_details(self):
+        for code in ('served_assets_missing_rebuild_required','invalid_served_asset_layout',
+                     'served_assets_differ_from_build_manifest'):
+            checks=e.project_checks({'checks':[{'name':'image_source','status':'failed','code':code,
+                                                'detail':{'private':'PRIVATE-SENTINEL'}}]})
+            with self.subTest(code=code):self.assertEqual(checks[0]['code'],code)
+            self.assertNotIn('PRIVATE',json.dumps(checks))
     def test_unknown_check_not_exported(self):
         self.assertEqual(e.project_checks({'checks':[{'name':'PRIVATE-SENTINEL','status':'failed'}]}),[])
     def test_candidate_input_not_public_exported(self):

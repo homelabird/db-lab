@@ -3,4 +3,9 @@
 !mvp_app/
 !mvp_app/**
 mvp_app/__pycache__/
+mvp_app/static/
+!frontend/
+!frontend/**
+frontend/node_modules/
 !Containerfile
+!.dockerignore

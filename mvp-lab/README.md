@@ -6,23 +6,33 @@
 트랜잭션·메시지·네트워크 실습은 아래 문서의 별도 경계를 확인하세요. 시나리오별 dev/staging/prod 대응 조회는 [대응 쿼리 가이드](../docs/SCENARIO-RESPONSE-QUERIES.md#mvp-end-to-end-scenarios)를 참고하세요.
 [트랜잭션](docs/TRANSACTION-DRILLS.md) · [메시지](docs/MESSAGE-DRILLS.md) · [통합 사고 대응 훈련](docs/INCIDENT-EXERCISE.md) · [네트워크/복원](docs/ADVANCED-DRILLS.md) · [Ansible](../ansible/README.md)
 
-이 시스템은 기능이 많은 쇼핑몰이 아닙니다. 주문 하나가 저장·전달·검색되는 경로를 만들고,
-**어느 DB가 멈췄는지에 따라 왜 일부 기능만 실패하는지** 관찰하는 실습입니다.
-로그인, 실제 결제, React 빌드, Kubernetes, CDC/Connect, Schema Registry는 넣지 않았습니다.
+이 시스템은 쇼핑몰 형태의 화면에서 주문이 저장·전달·검색되는 경로를 관찰하는 실습입니다.
+**어느 DB가 멈췄는지에 따라 왜 일부 기능만 실패하는지**를 주문 내역과 저장소 대조로 확인합니다.
+로그인, 실제 결제, Kubernetes, CDC/Connect, Schema Registry는 넣지 않았습니다.
 
 기본 구성은 **MariaDB 1 + Kafka 1 + Elasticsearch 1 + Redis 1 + API 1 + worker 1 = 6개 컨테이너**입니다.
-앱은 Python, 화면은 HTML 한 장입니다. `redis-spare` 실험에서만 Redis 하나가 추가됩니다.
+API와 worker는 Python, 화면은 **React + Vite**입니다. `redis-spare` 실험에서만 Redis 하나가 추가됩니다.
 
-웹 첫 화면은 실습용 상품 4개를 보여주는 스토어입니다. 카테고리·상품 검색 → 상품 선택 → 수량·합계 확인 → 주문 확정 후 주문 내역에서 조회합니다. 상품과 원화 표시는 화면의 고정 예시이며 별도 상품·재고·결제 API는 없습니다. 주문 내역의 직접 입력과 저장소 비교, 연결 상태, 실습 가이드는 계속 사용할 수 있습니다.
+웹 첫 화면은 [Google Online Boutique](https://github.com/GoogleCloudPlatform/microservices-demo)의 상품 탐색·장바구니·주문 흐름을 참고한 스토어입니다.
+카테고리·상품 검색 → 상품 상세 → 여러 상품 장바구니 → 수량·합계 확인 → 데모 주문 → 상품별 주문 영수증 순서로 이용합니다.
+기존 상품 4개와 원화 가격은 화면의 고정 예시이며 별도 상품·재고·결제 API는 없습니다. 고객 정보·카드·배송 주소를 입력하거나 실제 결제를 처리하지 않습니다.
+장바구니는 현재 탭의 `sessionStorage`에 보관해 새로고침 후에도 이어집니다. API는 상품별로 주문을 하나씩 순차 저장하므로,
+부분 실패 시 저장된 상품은 장바구니에서 빠지고 남은 상품만 같은 요청 키로 재시도합니다. 여러 상품 전체를 한 번에 취소하는 트랜잭션은 아닙니다.
+잘못된 장바구니 수량은 즉시 안내하고 주문을 막습니다. 영수증에는 저장된 합계·상태·버전을 표시하며 원본 조회·상태 변경 결과를 반영합니다.
+주문 내역의 직접 입력과 저장소 비교, 연결 상태, 실습 가이드는 계속 사용할 수 있습니다. 화면 사용법과 저장 경계는 [스토어 가이드](docs/STOREFRONT.md)를 확인하세요.
+직접 입력 주문도 요청 내용과 요청 키를 현재 탭에 보관해 새로고침 후 같은 요청으로 확인합니다. 저장 결과를 확인할 때까지 입력은 잠기며, 브라우저 보관 실패는 화면에 안내합니다.
+뒤로가기나 화면 이동은 열린 창을 닫습니다. 닫힌 직접 입력 창의 늦은 저장 응답은 상세 창을 다시 열지 않고 재시도 정보를 유지합니다.
 [디자인·기능 개선 분석](docs/UI-IMPROVEMENTS.md)에서 화면의 아쉬운 점, 적용한 개선과 검증 범위를 확인하세요.
 주문 내역과 연결 상태는 화면에 들어갈 때 갱신합니다. 원본 목록은 최신순 **25개씩 이전·다음 페이지**로 읽고, 상품 이름·주문 ID의 부분 검색과 상태 필터는 전체 MariaDB 주문을 대상으로 합니다. 입력 후 검색/Enter를 누르세요. 전체 주문 ID를 넣고 **주문 ID 조회**를 누르면 상세 원본으로 열 수 있으며 이 조회는 캐시도 채웁니다. 상세에서 주문 ID를 복사할 수 있습니다.
 상세의 **읽기 전용 대조**는 MariaDB·Redis·Elasticsearch의 상태·버전과 다른 항목을 보여줍니다. 관찰 중 원본 변경이나 원본 검증 실패는 비교 불가로 표시합니다. 연결 성공과 처리 완료는 별도로 확인하세요.
 **검색 반영 자동 확인**을 켜면 5초마다 읽기 전용 대조를 실행하고, 관찰 중 안정된 SQL 원본과 ES가 일치하면 종료합니다. 연결 상태의 자동 갱신도 선택 사항입니다. 숨긴 화면·닫힌 상세·백그라운드 탭에서는 요청하지 않고 진행 중인 요청과 겹치지 않습니다. 대조는 원자적 스냅샷이 아닙니다.
 [화면·기동 고도화 기록](docs/UI-UPGRADE.md)에서 추가 기능과 실제 Docker 연동 검증 범위를 확인하세요.
+React 전환과 기존 스토어·주문 안정성·기동 판정 개선의 검사 결과는 [스토어 가이드](docs/STOREFRONT.md)에 날짜와 구현별로 정리했습니다.
 웹 요청은 20초 후 대기를 중단합니다. 쓰기가 이미 처리됐을 수 있으므로, 주문 생성은 같은 내용으로 재시도해 기존 요청 키를 유지하고 상태 변경은 원본 조회 후 확인하세요.
-브라우저 UI 회귀 검사는 프로젝트 루트에서 `python scripts/test-ui.py`로 Chromium의 1280px·390px·320px 화면과 키보드 동작을 확인합니다.
-[품질 가이드](../docs/QUALITY-GUIDE.md)의 브라우저 의존성을 준비하세요. 기존 [tests/ui_smoke.js](tests/ui_smoke.js)를 재사용하며
-모든 HTTP 요청은 모의 응답으로 처리합니다. 실제 DB 연동 증거는 아닙니다. DevTools 수동 실행도 유지합니다.
+브라우저 UI 회귀 검사는 React를 빌드한 뒤 프로젝트 루트에서 `python scripts/test-ui.py`로 Chromium의 1280px·390px·320px 화면과 키보드 동작을 확인합니다.
+[스토어 가이드의 개발·검사 절차](docs/STOREFRONT.md#react-개발과-빌드)와 [품질 가이드](../docs/QUALITY-GUIDE.md)의 브라우저 의존성을 준비하세요. 기존 [tests/ui_smoke.js](tests/ui_smoke.js)를 재사용하며
+스토어 검사는 모의 HTTP 응답을 사용하고, Vite 프록시 검사는 별도 loopback API와 DB 테스트 대역으로 브라우저의 주문 저장·상태 변경을 확인합니다.
+기존 API나 실제 DB에는 접속하지 않습니다. DevTools 수동 smoke는 모의 응답을 사용합니다.
 
 > 기존 `mariadb-ha-lab`, `kafka-lab`, `elasticsearch`, `redis-lab`의 실행 중인 클러스터에 자동 연결하지 않습니다.
 > 같은 네 가지 기술을 사용하는 **별도 단일 노드 MVP**이며, 프로젝트·네트워크·볼륨·암호가 분리됩니다.
@@ -60,7 +70,8 @@ Kafka는 비동기 전달 경로이지 SQL과 하나의 트랜잭션을 공유�
 Linux 또는 WSL2, Python 3.10 이상, 루트 진입점용 Bash 4.4+, 컨테이너 엔진과 Compose provider가 필요합니다.
 우선 대상은 Docker Compose v2이며 Podman + Compose provider 감지도 제공합니다. 2026-10-03에는 별도 로컬 Docker 29.7.2 / Compose v2.40.3 MVP에서 단계별 기동·실제 화면·재시작을 검증했습니다.
 Podman의 이번 변경에 대한 실기동은 미검증입니다. Podman에서는 `doctor`로 해당 버전의 profile/build 지원부터 확인하세요.
-앱의 Python 패키지는 이미지 빌드 중 설치합니다. 호스트에 Flask/React/DB 드라이버를 설치할 필요는 없습니다.
+이미지 빌드의 Node 22 단계에서 React를 설치·빌드하고, Python 단계에는 완성된 JS·CSS와 앱을 넣습니다.
+Docker로 이용할 때는 호스트에 Node.js·React·DB 드라이버를 설치할 필요가 없습니다. 화면을 직접 개발할 때의 Node.js 준비는 [스토어 가이드](docs/STOREFRONT.md#react-개발과-빌드)를 따릅니다.
 이미지와 패키지를 처음 받을 때 인터넷 연결이 필요합니다.
 
 전체 ZIP을 해제한 **프로젝트 루트**에서:
@@ -78,6 +89,8 @@ bash ./all.sh mvp smoke      # 정확한 대상 확인 후 합성 주문 1건 �
 
 `mvp up`은 API/worker를 먼저 빌드한 뒤 DB 4개를 시작하고, 준비되면 API의 schema/topic/index 초기화, 마지막으로 worker 준비를 확인합니다. 선택한 `redis-spare` 실험의 보조 Redis도 DB 준비 검사에 포함됩니다.
 핀된 로컬 Docker에서는 각 준비 단계에 180초 한도를 적용하고 `reports/startup/`에 단계·대상 서비스·준비 상태를 저장합니다. 실패하면 뒤 단계는 시작하지 않으며 이미 실행 중인 컨테이너와 볼륨을 보존합니다.
+DB·worker 준비 대기의 기록은 `observation_complete`와 `timeout_stage`로 상태 조회 완료 여부와 시간 초과 단계를 구분합니다.
+완료된 조회가 있었다면 `last_successful_observation`에 그 시각·컨테이너 상태·경과 시간을 보관합니다. 이 과거 기록으로 준비 성공을 판정하지 않으며, 현재 `observation_timeout`은 해당 시점의 DB 상태를 확인하지 못했다는 뜻입니다.
 다른 provider에서는 컨테이너 단계별 준비를 `not_certified`로 기록하므로 같은 검증 범위로 해석하지 마세요. API 초기화 확인은 계속 실행합니다. `doctor`는 기존 대상 identity·엔진 pin·미완료 실습과 잘못된 암호 실험을 검사하며, 새 환경의 identity를 고정하지 않습니다.
 루트 공통 `all.sh up mvp`는 이에 더해 읽기 전용 애플리케이션 health를 확인합니다. `READY`여도 실제 SQL → Kafka → ES 전달은 `mvp smoke`로 별도 확인하세요.
 

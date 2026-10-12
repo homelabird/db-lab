@@ -18,3 +18,7 @@ reports/
 .coverage*
 htmlcov/
 .venv-quality/
+
+# React storefront build outputs and local dependencies
+/mvp-lab/frontend/node_modules/
+/mvp-lab/mvp_app/static/

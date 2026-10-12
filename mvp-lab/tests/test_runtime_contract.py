@@ -3,6 +3,7 @@ import copy
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 import tempfile
 import types
@@ -15,7 +16,15 @@ from mvp_app.adapters import Settings
 def source(root):
     (root/'mvp_app').mkdir()
     (root/'mvp_app/runtime_contract.py').write_text('# fixture source\n')
-    (root/'mvp_app/index.html').write_text('<p>fixture</p>')
+    (root/'frontend/src').mkdir(parents=True)
+    for name in ('package.json','package-lock.json','index.html','vite.config.js'):
+        (root/'frontend'/name).write_text('fixture '+name)
+    (root/'frontend/src/main.jsx').write_text('React fixture')
+    (root/'mvp_app/static/assets').mkdir(parents=True)
+    (root/'mvp_app/static/index.html').write_text('<script src="/assets/main.js"></script>')
+    (root/'mvp_app/static/assets/main.js').write_text('compiled fixture')
+    (root/'mvp_app/static/assets/main.css').write_text('compiled CSS fixture')
+    (root/'.dockerignore').write_text('fixture build context\n')
     (root/'Containerfile').write_text('FROM test-only\n')
     (root/'requirements.txt').write_text('PyMySQL==1.1.2\nconfluent-kafka==2.8.2\nredis==5.2.1\nrequests==2.32.5\n')
 
@@ -44,8 +53,52 @@ class ManifestTests(unittest.TestCase):
 
     def test_ui_is_part_of_source_contract(self):
         before=rc.source_manifest(self.root)
-        (self.root/'mvp_app/index.html').write_text('another UI')
+        (self.root/'frontend/src/main.jsx').write_text('another UI')
         self.assertNotEqual(before['sha256'],rc.source_manifest(self.root)['sha256'])
+
+    def test_frontend_dependency_lock_is_part_of_source_contract(self):
+        before=rc.source_manifest(self.root)
+        (self.root/'frontend/package-lock.json').write_text('changed lock')
+        self.assertNotEqual(before['sha256'],rc.source_manifest(self.root)['sha256'])
+
+    def test_host_source_does_not_need_generated_assets_or_node_modules(self):
+        before=rc.source_manifest(self.root)
+        shutil.rmtree(self.root/'mvp_app/static')
+        (self.root/'frontend/node_modules').mkdir()
+        (self.root/'frontend/node_modules/generated.js').write_text('not a build input')
+        self.assertEqual(before,rc.source_manifest(self.root))
+
+    def test_generated_asset_edit_is_detected_separately_from_source(self):
+        value=rc.seal(self.root);before=rc.source_manifest(self.root)
+        (self.root/'mvp_app/static/assets/main.js').write_text('changed compiled asset')
+        self.assertEqual(before,rc.source_manifest(self.root))
+        with self.assertRaisesRegex(rc.ContractError,'served_assets_differ'):
+            rc.check_source(self.root,value['sha256'])
+
+    def test_generated_asset_addition_is_detected(self):
+        value=rc.seal(self.root)
+        (self.root/'mvp_app/static/assets/foreign.js').write_text('unsealed asset')
+        with self.assertRaisesRegex(rc.ContractError,'served_assets_differ'):
+            rc.check_source(self.root,value['sha256'])
+
+    def test_assets_must_exist_to_seal_an_image(self):
+        shutil.rmtree(self.root/'mvp_app/static')
+        with self.assertRaisesRegex(rc.ContractError,'served_assets_missing'):rc.seal(self.root)
+        self.assertFalse((self.root/rc.BUILD_FILE).exists())
+
+    def test_compiled_js_and_css_are_required_to_seal(self):
+        for suffix in ('js','css'):
+            path=self.root/'mvp_app/static/assets'/('main.'+suffix)
+            text=path.read_text();path.unlink()
+            with self.subTest(suffix=suffix),self.assertRaisesRegex(rc.ContractError,'invalid_served_asset_layout'):
+                rc.seal(self.root)
+            path.write_text(text)
+
+    def test_symlinked_asset_directory_is_refused(self):
+        (self.root/'outside').mkdir()
+        shutil.rmtree(self.root/'mvp_app/static/assets')
+        (self.root/'mvp_app/static/assets').symlink_to(self.root/'outside',target_is_directory=True)
+        with self.assertRaises(rc.ContractError):rc.seal(self.root)
 
     def test_dependency_file_is_part_of_source_contract(self):
         before=rc.source_manifest(self.root);(self.root/'requirements.txt').write_text('changed')
@@ -62,7 +115,7 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(before,rc.source_manifest(self.root))
 
     def test_symlinked_source_refused(self):
-        p=self.root/'mvp_app/index.html';p.unlink();p.symlink_to(self.root/'requirements.txt')
+        p=self.root/'frontend/src/main.jsx';p.unlink();p.symlink_to(self.root/'requirements.txt')
         with self.assertRaises(rc.ContractError):rc.source_manifest(self.root)
 
     def test_missing_source_fails_without_generated_manifest(self):
@@ -190,9 +243,12 @@ class ImageBuildContractTests(unittest.TestCase):
         root=Path(__file__).resolve().parents[1]
         rules=(root/'.dockerignore').read_text().splitlines()
         self.assertEqual(rules[0],'*')
-        for rule in ('!Containerfile','!requirements.txt','!mvp_app/','!mvp_app/**'):
+        for rule in ('!Containerfile','!requirements.txt','!mvp_app/','!mvp_app/**','!frontend/','!frontend/**'):
             self.assertIn(rule,rules)
         text=(root/'Containerfile').read_text()
         self.assertIn('COPY Containerfile /app/Containerfile',text)
+        self.assertIn('npm ci',text);self.assertIn('npm run build',text)
+        self.assertIn('COPY --from=storefront /build/mvp_app/static /app/mvp_app/static',text)
+        self.assertNotIn('COPY --from=storefront /build/frontend /app/frontend',text)
         self.assertLess(text.index('COPY mvp_app'),text.index('runtime_contract seal'))
         self.assertLess(text.index('runtime_contract seal'),text.index('USER 10001'))

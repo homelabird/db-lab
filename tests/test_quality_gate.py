@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import yaml
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -131,6 +132,27 @@ class GateTests(unittest.TestCase):
     def test_runtime_output_does_not_break_manifest(self):
         self.manifest();(self.root/'reports').mkdir();(self.root/'reports/runtime.json').write_text('{}')
         self.assertEqual(quality.release_check(self.root)['status'],'passed')
+
+    def test_generated_mvp_static_is_not_source_or_release_input(self):
+        self.manifest()
+        output=self.root/'mvp-lab/mvp_app/static/assets';output.mkdir(parents=True)
+        (output/'bundle.js').write_text('compiled bundle')
+        (output.parent/'index.html').write_text('compiled entry point')
+        (output/'broken.py').write_text('def :')
+        self.assertEqual(list(quality.source_files(self.root)),[self.root/quality.MANIFEST])
+        self.assertEqual(quality.static_check(self.root)['status'],'passed')
+        self.assertEqual(quality.release_check(self.root)['status'],'passed')
+
+    def test_frontend_inputs_and_other_static_sources_remain_checked(self):
+        names=('mvp-lab/frontend/src/main.jsx','mvp-lab/frontend/package.json',
+               'mvp-lab/frontend/package-lock.json','mvp-lab/frontend/vite.config.js',
+               'other/mvp_app/static/source.js')
+        for name in names:
+            path=self.root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('source')
+        self.assertEqual({p.relative_to(self.root).as_posix() for p in quality.source_files(self.root)},set(names))
+        self.manifest()
+        (self.root/'mvp-lab/frontend/package-lock.json').write_text('changed dependency lock')
+        self.assertEqual(quality.release_check(self.root)['issues'][0]['error'],'sha256_mismatch')
     def test_redis_runtime_state_does_not_break_manifest(self):
         self.manifest()
         state = self.root / 'redis-lab/.lab'
@@ -168,6 +190,35 @@ class GateTests(unittest.TestCase):
         self.assertEqual(rc,127);self.assertIn('<error', (self.root/'junit.xml').read_text())
     def test_failure_precedes_blocked(self):
         self.assertEqual(quality.overall([{'status':'failed'},{'status':'blocked'}]),('failed',1))
+
+    def test_tools_and_all_build_frontend_before_browser(self):
+        def check(name,*args):return {'name':name,'status':'passed','returncode':0}
+        for mode in ('tools','all'):
+            with self.subTest(mode=mode),patch.object(quality,'command_check',side_effect=check) as run:
+                self.assertEqual(quality.main([mode,'--root',str(self.root),'--output',str(self.root/mode)]),0)
+            self.assertEqual([c.args[0] for c in run.call_args_list][-5:],
+                             ['ansible','helm','frontend-test','frontend-build','ui'])
+            frontend=[c for c in run.call_args_list if c.args[0].startswith('frontend-')]
+            self.assertEqual([c.args[1] for c in frontend],[['npm','test'],['npm','run','build']])
+            self.assertTrue(all(c.args[2]==self.root/'mvp-lab/frontend' for c in frontend))
+
+    def test_frontend_build_failure_or_missing_tool_prevents_stale_browser_check(self):
+        for status,code in (('failed',1),('blocked',127)):
+            def check(name,*args):
+                return {'name':name,'status':status if name=='frontend-build' else 'passed',
+                        'returncode':code if name=='frontend-build' else 0}
+            output=self.root/status
+            with self.subTest(status=status),patch.object(quality,'command_check',side_effect=check) as run:
+                self.assertEqual(quality.main(['tools','--root',str(self.root),'--output',str(output)]),code)
+            self.assertNotIn('ui',[c.args[0] for c in run.call_args_list])
+            self.assertEqual(json.loads((output/'summary.json').read_text())['status'],status)
+
+    def test_static_and_offline_checks_do_not_require_node(self):
+        def check(name,*args):return {'name':name,'status':'passed','returncode':0}
+        for mode in ('static','offline'):
+            with self.subTest(mode=mode),patch.object(quality,'command_check',side_effect=check) as run:
+                self.assertEqual(quality.main([mode,'--root',str(self.root),'--output',str(self.root/mode)]),0)
+            self.assertTrue(all(c.args[0].startswith('host-') for c in run.call_args_list))
 
 
 class AnsibleAndCIQualityTests(unittest.TestCase):

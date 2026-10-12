@@ -41,16 +41,23 @@ Go는 기존 제한된 chart 계약 검사에 필요하며, 이것도 실제 Hel
 python -m pip install -r ansible/requirements.txt
 python -m pip install -r scripts/requirements-ui.txt
 python -m playwright install chromium
+# React 검사 준비: Node.js 22.12 이상 권장
+npm --prefix mvp-lab/frontend ci
 python scripts/quality.py tools
 
 # 소스/호스트/실제 Ansible fixture/실제 Helm/Chromium 검사를 한 번에
 python scripts/quality.py all
 ```
 
-`tools`는 `scripts/test-ansible.sh`, `scripts/test-helm.sh`, `scripts/test-ui.py`를 실제 호출합니다.
+`tools`는 `scripts/test-ansible.sh`, `scripts/test-helm.sh`, React의 `npm test`·`npm run build`, `scripts/test-ui.py`를 실제 호출합니다.
+React 빌드가 통과한 경우에 브라우저 검사를 실행하므로 오래된 번들로 새 소스를 검사하지 않습니다. `static`·`offline`에는 Node.js나 React 빌드가 필요하지 않습니다.
 Ansible 검사는 무해한 로컬 제어기 fixture이며, Helm 검사는 lint/render입니다.
 Chromium은 기존 MVP UI smoke를 데스크톱·모바일 크기에서 실행합니다. 모든 HTTP 요청을 가로채
-로컬 HTML과 모의 응답만 제공하며 실제 API/DB에는 접속하지 않습니다. 직접 실행은 `python scripts/test-ui.py`입니다.
+스토어 검사는 로컬 React 빌드 결과인 HTML·JS·CSS와 모의 HTTP 응답을 사용합니다.
+추가 Vite 프록시 검사는 별도 loopback API와 DB 테스트 대역을 실행해 브라우저의 주문 저장·상태 변경 및 외부 Origin 거부를 확인합니다.
+이 검사들은 기존 API나 실제 DB에 접속하지 않으며, 사용한 개발 서버와 테스트 API는 종료합니다.
+직접 실행은 `npm --prefix mvp-lab/frontend run build` 후 `python scripts/test-ui.py`입니다.
+품질 CI의 브라우저 작업도 Node 22에서 `npm ci`·단위 검사·프로덕션 빌드를 먼저 실행합니다.
 브라우저 설치 조건은 [Playwright 공식 안내](https://playwright.dev/python/docs/intro)를 따릅니다.
 SSH 원격 서버, 컨테이너 엔진, DB 쿼럼·영속성까지 검증하지 않습니다.
 도구가 없으면 `blocked`, 종료 127입니다. 모의 모듈이나 Go 부분 렌더러로 실제 검사를 대체하지 않습니다.

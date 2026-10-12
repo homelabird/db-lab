@@ -3,11 +3,14 @@ from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 import json
 import os
-from unittest.mock import patch
+from pathlib import Path
+import tempfile
+from unittest.mock import Mock, patch
 import threading
 import unittest
 from urllib.parse import urlsplit
 from mvp_app.api import Application, make_handler
+from mvp_app.adapters import Cache, Settings
 from mvp_app.core import relay_once, project_one
 from tools.probe import probe
 from fakes import MemoryRepo, MemoryCache, MemorySearch, MemoryBroker
@@ -17,6 +20,14 @@ DATA = {"item": "web study", "quantity": 1, "unit_price": 12}
 class HTTPTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.static_temp = tempfile.TemporaryDirectory()
+        cls.static_root = Path(cls.static_temp.name)
+        (cls.static_root/'assets').mkdir()
+        (cls.static_root/'index.html').write_text('<div id="root">작은 주문 시스템</div><script type="module" src="/assets/main.js"></script>')
+        (cls.static_root/'assets/main.js').write_text('console.log("fixture");')
+        (cls.static_root/'assets/main.css').write_text('body { color: black; }')
+        cls.static_patch = patch('mvp_app.api.STATIC_ROOT',cls.static_root)
+        cls.static_patch.start()
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(lambda: cls.app))
         cls.thread = threading.Thread(target=lambda: cls.server.serve_forever(poll_interval=0.01), daemon=True)
         cls.thread.start(); cls.port = cls.server.server_address[1]
@@ -24,6 +35,7 @@ class HTTPTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.server.shutdown(); cls.server.server_close(); cls.thread.join(timeout=2)
+        cls.static_patch.stop();cls.static_temp.cleanup()
 
     def setUp(self):
         self.repo, self.cache, self.search, self.broker = MemoryRepo(), MemoryCache(), MemorySearch(), MemoryBroker()
@@ -49,6 +61,41 @@ class HTTPTests(unittest.TestCase):
         code, text, response = self.request("GET", "/")
         self.assertEqual(code, 200); self.assertIn("작은 주문 시스템", text)
         self.assertIn("frame-ancestors 'none'", response.getheader("Content-Security-Policy"))
+        self.assertNotIn("unsafe-inline",response.getheader("Content-Security-Policy"))
+        self.assertNotIn("unsafe-eval",response.getheader("Content-Security-Policy"))
+
+    def test_bundled_js_and_css_are_served_without_database_access(self):
+        self.repo.down = True
+        for path,mime in (('/assets/main.js','javascript'),('/assets/main.css','text/css')):
+            code,text,response=self.request('GET',path)
+            self.assertEqual(code,200);self.assertTrue(text)
+            self.assertIn(mime,response.getheader('Content-Type'))
+            self.assertEqual(response.getheader('X-Content-Type-Options'),'nosniff')
+
+    def test_asset_traversal_and_unknown_paths_are_rejected(self):
+        for path in ('/assets/../requirements.txt','/assets/%2e%2e%2frequirements.txt',
+                     '/assets/sub/main.js','/assets/missing.js','/frontend/package.json'):
+            with self.subTest(path=path):self.assertEqual(self.request('GET',path)[0],404)
+
+    def test_symlinked_and_oversized_assets_are_rejected(self):
+        (self.static_root/'assets/link.js').symlink_to(self.static_root/'index.html')
+        (self.static_root/'assets/large.js').write_bytes(b'x'*(2*1024**2+1))
+        for path in ('/assets/link.js','/assets/large.js'):
+            with self.subTest(path=path):self.assertEqual(self.request('GET',path)[0],404)
+
+    def test_symlinked_assets_directory_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'assets').symlink_to(self.static_root/'assets',target_is_directory=True)
+            with patch('mvp_app.api.STATIC_ROOT',root):
+                self.assertEqual(self.request('GET','/assets/main.js')[0],404)
+
+    def test_symlinked_static_ancestor_and_fifo_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'link').symlink_to(self.static_root,target_is_directory=True)
+            with patch('mvp_app.api.STATIC_ROOT',root/'link'):
+                self.assertEqual(self.request('GET','/')[0],404)
+        os.mkfifo(self.static_root/'assets/pipe.js')
+        self.assertEqual(self.request('GET','/assets/pipe.js')[0],404)
 
     def test_liveness_independent_of_db(self):
         self.repo.down = True
@@ -73,6 +120,31 @@ class HTTPTests(unittest.TestCase):
         order = self.create(); self.cache.down = True
         code, data, _ = self.request("GET", "/api/orders/" + order["id"])
         self.assertEqual(code, 200); self.assertEqual(data["source"], "mariadb")
+
+    def test_nonfinite_extra_cache_field_falls_back_http(self):
+        order = self.create()
+        client = Mock()
+        client.get.return_value = json.dumps({**order, "extra": float("nan")})
+        self.app.cache = self.app.shop.cache = Cache(Settings(), client)
+        code, data, response = self.request("GET", "/api/orders/" + order["id"])
+        self.assertEqual(code, 200)
+        self.assertEqual(data["order"], order)
+        self.assertEqual(data["cache"], "unavailable_or_invalid")
+        self.assertEqual(response.getheader("X-Data-Source"), "mariadb")
+
+    def test_inspection_reports_invalid_cache_without_mutating_it(self):
+        order = self.create()
+        client = Mock()
+        client.get.return_value = json.dumps({**order, "extra": float("nan")})
+        self.app.cache = Cache(Settings(), client)
+        code, data, _ = self.request("GET", "/api/study/order/" + order["id"])
+        self.assertEqual(code, 200)
+        self.assertTrue(data["mariadb"]["reachable"])
+        self.assertFalse(data["redis"]["reachable"])
+        self.assertEqual(data["redis"]["comparison"], "unknown")
+        self.assertTrue(data["read_only"])
+        client.set.assert_not_called()
+        client.delete.assert_not_called()
 
     def test_sql_down_blocks_writes_but_cached_read_survives(self):
         order = self.create(); self.request("GET", "/api/orders/" + order["id"])

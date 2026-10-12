@@ -31,9 +31,10 @@ Elasticsearch, Kafka, MariaDB HA, Redis 실습을 모아 놓은 프로젝트입�
 ./all.sh mvp resume kafka
 ```
 
-단순 주문·검색 화면, 장애 시 부분 동작, 다른 Redis로 교체, 잘못된 DB 암호, 새 검색 인덱스 전환과 재구축을 제공합니다.
-설치 조건·명령·실습 순서·한계는 [MVP 가이드](mvp-lab/README.md),
-이번 추가 작업의 검증 범위는 [MVP 검증 기록](mvp-lab/docs/VALIDATION.md)을 확인하세요.
+React 스토어에서 상품 탐색·장바구니·주문·영수증을 이용하고 주문 내역에서 DB 연결과 장애 시 부분 동작을 관찰합니다.
+다른 Redis로 교체, 잘못된 DB 암호, 새 검색 인덱스 전환과 재구축도 제공합니다.
+화면 사용법·새로고침·재시도의 저장 경계와 구현별 검사 결과는 [스토어 가이드](mvp-lab/docs/STOREFRONT.md), 설치 조건·명령·실습 순서·한계는 [MVP 가이드](mvp-lab/README.md)를 확인하세요.
+초기 MVP 추가 작업의 검증 범위는 [MVP 검증 기록](mvp-lab/docs/VALIDATION.md)에 있습니다.
 
 ## 초기 개선 작업과 현재 적용 경계
 

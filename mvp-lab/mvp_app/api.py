@@ -1,13 +1,16 @@
 """Local study HTTP API and a single static page. Not a production HTTP server."""
 from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from http.server import BaseHTTPRequestHandler
 import json
+import mimetypes
 import os
 import re
 import time
 from pathlib import Path
 import socket
+import stat
 from urllib.parse import parse_qs, urlsplit
 import uuid
 from .adapters import dependencies
@@ -15,6 +18,41 @@ from .core import Problem, Storefront, emit, request_key, REQUEST_CONTEXT, order
 from .observability import safe_error
 from .inspection import inspect_order
 from .http_policy import BoundedHTTPServer, body_fields, decode_json, json_body_length, local_host
+
+STATIC_ROOT = Path(__file__).with_name('static')
+
+
+def static_file(path):
+    if path == '/':
+        name, asset = 'index.html', False
+    elif re.fullmatch(r'/assets/[A-Za-z0-9][A-Za-z0-9._-]{0,180}', path):
+        name, asset = path[len('/assets/'):], True
+    else:
+        raise Problem(404, 'static_file_not_found')
+    try:
+        with ExitStack() as stack:
+            directory = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+            stack.callback(os.close, directory)
+            for part in STATIC_ROOT.absolute().parts[1:]:
+                directory = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+                stack.callback(os.close, directory)
+            if asset:
+                directory = os.open('assets', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+                stack.callback(os.close, directory)
+            fd = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory)
+            with os.fdopen(fd, 'rb') as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size > 2 * 1024**2:
+                    raise Problem(404, 'static_file_not_found')
+                body = stream.read(2 * 1024**2 + 1)
+                if len(body) > 2 * 1024**2:
+                    raise Problem(404, 'static_file_not_found')
+        mime = mimetypes.guess_type(name)[0] or 'application/octet-stream'
+        if mime.startswith('text/') or name.endswith('.js'):
+            mime += '; charset=utf-8'
+        return body, mime
+    except OSError as exc:
+        raise Problem(404, 'static_file_not_found') from exc
 
 
 def backend(name, fn, *args, **kwargs):
@@ -119,7 +157,7 @@ def make_handler(app_factory):
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Request-ID", request_id)
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; connect-src 'self'")
+            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none'; connect-src 'self'")
             self.send_header("Connection", "close")
             if isinstance(payload, dict) and "source" in payload:
                 self.send_header("X-Data-Source", payload["source"])
@@ -143,9 +181,9 @@ def make_handler(app_factory):
                     if origin and origin != "http://" + host:
                         raise Problem(403, "cross_origin_write_rejected")
                 parsed = urlsplit(self.path)
-                if self.command == "GET" and parsed.path == "/":
-                    self.reply(200, Path(__file__).with_name("index.html").read_bytes(), request_id,
-                               "text/html; charset=utf-8")
+                if self.command == "GET" and (parsed.path == "/" or parsed.path.startswith('/assets/')):
+                    body, mime = static_file(parsed.path)
+                    self.reply(200, body, request_id, mime)
                     return
                 data = None
                 if self.command in {"POST", "PATCH"}:

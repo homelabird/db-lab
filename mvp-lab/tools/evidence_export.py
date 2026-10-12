@@ -16,6 +16,8 @@ CHECKS = {'image_source', 'driver_imports_and_pins', 'effective_target', 'mariad
 ERROR_CODES = {
     'runtime_contract_source_missing', 'source_not_a_bounded_regular_file', 'source_outside_project',
     'image_build_manifest_missing_rebuild_required', 'image_files_differ_from_build_manifest',
+    'served_assets_missing_rebuild_required', 'invalid_served_asset_layout',
+    'served_assets_differ_from_build_manifest',
     'running_image_differs_from_host_source', 'unsupported_dependency_pin', 'dependency_contract_changed',
     'installed_dependency_differs_from_pin', 'kafka_topic_identity_api_missing', 'unexpected_image_python_version',
     'unexpected_database_or_engine', 'unexpected_mariadb_data_directory', 'unexpected_sql_lock_wait',
