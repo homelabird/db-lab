@@ -139,7 +139,7 @@ class FakeESHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         self.rfile.read(int(self.headers.get('Content-Length',0)))
         self.respond(200,{'timed_out':False,'_shards':{'failed':0},'hits':{'total':{'value':len(self.server.docs),'relation':'eq'},
-                                 'hits':[{'_source':o} for o in self.server.docs.values()]}})
+                                 'hits':[{'_id':oid,'_source':o} for oid,o in self.server.docs.items()]}})
     def do_PUT(self):
         from urllib.parse import urlsplit,parse_qs
         url=urlsplit(self.path);params=parse_qs(url.query)

@@ -6,7 +6,7 @@ import json
 import os
 import re
 from typing import Callable
-from .core import Problem, emit, envelope, new_order, transition, ORDER_FIELDS, order_page_result
+from .core import Problem, emit, envelope, new_order, transition, ORDER_FIELDS, order_page_result, validate_event
 
 
 @dataclass(frozen=True)
@@ -235,7 +235,10 @@ class Cache:
 
     def get(self, order_id):
         raw = self.client.get("mvp:order:" + order_id)
-        return json.loads(raw) if raw is not None else None
+        order = json.loads(raw) if raw is not None else None
+        # Read-only inspection also returns cache contents as strict UTF-8 JSON.
+        json.dumps(order, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        return order
 
     def put(self, order):
         self.client.set("mvp:order:" + order["id"], json.dumps(order, ensure_ascii=False), ex=self.s.cache_ttl)
@@ -319,13 +322,39 @@ class Search:
         response = self.request("POST", "/_search", json={"query": clause, "size": 50,
                                                        "sort": [{"created_at": "desc"}]})
         response.raise_for_status()
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise Problem(503, "elasticsearch_search_incomplete") from exc
+        if not isinstance(data, dict):
+            raise Problem(503, "elasticsearch_search_incomplete")
         shards = data.get("_shards", {})
         if (data.get("timed_out") is not False or not isinstance(shards, dict)
                 or type(shards.get("failed")) is not int or shards["failed"] != 0):
             raise Problem(503, "elasticsearch_search_incomplete")
-        return {"orders": [hit["_source"] for hit in data["hits"]["hits"]],
-                "total": data["hits"]["total"], "source": "elasticsearch", "index": self.s.es_index}
+        hits = data.get("hits")
+        if not isinstance(hits, dict) or not isinstance(hits.get("hits"), list) or len(hits["hits"]) > 50:
+            raise Problem(503, "elasticsearch_search_incomplete")
+        total = hits.get("total")
+        count = total.get("value") if isinstance(total, dict) else total
+        if (type(count) is not int or count < len(hits["hits"])
+                or isinstance(total, dict) and total.get("relation") not in (None, "eq", "gte")):
+            raise Problem(503, "elasticsearch_search_incomplete")
+        orders = []
+        try:
+            for hit in hits["hits"]:
+                order = hit.get("_source") if isinstance(hit, dict) else None
+                if (not isinstance(order, dict) or set(order) != set(ORDER_FIELDS)
+                        or hit.get("_id") != order.get("id")):
+                    raise ValueError("invalid search projection")
+                validated = validate_event({"schema_version": 1, "event_id": order["id"], "order": order})
+                validated["created_at"].encode("utf-8")
+                orders.append(validated)
+        except (Problem, ValueError) as exc:
+            raise Problem(503, "elasticsearch_search_incomplete") from exc
+        if isinstance(total, dict):
+            total = {"value": count, "relation": total.get("relation") or "eq"}
+        return {"orders": orders, "total": total, "source": "elasticsearch", "index": self.s.es_index}
 
     def status(self):
         response = self.request("GET", "/_count")

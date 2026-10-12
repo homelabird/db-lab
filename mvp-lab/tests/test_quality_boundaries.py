@@ -9,7 +9,7 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 from mvp_app.api import Application, make_handler
-from mvp_app.core import Problem, create_input
+from mvp_app.core import Problem, create_input, new_order
 from mvp_app.adapters import Search, Settings
 from mvp_app.http_policy import BoundedHTTPServer, body_fields, decode_json, json_body_length, local_host
 from tools import manage
@@ -164,6 +164,53 @@ class SearchCompletenessTests(unittest.TestCase):
     def test_complete_empty_result(self):
         search,session=self.search({'timed_out':False,'_shards':{'failed':0},'hits':{'total':{'value':0},'hits':[]}})
         self.assertEqual(search.find('x')['orders'],[]);self.assertIs(session.request.call_args.kwargs['allow_redirects'],False)
+    def test_complete_result_keeps_valid_order_and_metadata(self):
+        order=new_order(create_input({'item':'검색 주문','quantity':2,'unit_price':1000}),'search-boundary')
+        data={'timed_out':False,'_shards':{'failed':0},'hits':{
+            'total':{'value':1,'relation':'eq'},'hits':[{'_id':order['id'],'_source':order}]}}
+        search,session=self.search(data)
+        result=search.find('검색')
+        self.assertEqual(result['orders'],[order]);self.assertEqual(result['total'],data['hits']['total'])
+        self.assertEqual(result['source'],'elasticsearch');self.assertEqual(session.request.call_count,1)
+    def test_invalid_search_structure_is_dependency_failure(self):
+        for data in (None,[],{'timed_out':False,'_shards':{'failed':0}},
+                     {'timed_out':False,'_shards':{'failed':0},'hits':None},
+                     {'timed_out':False,'_shards':{'failed':0},'hits':{'total':0,'hits':None}}):
+            with self.subTest(data=data):
+                search,_=self.search(data)
+                with self.assertRaises(Problem) as caught:search.find('x')
+                self.assertEqual((caught.exception.status,caught.exception.code),(503,'elasticsearch_search_incomplete'))
+    def test_invalid_projection_never_reaches_frontend(self):
+        order=new_order(create_input({'item':'검색 주문','quantity':2,'unit_price':1000}),'search-boundary')
+        bad_sources=(None,{}, {**order,'id':None},{**order,'quantity':True},
+                     {**order,'total':1},{**order,'status':'unknown'},{**order,'version':False},
+                     {**order,'created_at':'invalid'},
+                     {**order,'created_at':'2026-10-11'+chr(0xd800)+'00:00:00+00:00'},
+                     {**order,'unexpected':'private'})
+        bad_hits=[None,{'_id':'foreign','_source':order},
+                  *({'_id':order['id'],'_source':source} for source in bad_sources)]
+        for hit in bad_hits:
+            with self.subTest(hit=hit):
+                data={'timed_out':False,'_shards':{'failed':0},'hits':{'total':1,'hits':[hit]}}
+                search,session=self.search(data)
+                with self.assertRaises(Problem) as caught:search.find('x')
+                self.assertEqual((caught.exception.status,caught.exception.code),(503,'elasticsearch_search_incomplete'))
+                self.assertEqual(session.request.call_count,1)
+    def test_invalid_total_is_dependency_failure(self):
+        for total in (None,True,-1,'1',{}, {'value':False},{'value':-1},{'value':0,'relation':'unknown'}):
+            with self.subTest(total=total):
+                search,_=self.search({'timed_out':False,'_shards':{'failed':0},'hits':{'total':total,'hits':[]}})
+                with self.assertRaises(Problem) as caught:search.find('x')
+                self.assertEqual(caught.exception.status,503)
+    def test_non_json_dependency_response_is_not_internal_failure(self):
+        search,session=self.search({})
+        session.request.return_value.json.side_effect=ValueError('invalid JSON')
+        with self.assertRaises(Problem) as caught:search.find('x')
+        self.assertEqual((caught.exception.status,caught.exception.code),(503,'elasticsearch_search_incomplete'))
+    def test_total_metadata_is_public_only(self):
+        search,_=self.search({'timed_out':False,'_shards':{'failed':0},'hits':{
+            'total':{'value':0,'relation':'eq','unexpected':'private'},'hits':[]}})
+        self.assertEqual(search.find('x')['total'],{'value':0,'relation':'eq'})
     def test_timed_out(self):
         search,_=self.search({'timed_out':True,'_shards':{'failed':0},'hits':{'hits':[]}})
         with self.assertRaises(Problem):search.find('x')

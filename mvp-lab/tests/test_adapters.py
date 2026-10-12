@@ -75,6 +75,14 @@ class SearchContractTests(unittest.TestCase):
         self.assertEqual(json.loads(args[1]), ORDER)
         self.assertEqual(kwargs["ex"], 30)
 
+    def test_cache_rejects_nonfinite_json_values(self):
+        client = Mock()
+        cache = Cache(Settings(), client)
+        for value in ("NaN", "Infinity", "-Infinity", "1e999"):
+            client.get.return_value = '{"extra":[' + value + ']}'
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                cache.get(ORDER["id"])
+
     def test_invalid_settings_reject_unbounded_ttl(self):
         with patch.dict("os.environ", {"CACHE_TTL": "0"}), self.assertRaises(ValueError): Settings.load()
 

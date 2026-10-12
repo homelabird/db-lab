@@ -176,8 +176,8 @@ class Storefront:
                 if cached is not None:
                     # Cache corruption must not break the authoritative read path.
                     validate_event({"schema_version": 1, "event_id": order_id, "order": cached})
-                    if cached["id"] != order_id:
-                        raise ValueError("wrong cache key")
+                    if cached["id"] != order_id or set(cached) != set(ORDER_FIELDS):
+                        raise ValueError("invalid cache payload")
                     return {"order": cached, "source": "redis", "cache": "hit"}
             except Exception as exc:
                 cache_state = "unavailable_or_invalid"

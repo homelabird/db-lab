@@ -95,6 +95,16 @@ class PipelineTests(unittest.TestCase):
         self.cache.data[self.order["id"]] = ({"wrong": 1}, 30)
         self.assertEqual(self.shop.detail(self.order["id"])["source"], "mariadb")
 
+    def test_cache_with_extra_fields_falls_back_and_is_repaired(self):
+        for extra in ("unexpected", float("nan")):
+            with self.subTest(extra=extra):
+                self.cache.put({**self.order, "extra": extra})
+                result = self.shop.detail(self.order["id"])
+                self.assertEqual(result["source"], "mariadb")
+                self.assertEqual(result["cache"], "unavailable_or_invalid")
+                self.assertEqual(result["order"], self.order)
+                self.assertEqual(self.cache.get(self.order["id"]), self.order)
+
     def test_cached_read_survives_sql_down(self):
         self.shop.detail(self.order["id"])
         self.repo.down = True
